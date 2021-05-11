@@ -2,6 +2,7 @@ mod error;
 pub mod lexer;
 
 pub use lexer::Lexer;
+pub use lexer::DecodingReader;
 
 /* impl BufferQueue {
 	/// EOF the stream after all buffered bytes have been read.

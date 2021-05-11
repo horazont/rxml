@@ -1,13 +1,29 @@
 use std::io;
-use std::mem;
 use std::fmt;
-use std::slice;
 
 mod selectors;
 mod read;
 
 use selectors::*;
-use crate::error::{Error, Result};
+use read::{CodepointRead, Utf8Char, read_validated, CharSelector, Endpoint, skip_matching};
+use crate::error::{Error, Result, WFError};
+
+pub use read::DecodingReader;
+
+const ERRCTX_UNKNOWN: &'static str = "in unknown context";
+const ERRCTX_TEXT: &'static str = "in text node";
+const ERRCTX_ATTVAL: &'static str = "in attribute value";
+const ERRCTX_NAME: &'static str = "in name";
+const ERRCTX_NAMESTART: &'static str = "at start of name";
+const ERRCTX_ELEMENT: &'static str = "in element";
+const ERRCTX_ELEMENT_FOOT: &'static str = "in element footer";
+const ERRCTX_ELEMENT_CLOSE: &'static str = "at element close";
+const ERRCTX_CDATA_SECTION: &'static str = "in CDATA section";
+const ERRCTX_CDATA_SECTION_START: &'static str = "at CDATA section marker";
+const ERRCTX_XML_DECL: &'static str = "in XML declaration";
+const ERRCTX_XML_DECL_START: &'static str = "at start of XML declaration";
+const ERRCTX_XML_DECL_END: &'static str = "at end of XML declaration";
+const ERRCTX_REF: &'static str = "in entity or character reference";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -44,12 +60,13 @@ enum RefKind {
 
 #[derive(Debug, Clone, PartialEq)]
 enum ElementState {
+	Start,
 	Blank,
 	Name,
 	Eq,
 	Close,
-	/// Delimiter
-	AttributeValue(u8),
+	/// Delimiter and Alphabet
+	AttributeValue(char, CodepointRanges<'static>),
 	/// Encountered ?
 	MaybeXMLDeclEnd,
 	/// Encountered /
@@ -59,9 +76,9 @@ enum ElementState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ElementKind {
 	/// standard XML element head e.g. `<foo>`
-	ElementHead,
+	Header,
 	/// standard XML element foot e.g. `</foo>`
-	ElementFoot,
+	Footer,
 	/// XML declaration e.g. `<?xml version='1.0'?>`
 	XMLDecl,
 }
@@ -73,8 +90,6 @@ enum MaybeElementState {
 	CDataSectionStart(usize),
 	/// Number of correct XML decl start characters
 	XMLDeclStart(usize),
-	/// Closing element
-	Footer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,11 +105,13 @@ enum State {
 	Element{ kind: ElementKind, state: ElementState },
 
 	/// encountered &
-	Reference{ ret: Box<State>, kind: RefKind },
+	Reference{ ctx: &'static str, ret: Box<State>, kind: RefKind },
 
 	/// Count the number of correct consecutive CDataSectionEnd characters
 	/// encountered
 	CDataSection(usize),
+
+	Eof,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -158,72 +175,14 @@ impl LexerOptions {
 
 pub struct Lexer {
 	state: State,
-	buf: Vec<u8>,
 	scratchpad: String,
+	swap: String,
 	opts: LexerOptions,
-}
-
-fn read_up_to_limited<'x, R: io::BufRead + ?Sized, S: ByteSelector<'x>>(r: &mut R, delimiters: &'x S, buf: &mut Vec<u8>, limit: usize) -> io::Result<(usize, Option<u8>)> {
-	let mut nread = 0;
-	loop {
-		let (done, used) = {
-			let available = match r.fill_buf() {
-				Ok(b) => b,
-				Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-				Err(e) => return Err(e),
-			};
-			if available.len() == 0 {
-				// EOF!
-				return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "eof while scanning for delimiter"));
-			}
-			match delimiters.find_any_first_in(available) {
-				Some((offset, matched)) => {
-					// Do not increase offset by one, we don’t want to discard
-					// the next match.
-					buf.extend_from_slice(&available[..offset]);
-					(Some(matched), offset)
-				},
-				None => {
-					buf.extend_from_slice(&available);
-					(None, available.len())
-				},
-			}
-		};
-		r.consume(used);
-		nread += used;
-		if let Some(matched) = done {
-			return Ok((nread, Some(matched)))
-		}
-		if nread >= limit {
-			return Ok((nread, None))
-		}
-	}
-}
-
-fn discard_up_to<'x, R: io::BufRead + ?Sized, S: ByteSelector<'x>>(r: &mut R, delimiters: &'x S) -> io::Result<u8> {
-	loop {
-		let (done, used) = {
-			let available = match r.fill_buf() {
-				Ok(b) => b,
-				Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-				Err(e) => return Err(e),
-			};
-			if available.len() == 0 {
-				// EOF!
-				return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "eof while scanning for delimiter"));
-			}
-			match delimiters.find_any_first_in(available) {
-				// Do not increase offset by one, we don’t want to discard the
-				// next match.
-				Some((offset, matched)) => (Some(matched), offset),
-				None => (None, available.len()),
-			}
-		};
-		r.consume(used);
-		if let Some(matched) = done {
-			return Ok(matched)
-		}
-	}
+	/// keep the scratchpad and state for debugging
+	#[cfg(debug_assertions)]
+	prev_state: (String, State),
+	#[cfg(debug_assertions)]
+	last_single_read: Option<Utf8Char>,
 }
 
 struct ST(State, Option<Token>);
@@ -235,37 +194,49 @@ impl ST {
 	}
 }
 
-fn resolve_named_entity(name: &[u8]) -> Result<char> {
+fn resolve_named_entity(name: &str, into: &mut String) -> Result<()> {
 	// amp, lt, gt, apos, quot
 	match name {
-		b"amp" => Ok('&'),
-		b"lt" => Ok('<'),
-		b"gt" => Ok('>'),
-		b"apos" => Ok('\''),
-		b"quot" => Ok('"'),
-		_ => Err(Error::NotWellFormed(format!("undeclared entity: {:?}", DebugBytes(name)))),
-	}
+		"amp" => into.push_str("&"),
+		"lt" => into.push_str("<"),
+		"gt" => into.push_str(">"),
+		"apos" => into.push_str("'"),
+		"quot" => into.push_str("\""),
+		_ => return Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
+	};
+	Ok(())
 }
 
-fn resolve_char_reference(s: &[u8], radix: CharRefRadix) -> Result<char> {
-	let s = std::str::from_utf8(s).unwrap();
+fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut String) -> Result<()> {
 	let radix = match radix {
 		CharRefRadix::Decimal => 10,
 		CharRefRadix::Hexadecimal => 16,
 	};
-	let codepoint = match u32::from_str_radix(s, radix) {
-		Ok(v) => v,
-		Err(e) => return Err(Error::NotWellFormed(format!("invalid codepoint integer: {}", e))),
-	};
+	// cannot fail because the string is validated against the alphabet and limited in length by the lexer
+	let codepoint = u32::from_str_radix(s, radix).unwrap();
 	let ch = match std::char::from_u32(codepoint) {
 		Some(ch) => ch,
-		None => return Err(Error::NotWellFormed(format!("character reference {:x} expands to invalid char", codepoint))),
+		None => return Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_UNKNOWN, codepoint, true))),
 	};
 	if contained_in_ranges(ch, VALID_XML_CDATA_RANGES) {
-		Ok(ch)
+		into.push(ch);
+		Ok(())
 	} else {
-		Err(Error::NotWellFormed(format!("character {:?} is forbidden", ch)))
+		Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_UNKNOWN, ch, None)))
 	}
+}
+
+fn add_context<T>(r: Result<T>, ctx: &'static str) -> Result<T> {
+	r.or_else(|e| { match e {
+		Error::NotWellFormed(wf) => Err(Error::NotWellFormed(wf.with_context(ctx))),
+		other => Err(other),
+	} })
+}
+
+fn handle_eof<T>(v: Option<T>, ctx: &'static str) -> Result<T> {
+	v.ok_or_else(|| {
+		Error::wfeof(ctx)
+	})
 }
 
 impl Lexer {
@@ -276,43 +247,50 @@ impl Lexer {
 	pub fn with_options(opts: LexerOptions) -> Lexer {
 		Lexer {
 			state: State::Content(ContentState::Initial),
-			buf: Vec::new(),
 			scratchpad: String::new(),
+			swap: String::new(),
 			opts: opts,
+			#[cfg(debug_assertions)]
+			prev_state: (String::new(), State::Content(ContentState::Initial)),
+			#[cfg(debug_assertions)]
+			last_single_read: None,
 		}
 	}
 
 	fn token_length_error(&self) -> Error {
-		Error::RestrictedXml(format!("maximum token length exceeded"))
+		Error::RestrictedXml("long name or reference")
 	}
 
-	fn read_up_to_limited<'r, 'x, R: io::BufRead + ?Sized, S: ByteSelector<'x>>(&mut self, r: &'r mut R, delimiters: &'x S, limit: usize) -> io::Result<Option<(Vec<u8>, u8)>> {
-		match delimiters.find_any_first_in(self.buf.as_slice()) {
-			Some((sz, delim)) => {
-				let result_vec = self.buf.split_off(sz);
-				return Ok(Some((result_vec, delim)));
-			},
-			None => (),
+	fn read_validated<'r, 'x, R: CodepointRead, S: CharSelector>(&mut self, r: &'r mut R, selector: &'x S, limit: usize) -> Result<Endpoint> {
+		let remaining = match limit.checked_sub(self.scratchpad.len()) {
+			None => return Ok(Endpoint::Limit),
+			Some(v) => v,
 		};
-		if self.buf.len() >= limit {
-			// delimiter not found within limit
-			return Ok(None)
-		}
-		let remaining = limit - self.buf.len();
-		match read_up_to_limited(r, delimiters, &mut self.buf, remaining)? {
-			(added, Some(delim)) => {
-				// after read_up_to_limited, the buffer contains the data
-				// up to but excluding the delimiter
-				let mut result_vec = Vec::new();
-				mem::swap(&mut result_vec, &mut self.buf);
-				Ok(Some((result_vec, delim)))
-			},
-			(_, None) => Ok(None),
-		}
+		read_validated(
+			r,
+			selector,
+			remaining,
+			&mut self.scratchpad,
+		)
 	}
+
+	fn read_single<'r, R: CodepointRead>(&mut self, r: &'r mut R) -> Result<Option<Utf8Char>> {
+		let last_read = r.read()?;
+		#[cfg(debug_assertions)]
+		{
+			self.last_single_read = last_read;
+		}
+		Ok(last_read)
+	}
+
+	fn drop_scratchpad(&mut self) -> Result<()> {
+		self.scratchpad.clear();
+		Ok(())
+	}
+
 
 	/// Skip all spaces and *peek* at the byte after that.
-	fn skip_spaces<'r, R: io::BufRead + ?Sized>(&mut self, r: &'r mut R) -> io::Result<u8> {
+	/* fn skip_spaces<'r, R: io::BufRead + ?Sized>(&mut self, r: &'r mut R) -> io::Result<u8> {
 		let selector = InvertDelimiters(CLASS_XML_SPACES);
 		match selector.find_any_first_in(self.buf.as_slice()) {
 			Some((sz, delim)) => {
@@ -396,276 +374,463 @@ impl Lexer {
 			return Ok(None)
 		}
 		Ok(Some(Token::Text(text)))
+	} */
+
+	fn swap_scratchpad(&mut self) -> Result<()> {
+		std::mem::swap(&mut self.scratchpad, &mut self.swap);
+		Ok(())
 	}
 
-	fn lex_content<'r, R: io::BufRead + ?Sized>(&mut self, state: ContentState, r: &'r mut R) -> Result<ST>
+	fn read_swap(&mut self) -> String {
+		let mut tmp = String::new();
+		std::mem::swap(&mut tmp, &mut self.swap);
+		tmp
+	}
+
+	fn flush_scratchpad(&mut self) -> Result<String> {
+		let result = self.scratchpad.split_off(0);
+		debug_assert!(self.scratchpad.len() == 0);
+		Ok(result)
+	}
+
+	fn maybe_flush_scratchpad_as_text(&mut self) -> Result<Option<Token>> {
+		if self.scratchpad.len() == 0 {
+			Ok(None)
+		} else {
+			Ok(Some(Token::Text(self.flush_scratchpad()?)))
+		}
+	}
+
+	fn lex_content<'r, R: CodepointRead>(&mut self, state: ContentState, r: &'r mut R) -> Result<ST>
 	{
+		println!("{:?}", state);
 		match state {
 			// read until next `<` or `&`, which are the only things which
 			// can break us out of this state.
-			ContentState::Initial => match self.read_up_to_limited(r, &DELIM_TEXT_STATE_EXIT, self.opts.max_token_length)? {
-				Some((data, b'<')) => {
-					// guaranteed to succeed because read_up_to_limited is a peek
-					self.read_single(r).unwrap();
-					Ok(ST(State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), self.flush_text_safe(data)?))
+			ContentState::Initial => match self.read_validated(r, &CodepointRanges(VALID_XML_CDATA_RANGES_TEXT_DELIMITED), self.opts.max_token_length)? {
+				Endpoint::Eof => {
+					println!("eof");
+					Ok(ST(
+						State::Eof,
+						self.maybe_flush_scratchpad_as_text()?,
+					))
 				},
-				Some((data, b'&')) => {
-					self.read_single(r).unwrap();
-					Ok(ST(State::Reference{
-						ret: Box::new(State::Content(ContentState::Initial)),
-						kind: RefKind::Entity,
-					}, self.flush_text_safe(data)?))
+				Endpoint::Limit => {
+					Ok(ST(
+						State::Content(ContentState::Initial),
+						self.maybe_flush_scratchpad_as_text()?,
+					))
 				},
-				Some((_, other)) => panic!("other {:?}", other),
-				None => panic!("looong text node"),
+				Endpoint::Delimiter(ch) => match ch.to_char() {
+					'<' => {
+						Ok(ST(
+							State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), self.maybe_flush_scratchpad_as_text()?,
+						))
+					},
+					'&' => {
+						// We need to be careful here! First, we *have* to swap the scratchpad because
+						// that is part of the contract with the Reference state. Second, we have to
+						// do this *after* we "maybe" flush the scratchpad as text -- otherwise, we
+						// would flush the empty text and then clobber the entity lookup.
+						let tok = self.maybe_flush_scratchpad_as_text()?;
+						self.swap_scratchpad()?;
+						Ok(ST(
+							State::Reference{
+								ctx: ERRCTX_TEXT,
+								ret: Box::new(State::Content(ContentState::Initial)),
+								kind: RefKind::Entity,
+							},
+							tok,
+						))
+					},
+					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_TEXT, other, None))),
+				},
 			},
-			ContentState::MaybeElement(MaybeElementState::Initial) => match self.peek_single(r)? {
-				b'?' => Ok(ST(State::Content(ContentState::MaybeElement(MaybeElementState::XMLDeclStart(1))), None)),
-				b'!' => Ok(ST(State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(1))), None)),
-				b'/' => {
-					// need to drop the slash so that the name can be read next.
-					self.read_single(r)?;
-					Ok(ST(State::Content(ContentState::MaybeElement(MaybeElementState::Footer)), None))
-				},
-				b => {
-					if byte_maybe_xml_namestart(b) {
-						match self.read_up_to_limited(r, &XMLNonNameBytePreselector(), self.opts.max_token_length)? {
-							Some((data, _)) => Ok(ST(State::Element{ kind: ElementKind::ElementHead, state: ElementState::Blank }, Some(Token::ElementHeadStart(String::from_utf8(data)?)))),
-							None => Err(self.token_length_error()),
-						}
-					} else {
-						Err(Error::NotWellFormed(format!("'<' followed by unexpected byte: {:?}", DebugByte(b))))
+			ContentState::MaybeElement(MaybeElementState::Initial) => match self.read_single(r)? {
+				Some(utf8ch) => match utf8ch.to_char() {
+					'?' => {
+						self.drop_scratchpad()?;
+						Ok(ST(
+							State::Content(ContentState::MaybeElement(MaybeElementState::XMLDeclStart(2))),
+							None,
+						))
+					},
+					'!' => {
+						self.drop_scratchpad()?;
+						Ok(ST(
+							State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(2))),
+							None,
+						))
 					}
-				}
+					'/' => {
+						self.drop_scratchpad()?;
+						Ok(ST(
+							State::Element{
+								kind: ElementKind::Footer,
+								state: ElementState::Start,
+							},
+							None,
+						))
+					},
+					ch => {
+						if CLASS_XML_NAMESTART.select(ch) {
+							// add the first character to the scratchpad, because read_single does not do that
+							self.scratchpad.push_str(utf8ch.as_str());
+							Ok(ST(
+								State::Element{
+									kind: ElementKind::Header,
+									state: ElementState::Start,
+								},
+								None,
+							))
+						} else {
+							self.drop_scratchpad()?;
+							Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_NAMESTART, ch, None)))
+						}
+					},
+				},
+				None => Err(Error::wfeof(ERRCTX_ELEMENT)),
 			},
 			ContentState::MaybeElement(MaybeElementState::XMLDeclStart(i)) => {
 				debug_assert!(i < TOK_XML_DECL_START.len());
-				let next = self.read_single(r)?;
-				if next != TOK_XML_DECL_START[i] {
-					return Err(Error::RestrictedXml(format!("processing instructions prohibited")));
+				// note: exploiting that xml decl only consists of ASCII here
+				let b = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION_START)?.to_char() as u8;
+				if b != TOK_XML_DECL_START[i] {
+					return Err(Error::RestrictedXml("processing instructions"));
 				}
 				let next = i + 1;
 				if next == TOK_XML_DECL_START.len() {
-					Ok(ST(State::Element{ kind: ElementKind::XMLDecl, state: ElementState::Blank }, Some(Token::XMLDeclStart)))
+					// eliminate the `xml` from the scratchpad
+					self.drop_scratchpad()?;
+					Ok(ST(
+						State::Element{
+							kind: ElementKind::XMLDecl,
+							state: ElementState::Blank,
+						},
+						Some(Token::XMLDeclStart),
+					))
 				} else {
-					Ok(ST(State::Content(ContentState::MaybeElement(MaybeElementState::XMLDeclStart(next))), None))
+					Ok(ST(
+						State::Content(ContentState::MaybeElement(MaybeElementState::XMLDeclStart(next))),
+						None,
+					))
 				}
 			},
 			ContentState::MaybeElement(MaybeElementState::CDataSectionStart(i)) => {
 				debug_assert!(i < TOK_XML_CDATA_START.len());
-				let next = self.read_single(r)?;
-				if i == 1 && next == b'-' {
-					return Err(Error::RestrictedXml(format!("comments prohibited")));
-				} else if next != TOK_XML_CDATA_START[i] {
-					return Err(Error::NotWellFormed(format!("malformed cdata section start")));
+				let b = handle_eof(self.read_single(r)?, ERRCTX_XML_DECL_START)?.to_char() as u8;
+				if i == 1 && b == b'-' {
+					return Err(Error::RestrictedXml("comments"));
+				} else if b != TOK_XML_CDATA_START[i] {
+					return Err(Error::NotWellFormed(WFError::InvalidSyntax("malformed cdata section start")));
 				}
 				let next = i + 1;
 				if next == TOK_XML_CDATA_START.len() {
-					Ok(ST(State::CDataSection(0), self.flush_text_safe(Vec::new())?))
+					self.drop_scratchpad()?;
+					Ok(ST(
+						State::CDataSection(0),
+						self.maybe_flush_scratchpad_as_text()?,
+					))
 				} else {
-					Ok(ST(State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(next))), None))
-				}
-			},
-			ContentState::MaybeElement(MaybeElementState::Footer) => {
-				let next = self.peek_single(r)?;
-				if byte_maybe_xml_namestart(next) {
-					match self.read_up_to_limited(r, &XMLNonNameBytePreselector(), self.opts.max_token_length)? {
-						Some((data, _)) => Ok(ST(State::Element{ kind: ElementKind::ElementFoot, state: ElementState::Blank }, Some(Token::ElementFootStart(String::from_utf8(data)?)))),
-						None => panic!("looong element"),
-					}
-				} else {
-					Err(Error::NotWellFormed(format!("'</' followed by unexpected byte: {}", next)))
+					Ok(ST(
+						State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(next))), None,
+					))
 				}
 			},
 		}
 	}
 
-	fn lex_element_postblank<'r, R: io::BufRead + ?Sized>(&mut self, r: &'r mut R, kind: ElementKind, v: u8) -> Result<ElementState> {
-		match v {
-			b'"' | b'\'' => {
-				self.read_single(r)?;
-				Ok(ElementState::AttributeValue(v))
+	fn lex_element_postblank(&mut self, kind: ElementKind, utf8ch: Utf8Char) -> Result<ElementState> {
+		match utf8ch.to_char() {
+			' ' | '\t' | '\r' | '\n' => Ok(ElementState::Blank),
+			'"' => Ok(ElementState::AttributeValue('"', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED))),
+			'\'' => Ok(ElementState::AttributeValue('\'', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED))),
+			'=' => Ok(ElementState::Eq),
+			'>' => match kind {
+				ElementKind::Footer | ElementKind::Header => Ok(ElementState::Close),
+				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_XML_DECL, '>', Some(&["?"])))),
+			}
+			'?' => match kind {
+				ElementKind::XMLDecl => Ok(ElementState::MaybeXMLDeclEnd),
+				_ => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ELEMENT, '?', None))),
 			},
-			b'=' => {
-				Ok(ElementState::Eq)
+			'/' => match kind {
+				ElementKind::Header => Ok(ElementState::MaybeHeadClose),
+				ElementKind::Footer => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ELEMENT_FOOT, '/', None))),
+				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_XML_DECL, '/', None))),
 			},
-			v if byte_maybe_xml_name(v) => {
+			ch if CLASS_XML_NAMESTART.select(ch) => {
+				// write the char to scratchpad because it’ll be needed.
+				self.scratchpad.push_str(utf8ch.as_str());
 				Ok(ElementState::Name)
 			},
-			b'?' => match kind {
-				ElementKind::XMLDecl => {
-					self.read_single(r)?;
-					Ok(ElementState::MaybeXMLDeclEnd)
+			ch => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				match kind {
+					ElementKind::XMLDecl => ERRCTX_XML_DECL,
+					_ => ERRCTX_ELEMENT,
 				},
-				_ => Err(Error::NotWellFormed(format!("'?' not allowed in elements'"))),
-			},
-			// we could skip here, but that would just be a move of the entire
-			// buffer for no real gain.
-			b' ' => Ok(ElementState::Blank),
-			b'/' => match kind {
-				ElementKind::ElementHead => {
-					self.read_single(r)?;
-					Ok(ElementState::MaybeHeadClose)
-				},
-				_ => Err(Error::NotWellFormed(format!("'/' not allowed in xml declarations or element footers")))
-			},
-			b'>' => Ok(ElementState::Close),
-			_ => Err(Error::NotWellFormed(format!("invalid byte in element: {}", v)))
+				ch,
+				Some(&["whitespace", "\"", "'", "=", ">", "?", "/", "start of name"]),
+			))),
 		}
 	}
 
-	fn lex_element<'r, R: io::BufRead + ?Sized>(&mut self, kind: ElementKind, state: ElementState, r: &'r mut R) -> Result<ST> {
+	fn lex_element<'r, R: CodepointRead>(&mut self, kind: ElementKind, state: ElementState, r: &'r mut R) -> Result<ST> {
 		match state {
-			// look for next non-space thing and check what to do with it
-			ElementState::Blank => {
-				let v = self.skip_spaces(r)?;
-				Ok(ST(State::Element{ kind: kind, state: self.lex_element_postblank(r, kind, v)? }, None))
-			},
-			ElementState::Name => match self.read_up_to_limited(r, &XMLNonNameBytePreselector(), self.opts.max_token_length)? {
-				Some((data, delim)) => {
-					Ok(ST(State::Element{ kind: kind, state: self.lex_element_postblank(r, kind, delim)? }, Some(Token::Name(String::from_utf8(data)?))))
+			ElementState::Start => match self.read_validated(r, &CLASS_XML_NAME, self.opts.max_token_length)? {
+				Endpoint::Eof => Err(Error::wfeof(ERRCTX_NAME)),
+				Endpoint::Limit => Err(self.token_length_error()),
+				Endpoint::Delimiter(ch) => {
+					Ok(ST(
+						State::Element{
+							kind: kind,
+							state: self.lex_element_postblank(kind, ch)?
+						},
+						Some(match kind {
+							ElementKind::Header => Token::ElementHeadStart(self.flush_scratchpad()?),
+							ElementKind::Footer => Token::ElementFootStart(self.flush_scratchpad()?),
+							ElementKind::XMLDecl => panic!("invalid state"),
+						}),
+					))
 				},
-				None => Err(self.token_length_error()),
 			},
-			ElementState::Eq => {
-				let next = self.read_single(r)?;
-				match next {
-					b'=' => Ok(ST(State::Element{ kind: kind, state: ElementState::Blank }, Some(Token::Eq))),
-					_ => Err(Error::NotWellFormed("expected '='".to_string())),
-				}
-			},
-			ElementState::AttributeValue(delim) => {
-				// XML 1.0 §2.3 [10] AttValue
-				let delimiters = &[b'<', b'&', delim][..];
-				match self.read_up_to_limited(r, &delimiters, self.opts.max_token_length)? {
-					Some((data, b'<')) => Err(Error::NotWellFormed("'<' encountered in attribute value".to_string())),
-					Some((data, b'&')) => {
-						self.flush_to_scratchpad(data)?;
-						self.read_single(r)?;
-						Ok(ST(State::Reference{
-							ret: Box::new(State::Element{
-								kind: kind,
-								state: ElementState::AttributeValue(delim),
-							}),
-							kind: RefKind::Entity,
-						}, None))
+			// look for next non-space thing and check what to do with it
+			ElementState::Blank => match skip_matching(r, &CLASS_XML_SPACES)? {
+				Endpoint::Eof | Endpoint::Limit => Err(Error::wfeof(ERRCTX_ELEMENT)),
+				Endpoint::Delimiter(ch) => Ok(ST(
+					State::Element{
+						kind: kind,
+						state: self.lex_element_postblank(kind, ch)?,
 					},
-					Some((data, delim)) => {
-						// end of attribute \o/
-						self.flush_to_scratchpad(data)?;
-						self.read_single(r)?;
-						Ok(ST(State::Element{ kind: kind, state: ElementState::Blank }, Some(Token::AttributeValue(self.read_scratchpad()?))))
+					None,
+				)),
+			},
+			ElementState::Name => match self.read_validated(r, &CLASS_XML_NAME, self.opts.max_token_length)? {
+				Endpoint::Eof => Err(Error::wfeof(ERRCTX_NAME)),
+				Endpoint::Limit => Err(self.token_length_error()),
+				Endpoint::Delimiter(ch) => {
+					Ok(ST(
+						State::Element{
+							kind: kind,
+							state: self.lex_element_postblank(kind, ch)?
+						},
+						Some(Token::Name(self.flush_scratchpad()?)),
+					))
+				},
+			},
+			// XML 1.0 §2.3 [10] AttValue
+			ElementState::AttributeValue(delim, selector) => match self.read_validated(r, &selector, self.opts.max_token_length)? {
+				Endpoint::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
+				Endpoint::Limit => Err(self.token_length_error()),
+				Endpoint::Delimiter(utf8ch) => match utf8ch.to_char() {
+					'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ATTVAL, '<', None))),
+					'&' => {
+						// must swap scratchpad here to avoid clobbering the
+						// attribute value during entity read
+						self.swap_scratchpad()?;
+						Ok(ST(
+							State::Reference{
+								ctx: ERRCTX_ATTVAL,
+								ret: Box::new(State::Element{
+									kind: kind,
+									state: ElementState::AttributeValue(delim, selector),
+								}),
+								kind: RefKind::Entity,
+							}, None
+						))
 					},
-					None => Err(self.token_length_error()),
-				}
+					d if d == delim => Ok(ST(
+						State::Element{
+							kind: kind,
+							state: ElementState::Blank
+						},
+						Some(Token::AttributeValue(self.flush_scratchpad()?)),
+					)),
+					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+						ERRCTX_ATTVAL,
+						other,
+						None,
+					)))
+				},
 			},
-			ElementState::MaybeXMLDeclEnd => {
-				let next = self.read_single(r)?;
-				match next {
-					b'>' => Ok(ST(State::Content(ContentState::Initial), Some(Token::XMLDeclEnd))),
-					_ => Err(Error::NotWellFormed("'?' not followed by '>' at end of xml declaration".to_string()))
-				}
+			ElementState::MaybeXMLDeclEnd => match self.read_single(r)? {
+				Some(ch) if ch.to_char() == '>' => {
+					self.drop_scratchpad()?;
+					Ok(ST(
+						State::Content(ContentState::Initial),
+						Some(Token::XMLDeclEnd),
+					))
+				},
+				Some(ch) => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					ERRCTX_XML_DECL_END,
+					ch.to_char(),
+					Some(&[">"]),
+				))),
+				None => panic!("eof during xml decl"),
 			},
-			ElementState::MaybeHeadClose => {
-				let next = self.read_single(r)?;
-				match next {
-					b'>' => Ok(ST(State::Content(ContentState::Initial), Some(Token::ElementHeadClose))),
-					_ => Err(Error::NotWellFormed("'/' not followed by '>' at end of element".to_string()))
-				}
+			ElementState::MaybeHeadClose => match self.read_single(r)? {
+				Some(ch) if ch.to_char() == '>' => {
+					self.drop_scratchpad()?;
+					Ok(ST(
+						State::Content(ContentState::Initial),
+						Some(Token::ElementHeadClose),
+					))
+				},
+				Some(ch) => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					ERRCTX_ELEMENT_CLOSE,
+					ch.to_char(),
+					Some(&[">"]),
+				))),
+				None => panic!("eof during element"),
 			},
-			ElementState::Close => {
-				let next = self.read_single(r)?;
-				match next {
-					b'>' => Ok(ST(State::Content(ContentState::Initial), Some(Token::ElementHFEnd))),
-					_ => Err(Error::NotWellFormed("'>' expected".to_string()))
-				}
-			},
+			// do NOT read anything here; this state is entered when
+			// another state has read a '='. We can always transition to
+			// Blank afterward, as that will read the next char and decide
+			// (and potentially scratchpad) correctly.
+			ElementState::Eq => Ok(ST(
+				State::Element{
+					kind: kind,
+					state: ElementState::Blank,
+				},
+				Some(Token::Eq),
+			)),
+			// like with Eq, no read here
+			ElementState::Close => Ok(ST(
+				State::Content(ContentState::Initial),
+				Some(Token::ElementHFEnd),
+			)),
 		}
 	}
 
-	fn lex_reference<'r, R: io::BufRead + ?Sized>(&mut self, ret: Box<State>, kind: RefKind, r: &'r mut R) -> Result<ST> {
+	fn lex_reference<'r, R: CodepointRead>(&mut self, ctx: &'static str, ret: Box<State>, kind: RefKind, r: &'r mut R) -> Result<ST> {
 		let result = match kind {
-			RefKind::Entity => self.read_up_to_limited(r, &XMLNonNameBytePreselector(), MAX_REFERENCE_LENGTH)?,
-			RefKind::Char(CharRefRadix::Decimal) => self.read_up_to_limited(r, &InvertDelimiters(&CLASS_XML_DECIMAL_DIGITS), MAX_REFERENCE_LENGTH)?,
-			RefKind::Char(CharRefRadix::Hexadecimal) => self.read_up_to_limited(r, &InvertDelimiters(&CLASS_XML_HEXADECIMAL_DIGITS), MAX_REFERENCE_LENGTH)?,
+			RefKind::Entity => self.read_validated(r, &CLASS_XML_NAME, MAX_REFERENCE_LENGTH)?,
+			RefKind::Char(CharRefRadix::Decimal) => self.read_validated(r, &CLASS_XML_DECIMAL_DIGITS, MAX_REFERENCE_LENGTH)?,
+			RefKind::Char(CharRefRadix::Hexadecimal) => self.read_validated(r, &CLASS_XML_HEXADECIMAL_DIGITS, MAX_REFERENCE_LENGTH)?,
 		};
 		let result = match result {
-			Some((data, b'#')) => {
-				if data.len() > 0 {
-					Err(b'#')
-				} else {
+			Endpoint::Eof => return Err(Error::wfeof(ERRCTX_REF)),
+			Endpoint::Limit => return Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
+			Endpoint::Delimiter(utf8ch) => match utf8ch.to_char() {
+				'#' => {
+					if self.scratchpad.len() > 0 {
+						Err('#')
+					} else {
+						match kind {
+							RefKind::Entity => {
+								return Ok(ST(
+									State::Reference{
+										ctx: ctx,
+										ret: ret,
+										kind: RefKind::Char(CharRefRadix::Decimal),
+									},
+									None,
+								))
+							},
+							_ => Err('#'),
+						}
+					}
+				},
+				'x' => {
+					if self.scratchpad.len() > 0 {
+						Err('x')
+					} else {
+						match kind {
+							RefKind::Char(CharRefRadix::Decimal) => {
+								return Ok(ST(
+									State::Reference{
+										ctx: ctx,
+										ret: ret,
+										kind: RefKind::Char(CharRefRadix::Hexadecimal),
+									},
+									None,
+								))
+							},
+							_ => Err('x'),
+						}
+					}
+				},
+				';' => {
+					// return to main scratchpad
+					self.swap_scratchpad()?;
+					// the entity reference is now in the swap (which we have to clear now, too)
+					let entity = self.read_swap();
 					match kind {
-						RefKind::Entity => {
-							self.read_single(r)?;
-							// early out here because we need to switch states
-							return Ok(ST(State::Reference{ ret: ret, kind: RefKind::Char(CharRefRadix::Decimal) }, None))
-						},
-						_ => Err(b'#'),
+						RefKind::Entity => Ok(add_context(resolve_named_entity(entity.as_str(), &mut self.scratchpad), ctx)?),
+						RefKind::Char(radix) => Ok(add_context(resolve_char_reference(entity.as_str(), radix, &mut self.scratchpad), ctx)?),
 					}
 				}
-			},
-			Some((data, b'x')) => {
-				if data.len() > 0 {
-					Err(b'x')
-				} else {
-					match kind {
-						RefKind::Char(CharRefRadix::Decimal) => {
-							self.read_single(r)?;
-							// early out here because we need to switch states
-							return Ok(ST(State::Reference{ ret: ret, kind: RefKind::Char(CharRefRadix::Hexadecimal) }, None))
-						},
-						_ => Err(b'x'),
-					}
-				}
-			},
-			Some((data, b';')) => {
-				self.read_single(r).unwrap();
-				match kind {
-					RefKind::Entity => Ok(resolve_named_entity(data.as_slice())?),
-					RefKind::Char(radix) => Ok(resolve_char_reference(data.as_slice(), radix)?),
-				}
-			},
-			Some((_, invalid)) => Err(invalid),
-			None => return Err(Error::NotWellFormed(format!("undeclared entity (entity name too long)"))),
+				c => Err(c),
+			}
 		};
 		match result {
-			Ok(ch) => {
-				self.scratchpad.push(ch);
-				Ok(ST(*ret, None))
-			},
-			Err(b) => return Err(Error::NotWellFormed(format!("entity must be terminated with ';', not {:?}", DebugByte(b)))),
+			Ok(_) => Ok(ST(*ret, None)),
+			Err(ch) => return Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				ERRCTX_REF,
+				ch,
+				Some(&[";"]),
+			))),
 		}
 	}
 
-	fn lex_cdata_section<'r, R: io::BufRead + ?Sized>(&mut self, mut nend: usize, r: &'r mut R) -> Result<ST> {
-		if nend == 2 {
-			// we read two consecutive b']', so we now need to check for a
-			// single b'>'.
-			let next = self.read_single(r)?;
-			if next == b'>' {
-				// end of CDATA section, flush the scratchpad
-				return Ok(ST(State::Content(ContentState::Initial), self.flush_text_safe(Vec::new())?))
-			} else {
-				// not a b'>', thus we have to add the two b']' and whatever
-				// we just found to the scratchpad
-				self.scratchpad.push_str("]]");
-				self.scratchpad.push(next as char);
-				// continue with the CDATA section as before
-				return Ok(ST(State::CDataSection(0), self.flush_text_safe(Vec::new())?))
-			}
-		}
-
-		match self.read_up_to_limited(r, &b']', self.opts.max_token_length)? {
-			Some((data, b']')) => {
-				self.read_single(r)?;
-				if data.len() > 0 {
-					nend = 0;
-				}
-				nend += 1;
-				return Ok(ST(State::CDataSection(nend), self.flush_text_safe(data)?))
+	fn lex_cdata_section<'r, R: CodepointRead>(&mut self, nend: usize, r: &'r mut R) -> Result<ST> {
+		match nend {
+			0 => match self.read_validated(r, &CodepointRanges(VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED), self.opts.max_token_length)? {
+				Endpoint::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
+				Endpoint::Limit => Ok(ST(
+					State::CDataSection(0),
+					self.maybe_flush_scratchpad_as_text()?,
+				)),
+				Endpoint::Delimiter(_) => {
+					// we know that the delimiter is ']' -> transition into the "first delimiter found" state
+					Ok(ST(
+						State::CDataSection(1),
+						None,
+					))
+				},
 			},
-			Some((_, invalid)) => panic!("unexpected delimiter returned: {:?}", invalid),
-			None => panic!("loooong cdata text"),
+			1 => {
+				// we found one ']', so we read the next thing and check if it is another ']'
+				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION)?;
+				let ch = utf8ch.to_char();
+				if ch == ']' {
+					// one step closer
+					Ok(ST(
+						State::CDataSection(2),
+						None,
+					))
+				} else {
+					// not the ']' we were looking for -- flush the "buffered" non-delimiter to the scratchpad and continue
+					self.scratchpad.push_str("]");
+					self.scratchpad.push_str(utf8ch.as_str());
+					Ok(ST(
+						State::CDataSection(0),
+						None,
+					))
+				}
+			},
+			2 => {
+				// we read two consecutive ']', so we now need to check for a single '>'.
+				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION)?;
+				let ch = utf8ch.to_char();
+				if ch == '>' {
+					// end of CDATA section, flush the scratchpad
+					Ok(ST(
+						State::Content(ContentState::Initial),
+						self.maybe_flush_scratchpad_as_text()?,
+					))
+				} else {
+					// not a '>', thus we have to add the two ']' and whatever we just found to the scratchpad
+					self.scratchpad.push_str("]]");
+					self.scratchpad.push_str(utf8ch.as_str());
+					// continue with the CDATA section as before without unnecessary flush
+					Ok(ST(
+						State::CDataSection(0),
+						None,
+					))
+				}
+			},
+			_ => panic!("invalid state"),
 		}
 	}
 
@@ -681,14 +846,15 @@ impl Lexer {
 	///
 	/// **Note**: While it is possible to swap the reader, that is highly
 	/// not recommended as the lexer state may depend on lookaheads.
-	pub fn lex<'r, R: io::BufRead + ?Sized>(&mut self, r: &'r mut R) -> Result<Option<Token>>
+	pub fn lex<'r, R: CodepointRead>(&mut self, r: &'r mut R) -> Result<Option<Token>>
 	{
 		loop {
 			let result = match self.state.clone() {
 				State::Content(substate) => self.lex_content(substate.clone(), r),
 				State::Element{ kind, state: substate } => self.lex_element(kind, substate.clone(), r),
-				State::Reference{ ret, kind } => self.lex_reference(ret, kind, r),
+				State::Reference{ ctx, ret, kind } => self.lex_reference(ctx, ret, kind, r),
 				State::CDataSection(nend) => self.lex_cdata_section(nend, r),
+				State::Eof => return Ok(None),
 			};
 			let st = match result {
 				Err(e) => match e {
@@ -705,8 +871,25 @@ impl Lexer {
 				Ok(st) => Ok(st),
 			}?;
 			match st.splice(&mut self.state) {
-				Some(tok) => return Ok(Some(tok)),
+				Some(tok) => {
+					#[cfg(debug_assertions)]
+					{
+						// preserve the state for infinite loop detection
+						self.prev_state = (self.scratchpad.clone(), self.state.clone());
+					}
+					return Ok(Some(tok));
+				},
 				None => (),
+			};
+			#[cfg(debug_assertions)]
+			{
+				// we did not leave the loop; assert that the state has
+				// actually changed
+				if self.prev_state.0 == self.scratchpad && self.prev_state.1 == self.state {
+					panic!("state has not changed in the last iteration: {:?} {:?} last read: {:?}", self, self.scratchpad, self.last_single_read)
+				} else {
+					self.prev_state = (self.scratchpad.clone(), self.state.clone())
+				}
 			}
 		}
 	}
@@ -726,28 +909,44 @@ pub trait Sink {
 	fn token(&mut self, token: Token);
 }
 
-/// Stream tokens to the sink until the end of stream is reached.
-fn stream_to_sink<'r, 's, 'l, R: io::BufRead + ?Sized, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> Result<()> {
-	loop {
-		match l.lex(r) {
-			Ok(Some(tok)) => {
-				s.token(tok);
-			},
-			Ok(None) => {
-				break;
-			},
-			Err(e) => return Err(e),
-		}
-	}
-	Ok(())
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
 	use std::fmt;
-	use std::io::Read;
 	use std::error;
+	use crate::lexer::read::DecodingReader;
+
+	/// Stream tokens to the sink until the end of stream is reached.
+	fn stream_to_sink<'r, 's, 'l, R: CodepointRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> Result<()> {
+		loop {
+			match l.lex(r) {
+				Ok(Some(tok)) => {
+					s.token(tok);
+				},
+				Ok(None) => {
+					break;
+				},
+				Err(e) => return Err(e),
+			}
+		}
+		Ok(())
+	}
+
+	fn stream_to_sink_from_bytes<'r, 's, 'l, R: io::BufRead + ?Sized, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> Result<()> {
+		let mut r = DecodingReader::new(r);
+		loop {
+			match l.lex(&mut r) {
+				Ok(Some(tok)) => {
+					s.token(tok);
+				},
+				Ok(None) => {
+					break;
+				},
+				Err(e) => return Err(e),
+			}
+		}
+		Ok(())
+	}
 
 	struct VecSink {
 		dest: Vec<Token>,
@@ -791,113 +990,11 @@ mod tests {
 
 	fn run_fuzz_test(data: &[u8], token_limit: usize) -> Result<Vec<Token>> {
 		let mut buff = io::BufReader::new(data);
+		let mut src = DecodingReader::new(&mut buff);
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
-		stream_to_sink(&mut lexer, &mut buff, &mut sink)?;
+		stream_to_sink(&mut lexer, &mut src, &mut sink)?;
 		Ok(sink.dest)
-	}
-
-	#[test]
-	fn read_up_to_limited_limits() {
-		let mut src = "<?xml version='1.0'?>".as_bytes();
-		// use a capacity of 1 to allow limiting to kick in
-		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut out: Vec<u8> = Vec::new();
-		// that is a space
-		let result = read_up_to_limited(&mut buffered, &32u8, &mut out, 4);
-		assert!(result.is_ok());
-		assert_eq!(result.unwrap(), (4, None));
-		assert_eq!(out.as_slice(), "<?xm".as_bytes());
-	}
-
-	#[test]
-	fn read_up_to_limited_finds_delimiter() {
-		let mut src = "<?xml version='1.0'?>".as_bytes();
-		// use a capacity of 1 to allow limiting to kick in
-		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut out: Vec<u8> = Vec::new();
-		// that is a space
-		let result = read_up_to_limited(&mut buffered, &32u8, &mut out, 6);
-		assert!(result.is_ok());
-		assert_eq!(result.unwrap(), (5, Some(32u8)));
-		assert_eq!(out.as_slice(), "<?xml".as_bytes());
-	}
-
-	#[test]
-	fn read_up_to_limited_uses_buffer_beyond_limit_if_available() {
-		let mut src = "<?xml version='1.0'?>".as_bytes();
-		// use a capacity of 1 to allow limiting to kick in
-		let mut buffered = io::BufReader::with_capacity(8, src);
-		let mut out: Vec<u8> = Vec::new();
-		// that is a space
-		let result = read_up_to_limited(&mut buffered, &32u8, &mut out, 4);
-		assert!(result.is_ok());
-		assert_eq!(result.unwrap(), (5, Some(32u8)));
-		assert_eq!(out.as_slice(), "<?xml".as_bytes());
-	}
-
-	#[test]
-	fn read_up_to_limited_finds_delimiter_but_does_not_consume_it() {
-		let mut src = "<?xml version='1.0'?>".as_bytes();
-		// use a capacity of 1 to allow limiting to kick in
-		let mut buffered = io::BufReader::with_capacity(8, src);
-		let mut out: Vec<u8> = Vec::new();
-		// that is a space
-		let result = read_up_to_limited(&mut buffered, &32u8, &mut out, 4);
-		assert!(result.is_ok());
-		assert_eq!(result.unwrap(), (5, Some(32u8)));
-		assert_eq!(out.as_slice(), "<?xml".as_bytes());
-
-		let mut out = 0u8;
-		assert!(buffered.read_exact(slice::from_mut(&mut out)).is_ok());
-		assert_eq!(out, 32u8);
-	}
-
-	#[test]
-	fn discard_up_to_does_not_discard_match() {
-		let mut src = "<?xml version='1.0'?>".as_bytes();
-		let mut out: Vec<u8> = Vec::new();
-		// that is a space
-		let result = discard_up_to(&mut src, &32u8);
-		assert!(result.is_ok());
-		assert_eq!(result.unwrap(), 32u8);
-		let mut out = 0u8;
-		assert!(src.read_exact(slice::from_mut(&mut out)).is_ok());
-		assert_eq!(out, 32u8);
-	}
-
-	#[test]
-	fn u8_slice_byteselector_matches_any() {
-		let selector = &[b' ', b'x'][..];
-		let s1 = b"foobar";
-		let s2 = b"yax";
-		let s3 = b"foo bar baz";
-
-		assert_eq!(selector.find_any_first_in(s1), None);
-		assert_eq!(selector.find_any_first_in(s2), Some((2, b'x')));
-		assert_eq!(selector.find_any_first_in(s3), Some((3, b' ')));
-	}
-
-	#[test]
-	fn u8_byteselector_matches() {
-		let selector = b' ';
-		let s1 = b"foobar";
-		let s2 = b"foo bar baz";
-
-		assert_eq!(selector.find_any_first_in(s1), None);
-		assert_eq!(selector.find_any_first_in(s2), Some((3, b' ')));
-	}
-
-	#[test]
-	fn u8_slice_inverted_byteselector_matches() {
-		let selector = InvertDelimiters(&[b'f', b'o']);
-		let s1 = b"foobar";
-		let s2 = b"foo";
-		let s3 = b"foo bar baz";
-
-		assert_eq!(selector.find_any_first_in(s1), Some((3, b'b')));
-		assert_eq!(selector.find_any_first_in(s2), None);
-		assert_eq!(selector.find_any_first_in(s3), Some((3, b' ')));
 	}
 
 	#[test]
@@ -905,7 +1002,7 @@ mod tests {
 		let mut src = "<?xml".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
 		assert_eq!(sink.dest[0], Token::XMLDeclStart);
 	}
@@ -915,7 +1012,7 @@ mod tests {
 		let mut src = "<?xml version=".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
 		assert_eq!(sink.dest[1], Token::Name("version".to_string()));
 	}
@@ -925,7 +1022,7 @@ mod tests {
 		let mut src = "<?xml version=".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
 		assert_eq!(sink.dest[2], Token::Eq);
 	}
@@ -935,7 +1032,7 @@ mod tests {
 		let mut src = "<?xml version='1.0'".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
 		assert_eq!(sink.dest[3], Token::AttributeValue("1.0".to_string()));
 	}
@@ -945,7 +1042,7 @@ mod tests {
 		let mut src = "<?xml version=\"1.0\"".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
 		assert_eq!(sink.dest[3], Token::AttributeValue("1.0".to_string()));
 	}
@@ -955,7 +1052,7 @@ mod tests {
 		let mut src = "<?xml version=\"1.0\"?>".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		assert_eq!(sink.dest[4], Token::XMLDeclEnd);
 	}
@@ -965,7 +1062,7 @@ mod tests {
 		let mut src = "<?xml version=\"1.0\" encoding='utf-8'?>".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
+		let result = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink);
 
 		assert!(result.is_ok());
 		assert_eq!(sink.dest[0], Token::XMLDeclStart);
@@ -983,7 +1080,7 @@ mod tests {
 		let mut src = &b"<element "[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
 		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
 	}
@@ -993,7 +1090,7 @@ mod tests {
 		let mut src = &b"<element/>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
 		assert_eq!(sink.dest[1], Token::ElementHeadClose);
@@ -1004,7 +1101,7 @@ mod tests {
 		let mut src = &b"<element>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
 		assert_eq!(sink.dest[1], Token::ElementHFEnd);
@@ -1015,7 +1112,7 @@ mod tests {
 		let mut src = &b"<element></element>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
 		assert_eq!(sink.dest[1], Token::ElementHFEnd);
@@ -1028,7 +1125,7 @@ mod tests {
 		let mut src = &b"<element x='foo' y=\"bar\" xmlns='baz' xmlns:abc='fnord'>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("element".to_string()));
@@ -1052,7 +1149,7 @@ mod tests {
 		let mut src = &b"<root>Hello World!</root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1067,7 +1164,7 @@ mod tests {
 		let mut src = &b"<root>&amp;</root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1082,7 +1179,7 @@ mod tests {
 		let mut src = &b"<root>&#60;</root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1097,7 +1194,7 @@ mod tests {
 		let mut src = &b"<root>&#x3e;</root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1112,7 +1209,7 @@ mod tests {
 		let mut src = &b"<root>&#60;example foo=&quot;bar&quot; baz=&apos;fnord&apos;/&gt;</root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1135,7 +1232,7 @@ mod tests {
 		let mut src = &b"<root>&#x00;</root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
+		let result = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink);
 		assert!(matches!(result, Err(Error::NotWellFormed(_))));
 	}
 
@@ -1144,7 +1241,7 @@ mod tests {
 		let mut src = &b"<root foo='&amp;'>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1158,7 +1255,7 @@ mod tests {
 		let mut src = &b"<root foo='&#60;example foo=&quot;bar&quot; baz=&apos;fnord&apos;/&gt;'>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1172,7 +1269,7 @@ mod tests {
 		let mut src = &b"<root><![CDATA[<example foo=\"bar\" baz='fnord'/>]]></root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1187,7 +1284,7 @@ mod tests {
 		let mut src = &b"<root><![CDATA[]]></root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1201,7 +1298,7 @@ mod tests {
 		let mut src = &b"<root>foobar <![CDATA[Hello <fun>]]</fun>&amp;games world!]]> </root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut src, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
@@ -1226,7 +1323,7 @@ mod tests {
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
-		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
+		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
 		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
@@ -1237,7 +1334,7 @@ mod tests {
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
-		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
+		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
 		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
@@ -1248,7 +1345,7 @@ mod tests {
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
-		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
+		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
 		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
@@ -1259,7 +1356,7 @@ mod tests {
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
-		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
+		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
 		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
@@ -1270,7 +1367,7 @@ mod tests {
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut buffered, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).unwrap();
 	}
 
 	#[test]
@@ -1279,7 +1376,7 @@ mod tests {
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
-		stream_to_sink(&mut lexer, &mut buffered, &mut sink).unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("a".to_string()));
@@ -1306,10 +1403,10 @@ mod tests {
 		assert!(result.is_err());
 	}
 
-	/* #[test]
+	#[test]
 	fn fuzz_9bde23591fb17cd7() {
 		let src = &b"<\x01\x00m\x00\x00\x02\x00\x00?xml\x20vkrsl\x20<?xml\x20vkrs\x00\x30\x27\x00?>\x0a"[..];
 		let result = run_fuzz_test(src, 128);
 		assert!(result.is_err());
-	} */
+	}
 }

@@ -1,139 +1,66 @@
-pub trait ByteSelector<'x> {
-	fn find_any_first_in<'b>(&'x self, haystack: &'b [u8]) -> Option<(usize, u8)>;
-}
+use std::fmt;
 
-/// Select bytes which may be part of an XML name.
-///
-/// As this operates on bytes and does not decode UTF-8, it is only an
-/// approximation. Full validation of XML name requirements need to be done at
-/// a later stage.
-pub struct XMLNameBytePreselector();
-pub struct XMLNonNameBytePreselector();
-
-#[inline]
-pub fn byte_maybe_xml_name(v: u8) -> bool {
-	match v {
-		b':' => true,
-		b'_' => true,
-		b'A'..=b'Z' => true,
-		b'a'..=b'z' => true,
-		// name only
-		b'-' => true,
-		b'.' => true,
-		b'0'..=b'9' => true,
-		// end of name only
-		// unicode maybe part of a name
-		0x80u8..=0xffu8 => true,
-		_ => false,
-	}
-}
-
-#[inline]
-pub fn byte_maybe_xml_namestart(v: u8) -> bool {
-	match v {
-		b':' => true,
-		b'_' => true,
-		b'A'..=b'Z' => true,
-		b'a'..=b'z' => true,
-		// unicode maybe part of a name
-		0x80u8..=0xffu8 => true,
-		_ => false,
-	}
-}
-
-impl ByteSelector<'_> for XMLNameBytePreselector {
-	#[inline]
-	fn find_any_first_in<'b>(&self, haystack: &'b [u8]) -> Option<(usize, u8)> {
-		for (i, b) in haystack.iter().enumerate() {
-			let b = *b;
-			if byte_maybe_xml_name(b) {
-				return Some((i, b))
-			}
-		}
-		None
-	}
-}
-
-impl ByteSelector<'_> for XMLNonNameBytePreselector {
-	#[inline]
-	fn find_any_first_in<'b>(&self, haystack: &'b [u8]) -> Option<(usize, u8)> {
-		for (i, b) in haystack.iter().enumerate() {
-			let b = *b;
-			if !byte_maybe_xml_name(b) {
-				return Some((i, b))
-			}
-		}
-		None
-	}
-}
-
-pub struct InvertDelimiters<'x>(pub &'x [u8]);
-
-impl<'x> ByteSelector<'x> for InvertDelimiters<'x> {
-	#[inline]
-	fn find_any_first_in<'b>(&'x self, haystack: &'b [u8]) -> Option<(usize, u8)> {
-		let delimiters = self.0;
-		for (i, b) in haystack.iter().enumerate() {
-			let mut matches_any = false;
-			for d in delimiters.iter() {
-				if *d == *b {
-					matches_any = true;
-					break;
-				}
-			}
-			if !matches_any {
-				return Some((i, *b))
-			}
-		}
-		None
-	}
-}
-
-impl<'x> ByteSelector<'x> for &'x [u8] {
-	#[inline]
-	fn find_any_first_in<'b>(&'x self, haystack: &'b [u8]) -> Option<(usize, u8)> {
-		for (i, b) in haystack.iter().enumerate() {
-			for d in self.iter() {
-				if *d == *b {
-					return Some((i, *d))
-				}
-			}
-		}
-		None
-	}
-}
-
-impl<'x> ByteSelector<'x> for u8 {
-	#[inline]
-	fn find_any_first_in<'b>(&'x self, haystack: &'b [u8]) -> Option<(usize, u8)> {
-		for (i, b) in haystack.iter().enumerate() {
-			if *self == *b {
-				return Some((i, *self))
-			}
-		}
-		None
-	}
-}
-
-
-const DELIM_ELEMENT_START: u8 = '<' as u8;
-const DELIM_REF_START: u8 = '&' as u8;
-pub const DELIM_TEXT_STATE_EXIT: &'static [u8] = &[DELIM_ELEMENT_START, DELIM_REF_START];
-
-pub const CLASS_XML_SPACES: &'static [u8] = b" \t\r\n";
-pub const CLASS_XML_DECIMAL_DIGITS: &'static [u8] = b"0123456789";
-pub const CLASS_XML_HEXADECIMAL_DIGITS: &'static [u8] = b"0123456789abcdefABCDEF";
+use crate::lexer::read::CharSelector;
 
 
 // start to end (incl., because some of our edge points are not valid chars
 // in rust)
 pub struct CodepointRange(char, char);
 
+
 // XML 1.0 § 2.2
 pub const VALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 	CodepointRange('\x09', '\x0a'),
 	CodepointRange('\x0d', '\x0d'),
 	CodepointRange('\u{0020}', '\u{d7ff}'),
+	CodepointRange('\u{e000}', '\u{fffd}'),
+	CodepointRange('\u{10000}', '\u{10ffff}'),
+];
+
+
+// XML 1.0 § 2.4 [14]
+pub const VALID_XML_CDATA_RANGES_TEXT_DELIMITED: &'static [CodepointRange] = &[
+	CodepointRange('\x09', '\x0a'),
+	CodepointRange('\x0d', '\x0d'),
+	CodepointRange('\u{0020}', '\u{0025}'), // excludes &
+	CodepointRange('\u{0027}', '\u{003b}'), // excludes <
+	CodepointRange('\u{003d}', '\u{d7ff}'),
+	CodepointRange('\u{e000}', '\u{fffd}'),
+	CodepointRange('\u{10000}', '\u{10ffff}'),
+];
+
+
+// XML 1.0 § 2.3 [10]
+pub const VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED: &'static [CodepointRange] = &[
+	CodepointRange('\x09', '\x0a'),
+	CodepointRange('\x0d', '\x0d'),
+	CodepointRange('\u{0020}', '\u{0025}'), // excludes &, '
+	CodepointRange('\u{0028}', '\u{003b}'), // excludes <
+	CodepointRange('\u{003d}', '\u{d7ff}'),
+	CodepointRange('\u{e000}', '\u{fffd}'),
+	CodepointRange('\u{10000}', '\u{10ffff}'),
+];
+
+
+// XML 1.0 § 2.3 [10]
+pub const VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED: &'static [CodepointRange] = &[
+	CodepointRange('\x09', '\x0a'),
+	CodepointRange('\x0d', '\x0d'),
+	CodepointRange('\u{0020}', '\u{0021}'), // excludes "
+	CodepointRange('\u{0023}', '\u{0025}'), // excludes &
+	CodepointRange('\u{0027}', '\u{003b}'), // excludes <
+	CodepointRange('\u{003d}', '\u{d7ff}'),
+	CodepointRange('\u{e000}', '\u{fffd}'),
+	CodepointRange('\u{10000}', '\u{10ffff}'),
+];
+
+
+// XML 1.0 § 2.4 [14]
+pub const VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED: &'static [CodepointRange] = &[
+	CodepointRange('\x09', '\x0a'),
+	CodepointRange('\x0d', '\x0d'),
+	CodepointRange('\u{0020}', '\u{005c}'), // excludes ]
+	CodepointRange('\u{005e}', '\u{d7ff}'),
 	CodepointRange('\u{e000}', '\u{fffd}'),
 	CodepointRange('\u{10000}', '\u{10ffff}'),
 ];
@@ -184,9 +111,36 @@ const VALID_XML_NAME_RANGES: &'static [CodepointRange] = &[
 	CodepointRange('\u{10000}', '\u{effff}'),
 ];
 
+
+const VALID_XML_HEXADECIMALS: &'static [CodepointRange] = &[
+	CodepointRange('A', 'F'),
+	CodepointRange('0', '9'),
+	CodepointRange('a', 'f'),
+];
+
 impl CodepointRange {
 	pub fn contains(&self, c: char) -> bool {
 		return (self.0 <= c) && (c <= self.1)
+	}
+}
+
+pub struct CodepointRanges<'r>(pub &'r [CodepointRange]);
+
+pub static CLASS_XML_NAME: CodepointRanges = CodepointRanges(VALID_XML_NAME_RANGES);
+pub static CLASS_XML_NAMESTART: CodepointRanges = CodepointRanges(VALID_XML_NAME_START_RANGES);
+pub static CLASS_XML_SPACES: &'static [char] = &[' ', '\t', '\r', '\n'];
+pub const CLASS_XML_DECIMAL_DIGITS: CodepointRange = CodepointRange('0', '9');
+pub static CLASS_XML_HEXADECIMAL_DIGITS: CodepointRanges = CodepointRanges(VALID_XML_HEXADECIMALS);
+
+impl CharSelector for CodepointRange {
+	fn select(&self, c: char) -> bool {
+		self.contains(c)
+	}
+}
+
+impl CharSelector for CodepointRanges<'_> {
+	fn select(&self, c: char) -> bool {
+		contained_in_ranges(c, self.0)
 	}
 }
 
@@ -197,4 +151,22 @@ pub fn contained_in_ranges(c: char, rs: &[CodepointRange]) -> bool {
 		}
 	}
 	false
+}
+
+impl fmt::Debug for CodepointRanges<'_> {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		write!(f, "CodepointRanges(<{} ranges>)", self.0.len())
+	}
+}
+
+impl Clone for CodepointRanges<'static> {
+	fn clone(&self) -> Self {
+		CodepointRanges(self.0)
+	}
+}
+
+impl PartialEq for CodepointRanges<'static> {
+	fn eq(&self, other: &CodepointRanges<'static>) -> bool {
+		std::ptr::eq(&self.0, &other.0)
+	}
 }

@@ -40,6 +40,10 @@ impl Utf8Char {
 	pub fn to_char(&self) -> char {
 		self.ch
 	}
+
+	pub fn as_str<'x>(&'x self) -> &'x str {
+		AsRef::<str>::as_ref(self)
+	}
 }
 
 impl AsRef<[u8]> for Utf8Char {
@@ -81,7 +85,7 @@ pub struct DecodingReader<'x, T: io::BufRead + ?Sized> {
 }
 
 impl<'x, T: io::BufRead + ?Sized> DecodingReader<'x, T> {
-	fn new(r: &'x mut T) -> Self {
+	pub fn new(r: &'x mut T) -> Self {
 		Self{
 			backend: r,
 		}
@@ -168,8 +172,19 @@ impl CharSelector for char {
 	}
 }
 
-impl CharSelector for AllChars {
+impl CharSelector for &'_ [char] {
 	fn select(&self, c: char) -> bool {
+		for r in self.iter() {
+			if *r == c {
+				return true;
+			}
+		}
+		false
+	}
+}
+
+impl CharSelector for AllChars {
+	fn select(&self, _c: char) -> bool {
 		return true;
 	}
 }
@@ -199,6 +214,23 @@ pub fn read_validated<'r, 's, R: CodepointRead, S: CharSelector>(
 		into.push_str(utf8ch.as_ref());
 	}
 	Ok(Endpoint::Limit)
+}
+
+pub fn skip_matching<'r, 's, R: CodepointRead, S: CharSelector>(
+	r: &'r mut R,
+	selector: &'s S,
+	) -> Result<Endpoint>
+{
+	loop {
+		let utf8ch = match r.read()? {
+			None => return Ok(Endpoint::Eof),
+			Some(ch) => ch,
+		};
+		let ch = utf8ch.to_char();
+		if !selector.select(ch) {
+			return Ok(Endpoint::Delimiter(utf8ch))
+		}
+	}
 }
 
 #[cfg(test)]

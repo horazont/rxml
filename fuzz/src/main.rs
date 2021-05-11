@@ -2,17 +2,16 @@
 extern crate afl;
 extern crate xmppxml;
 
-use std::fmt;
 use std::io;
-use std::io::BufRead;
 
 fn main() {
     fuzz!(|data: &[u8]| {
 		let mut lexer = xmppxml::Lexer::new();
 		let mut buffered = io::BufReader::new(data);
+		let mut reader = xmppxml::DecodingReader::new(&mut buffered);
 
 		loop {
-			match lexer.lex(&mut buffered) {
+			match lexer.lex(&mut reader) {
 				Err(_) => return,
 				Ok(None) => return,
 				Ok(Some(_)) => (),
