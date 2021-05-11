@@ -149,7 +149,10 @@ impl<'a> fmt::Debug for DebugBytes<'a> {
 	}
 }
 
-const MAX_REFERENCE_LENGTH: usize = 32usize;
+// longest text-based entity is 4 chars
+// longest valid decimal entity is log(0x10ffff, 10) => 7
+// longest valid hexadecimal entity is 6.
+const MAX_REFERENCE_LENGTH: usize = 8usize;
 
 const TOK_XML_DECL_START: &'static [u8] = b"<?xml";
 const TOK_XML_CDATA_START: &'static [u8] = b"<![CDATA[";
@@ -666,7 +669,7 @@ impl Lexer {
 					ch.to_char(),
 					Some(&[">"]),
 				))),
-				None => panic!("eof during xml decl"),
+				None => Err(Error::wfeof(ERRCTX_XML_DECL_END)),
 			},
 			ElementState::MaybeHeadClose => match self.read_single(r)? {
 				Some(ch) if ch.to_char() == '>' => {
@@ -681,7 +684,7 @@ impl Lexer {
 					ch.to_char(),
 					Some(&[">"]),
 				))),
-				None => panic!("eof during element"),
+				None => Err(Error::wfeof(ERRCTX_ELEMENT_CLOSE)),
 			},
 			// do NOT read anything here; this state is entered when
 			// another state has read a '='. We can always transition to
@@ -751,6 +754,9 @@ impl Lexer {
 					}
 				},
 				';' => {
+					if self.scratchpad.len() == 0 {
+						return Err(Error::NotWellFormed(WFError::InvalidSyntax("empty reference")));
+					}
 					// return to main scratchpad
 					self.swap_scratchpad()?;
 					// the entity reference is now in the swap (which we have to clear now, too)
@@ -1389,23 +1395,23 @@ mod tests {
 	}
 
 	#[test]
-	fn fuzz_9b174f7ff3245b18() {
-		let src = &b"<!xml v<!xml v\x85rers\x8bon<!xml \x03\xe8\xff"[..];
-		let result = run_fuzz_test(src, 128);
-		assert!(result.is_err());
-		assert!(matches!(result, Err(Error::NotWellFormed(_))));
-	}
-
-	#[test]
-	fn fuzz_35cabf8da64df7d1() {
-		let src = &b"\x10\x00<!"[..];
+	fn lexer_handles_broken_numeric_entity_correctly() {
+		// trimmed testcase, found by afl
+		let src = &b"&#;"[..];
 		let result = run_fuzz_test(src, 128);
 		assert!(result.is_err());
 	}
 
 	#[test]
-	fn fuzz_9bde23591fb17cd7() {
-		let src = &b"<\x01\x00m\x00\x00\x02\x00\x00?xml\x20vkrsl\x20<?xml\x20vkrs\x00\x30\x27\x00?>\x0a"[..];
+	fn lexer_limits_decimal_entities() {
+		let src = &b"&#9999999999;"[..];
+		let result = run_fuzz_test(src, 128);
+		assert!(result.is_err());
+	}
+
+	#[test]
+	fn lexer_limits_hexadecimal_entities() {
+		let src = &b"&#x9999999999;"[..];
 		let result = run_fuzz_test(src, 128);
 		assert!(result.is_err());
 	}

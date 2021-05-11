@@ -9,7 +9,7 @@ for fn in sys.argv[1:]:
     id_ = hashlib.sha256(data).hexdigest()[:16]
 
     def encode_rustbyte(v):
-        if v == '"':
+        if v == ord('"'):
             return '\\"'
         if v >= 0x20 and v < 0x7f:
             return chr(v)

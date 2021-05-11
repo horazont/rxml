@@ -54,7 +54,12 @@ impl AsRef<[u8]> for Utf8Char {
 
 impl AsRef<str> for Utf8Char {
 	fn as_ref<'x>(&'x self) -> &'x str {
-		debug_assert!(std::str::from_utf8(&self.bytes[..self.nbytes as usize]).is_ok());
+		#[cfg(debug_assertions)]
+		{
+			if !std::str::from_utf8(&self.bytes[..self.nbytes as usize]).is_ok() {
+				panic!("invalid utf8 sequence in Utf8Char: {:?}", self)
+			}
+		}
 		unsafe { std::str::from_utf8_unchecked(&self.bytes[..self.nbytes as usize]) }
 	}
 }
@@ -101,23 +106,26 @@ impl<'x, T: io::BufRead + ?Sized> CodepointRead for DecodingReader<'x, T> {
 			None => return Ok(None),
 			Some(ch) => *ch,
 		};
-		if starter & 0x80 == 0 {
-			// ascii
-			self.backend.consume(1);
-			return Ok(Some(unsafe { Utf8Char::from_ascii_unchecked(starter) }));
-		}
+		let (mut raw, len, mut required_cont_mask) = match starter {
+			0x00..=0x7fu8 => {
+				// ascii
+				self.backend.consume(1);
+				return Ok(Some(unsafe { Utf8Char::from_ascii_unchecked(starter) }));
+			},
+			// note that 0xc0 and 0xc1 are a invalid start bytes because that is still ascii range
+			0xc2..=0xdfu8 => {
+				((starter & 0x1f) as u32, 2usize, 0xffu8)
+			},
+			0xe0..=0xefu8 => {
+				((starter & 0x0f) as u32, 3usize, 0x20u8)
+			},
+			0xf0..=0xf7u8 => {
+				((starter & 0x07) as u32, 4usize, 0x30u8)
+			},
+			_ => return Err(Error::InvalidStartByte(starter)),
+		};
 		out[out_offset] = starter;
 		out_offset += 1;
-
-		let (mut raw, len) = if starter & 0xe0 == 0xc0 {
-			((starter & 0x1f) as u32, 2usize)
-		} else if starter & 0xf0 == 0xe0 {
-			((starter & 0x0f) as u32, 3usize)
-		} else if starter & 0xf8 == 0xf0 {
-			((starter & 0x07) as u32, 4usize)
-		} else {
-			return Err(Error::InvalidStartByte(starter))
-		};
 
 		let mut more = len - 1;
 		let mut offset = 1;
@@ -134,10 +142,11 @@ impl<'x, T: io::BufRead + ?Sized> CodepointRead for DecodingReader<'x, T> {
 					return Err(Error::IO(io::Error::new(io::ErrorKind::UnexpectedEof, "eof within utf-8 sequence")));
 				},
 			};
-			if next & 0xc0 != 0x80 {
+			if next & 0xc0 != 0x80 || next & required_cont_mask == 0 {
 				self.backend.consume(offset);
 				return Err(Error::InvalidContByte(next));
 			}
+			required_cont_mask = 0xff;
 			out[out_offset] = next;
 			raw = (raw << 6) | ((next & 0x3f) as u32);
 			offset += 1;
@@ -299,6 +308,45 @@ mod tests {
 	}
 
 	#[test]
+	fn decoding_reader_rejects_utf8_which_is_noncanonical_two_byte_sequence() {
+		// found by afl
+		for first in 0xc0..=0xc1 {
+			let mut src = &[first, b'\xa5'][..];
+			let mut r = DecodingReader::new(&mut src);
+			let (v, err) = r.read_all();
+			match err {
+				Err(Error::InvalidStartByte(..)) => Ok(()),
+				Err(e) => Err(e),
+				Ok(()) => panic!("expected error"),
+			}.unwrap(); // let this panic usefully on mis-match
+		}
+	}
+
+	#[test]
+	fn decoding_reader_rejects_utf8_which_is_noncanonical_three_byte_sequence() {
+		let mut src = &b"\xe0\x82"[..];
+		let mut r = DecodingReader::new(&mut src);
+		let (v, err) = r.read_all();
+		match err {
+			Err(Error::InvalidContByte(..)) => Ok(()),
+			Err(e) => Err(e),
+			Ok(()) => panic!("expected error"),
+		}.unwrap(); // let this panic usefully on mis-match
+	}
+
+	#[test]
+	fn decoding_reader_rejects_utf8_which_is_noncanonical_four_byte_sequence() {
+		let mut src = &b"\xf0\x82"[..];
+		let mut r = DecodingReader::new(&mut src);
+		let (v, err) = r.read_all();
+		match err {
+			Err(Error::InvalidContByte(..)) => Ok(()),
+			Err(e) => Err(e),
+			Ok(()) => panic!("expected error"),
+		}.unwrap(); // let this panic usefully on mis-match
+	}
+
+	#[test]
 	fn utf8char_from_char() {
 		let ch = Utf8Char::from_char('x');
 		assert_eq!(AsRef::<str>::as_ref(&ch), "x");
@@ -377,4 +425,5 @@ mod tests {
 		assert!(matches!(result.unwrap(), Endpoint::Delimiter(c) if c.to_char() == 'n'));
 		assert_eq!(out, "fff".to_string());
 	}
+
 }
