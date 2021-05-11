@@ -1,33 +1,5 @@
 use std::io;
-use std::fmt;
-use core::result::Result as StdResult;
-
-#[derive(Debug)]
-pub enum Error {
-	IO(io::Error),
-	InvalidStartByte(u8),
-	InvalidContByte(u8),
-	InvalidChar(u32),
-}
-
-impl fmt::Display for Error {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		match self {
-			Error::IO(e) => write!(f, "I/O error: {}", e),
-			Error::InvalidStartByte(b) => write!(f, "invalid utf-8 start byte: \\x{:02x}", b),
-			Error::InvalidContByte(b) => write!(f, "invalid utf-8 continuation byte: \\x{:02x}", b),
-			Error::InvalidChar(ch) => write!(f, "invalid char: U+{:08x}", ch),
-		}
-	}
-}
-
-impl From<io::Error> for Error {
-	fn from(e: io::Error) -> Error {
-		Error::IO(e)
-	}
-}
-
-type Result<T> = StdResult<T, Error>;
+use crate::error::{Result, Error};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Utf8Char{
@@ -213,7 +185,7 @@ pub fn read_validated<'r, 's, R: CodepointRead, S: CharSelector>(
 	selector: &'s S,
 	limit: usize,
 	into: &mut String,
-	) -> (Result<Endpoint>)
+	) -> Result<Endpoint>
 {
 	for _ in 0..limit {
 		let utf8ch = match r.read()? {

@@ -1,17 +1,13 @@
 use std::io;
 use std::mem;
-use std::error;
-use std::string;
 use std::fmt;
 use std::slice;
-use std::result::Result as StdResult;
 
 mod selectors;
-mod utf8;
 mod read;
 
 use selectors::*;
-use utf8::*;
+use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -230,61 +226,6 @@ fn discard_up_to<'x, R: io::BufRead + ?Sized, S: ByteSelector<'x>>(r: &mut R, de
 	}
 }
 
-#[derive(Debug)]
-pub enum LexerError {
-	IO(io::Error),
-	Utf8(string::FromUtf8Error),
-	NotWellFormed(String),
-	NotValid,
-	RestrictedXml(String),
-}
-
-type Result<T> = StdResult<T, LexerError>;
-
-impl LexerError {
-	fn io(e: io::Error) -> LexerError {
-		LexerError::IO(e)
-	}
-
-	fn utf8(e: string::FromUtf8Error) -> LexerError {
-		LexerError::Utf8(e)
-	}
-}
-
-impl From<io::Error> for LexerError {
-	fn from(e: io::Error) -> LexerError {
-		LexerError::io(e)
-	}
-}
-
-impl From<string::FromUtf8Error> for LexerError {
-	fn from(e: string::FromUtf8Error) -> LexerError {
-		LexerError::utf8(e)
-	}
-}
-
-impl fmt::Display for LexerError {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		match self {
-			LexerError::NotWellFormed(msg) => write!(f, "not well formed: {}", msg),
-			LexerError::NotValid => f.write_str("invalid xml"),
-			LexerError::RestrictedXml(msg) => write!(f, "restricted xml: {}", msg),
-			LexerError::IO(e) => write!(f, "I/O error: {}", e),
-			LexerError::Utf8(e) => write!(f, "utf8 error: {}", e),
-		}
-	}
-}
-
-impl error::Error for LexerError {
-	fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-		match self {
-			LexerError::IO(e) => Some(e),
-			LexerError::Utf8(e) => Some(e),
-			LexerError::NotWellFormed(_) | LexerError::RestrictedXml(_) | LexerError::NotValid => None,
-		}
-	}
-}
-
 struct ST(State, Option<Token>);
 
 impl ST {
@@ -302,7 +243,7 @@ fn resolve_named_entity(name: &[u8]) -> Result<char> {
 		b"gt" => Ok('>'),
 		b"apos" => Ok('\''),
 		b"quot" => Ok('"'),
-		_ => Err(LexerError::NotWellFormed(format!("undeclared entity: {:?}", DebugBytes(name)))),
+		_ => Err(Error::NotWellFormed(format!("undeclared entity: {:?}", DebugBytes(name)))),
 	}
 }
 
@@ -314,16 +255,16 @@ fn resolve_char_reference(s: &[u8], radix: CharRefRadix) -> Result<char> {
 	};
 	let codepoint = match u32::from_str_radix(s, radix) {
 		Ok(v) => v,
-		Err(e) => return Err(LexerError::NotWellFormed(format!("invalid codepoint integer: {}", e))),
+		Err(e) => return Err(Error::NotWellFormed(format!("invalid codepoint integer: {}", e))),
 	};
 	let ch = match std::char::from_u32(codepoint) {
 		Some(ch) => ch,
-		None => return Err(LexerError::NotWellFormed(format!("character reference {:x} expands to invalid char", codepoint))),
+		None => return Err(Error::NotWellFormed(format!("character reference {:x} expands to invalid char", codepoint))),
 	};
 	if contained_in_ranges(ch, VALID_XML_CDATA_RANGES) {
 		Ok(ch)
 	} else {
-		Err(LexerError::NotWellFormed(format!("character {:?} is forbidden", ch)))
+		Err(Error::NotWellFormed(format!("character {:?} is forbidden", ch)))
 	}
 }
 
@@ -341,8 +282,8 @@ impl Lexer {
 		}
 	}
 
-	fn token_length_error(&self) -> LexerError {
-		LexerError::RestrictedXml(format!("maximum token length exceeded"))
+	fn token_length_error(&self) -> Error {
+		Error::RestrictedXml(format!("maximum token length exceeded"))
 	}
 
 	fn read_up_to_limited<'r, 'x, R: io::BufRead + ?Sized, S: ByteSelector<'x>>(&mut self, r: &'r mut R, delimiters: &'x S, limit: usize) -> io::Result<Option<(Vec<u8>, u8)>> {
@@ -414,7 +355,7 @@ impl Lexer {
 			return Ok(())
 		}
 		let new_size = match self.scratchpad.len().checked_add(add_size) {
-			None => return Err(LexerError::RestrictedXml(format!("length overflow"))),
+			None => return Err(Error::RestrictedXml(format!("length overflow"))),
 			Some(sz) => sz,
 		};
 		if new_size >= self.opts.max_token_length {
@@ -493,7 +434,7 @@ impl Lexer {
 							None => Err(self.token_length_error()),
 						}
 					} else {
-						Err(LexerError::NotWellFormed(format!("'<' followed by unexpected byte: {:?}", DebugByte(b))))
+						Err(Error::NotWellFormed(format!("'<' followed by unexpected byte: {:?}", DebugByte(b))))
 					}
 				}
 			},
@@ -501,7 +442,7 @@ impl Lexer {
 				debug_assert!(i < TOK_XML_DECL_START.len());
 				let next = self.read_single(r)?;
 				if next != TOK_XML_DECL_START[i] {
-					return Err(LexerError::RestrictedXml(format!("processing instructions prohibited")));
+					return Err(Error::RestrictedXml(format!("processing instructions prohibited")));
 				}
 				let next = i + 1;
 				if next == TOK_XML_DECL_START.len() {
@@ -514,9 +455,9 @@ impl Lexer {
 				debug_assert!(i < TOK_XML_CDATA_START.len());
 				let next = self.read_single(r)?;
 				if i == 1 && next == b'-' {
-					return Err(LexerError::RestrictedXml(format!("comments prohibited")));
+					return Err(Error::RestrictedXml(format!("comments prohibited")));
 				} else if next != TOK_XML_CDATA_START[i] {
-					return Err(LexerError::NotWellFormed(format!("malformed cdata section start")));
+					return Err(Error::NotWellFormed(format!("malformed cdata section start")));
 				}
 				let next = i + 1;
 				if next == TOK_XML_CDATA_START.len() {
@@ -533,7 +474,7 @@ impl Lexer {
 						None => panic!("looong element"),
 					}
 				} else {
-					Err(LexerError::NotWellFormed(format!("'</' followed by unexpected byte: {}", next)))
+					Err(Error::NotWellFormed(format!("'</' followed by unexpected byte: {}", next)))
 				}
 			},
 		}
@@ -556,7 +497,7 @@ impl Lexer {
 					self.read_single(r)?;
 					Ok(ElementState::MaybeXMLDeclEnd)
 				},
-				_ => Err(LexerError::NotWellFormed(format!("'?' not allowed in elements'"))),
+				_ => Err(Error::NotWellFormed(format!("'?' not allowed in elements'"))),
 			},
 			// we could skip here, but that would just be a move of the entire
 			// buffer for no real gain.
@@ -566,10 +507,10 @@ impl Lexer {
 					self.read_single(r)?;
 					Ok(ElementState::MaybeHeadClose)
 				},
-				_ => Err(LexerError::NotWellFormed(format!("'/' not allowed in xml declarations or element footers")))
+				_ => Err(Error::NotWellFormed(format!("'/' not allowed in xml declarations or element footers")))
 			},
 			b'>' => Ok(ElementState::Close),
-			_ => Err(LexerError::NotWellFormed(format!("invalid byte in element: {}", v)))
+			_ => Err(Error::NotWellFormed(format!("invalid byte in element: {}", v)))
 		}
 	}
 
@@ -590,14 +531,14 @@ impl Lexer {
 				let next = self.read_single(r)?;
 				match next {
 					b'=' => Ok(ST(State::Element{ kind: kind, state: ElementState::Blank }, Some(Token::Eq))),
-					_ => Err(LexerError::NotWellFormed("expected '='".to_string())),
+					_ => Err(Error::NotWellFormed("expected '='".to_string())),
 				}
 			},
 			ElementState::AttributeValue(delim) => {
 				// XML 1.0 §2.3 [10] AttValue
 				let delimiters = &[b'<', b'&', delim][..];
 				match self.read_up_to_limited(r, &delimiters, self.opts.max_token_length)? {
-					Some((data, b'<')) => Err(LexerError::NotWellFormed("'<' encountered in attribute value".to_string())),
+					Some((data, b'<')) => Err(Error::NotWellFormed("'<' encountered in attribute value".to_string())),
 					Some((data, b'&')) => {
 						self.flush_to_scratchpad(data)?;
 						self.read_single(r)?;
@@ -622,21 +563,21 @@ impl Lexer {
 				let next = self.read_single(r)?;
 				match next {
 					b'>' => Ok(ST(State::Content(ContentState::Initial), Some(Token::XMLDeclEnd))),
-					_ => Err(LexerError::NotWellFormed("'?' not followed by '>' at end of xml declaration".to_string()))
+					_ => Err(Error::NotWellFormed("'?' not followed by '>' at end of xml declaration".to_string()))
 				}
 			},
 			ElementState::MaybeHeadClose => {
 				let next = self.read_single(r)?;
 				match next {
 					b'>' => Ok(ST(State::Content(ContentState::Initial), Some(Token::ElementHeadClose))),
-					_ => Err(LexerError::NotWellFormed("'/' not followed by '>' at end of element".to_string()))
+					_ => Err(Error::NotWellFormed("'/' not followed by '>' at end of element".to_string()))
 				}
 			},
 			ElementState::Close => {
 				let next = self.read_single(r)?;
 				match next {
 					b'>' => Ok(ST(State::Content(ContentState::Initial), Some(Token::ElementHFEnd))),
-					_ => Err(LexerError::NotWellFormed("'>' expected".to_string()))
+					_ => Err(Error::NotWellFormed("'>' expected".to_string()))
 				}
 			},
 		}
@@ -685,14 +626,14 @@ impl Lexer {
 				}
 			},
 			Some((_, invalid)) => Err(invalid),
-			None => return Err(LexerError::NotWellFormed(format!("undeclared entity (entity name too long)"))),
+			None => return Err(Error::NotWellFormed(format!("undeclared entity (entity name too long)"))),
 		};
 		match result {
 			Ok(ch) => {
 				self.scratchpad.push(ch);
 				Ok(ST(*ret, None))
 			},
-			Err(b) => return Err(LexerError::NotWellFormed(format!("entity must be terminated with ';', not {:?}", DebugByte(b)))),
+			Err(b) => return Err(Error::NotWellFormed(format!("entity must be terminated with ';', not {:?}", DebugByte(b)))),
 		}
 	}
 
@@ -751,7 +692,7 @@ impl Lexer {
 			};
 			let st = match result {
 				Err(e) => match e {
-					LexerError::IO(ref sube) if sube.kind() == io::ErrorKind::UnexpectedEof => {
+					Error::IO(ref sube) if sube.kind() == io::ErrorKind::UnexpectedEof => {
 						if self.is_valid_terminal_state() {
 							// Important to return here to break out of the loop.
 							return Ok(None)
@@ -761,7 +702,6 @@ impl Lexer {
 					},
 					e => Err(e),
 				},
-				Err(e) => Err(e),
 				Ok(st) => Ok(st),
 			}?;
 			match st.splice(&mut self.state) {
@@ -1196,7 +1136,7 @@ mod tests {
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
-		assert!(matches!(result, Err(LexerError::NotWellFormed(_))));
+		assert!(matches!(result, Err(Error::NotWellFormed(_))));
 	}
 
 	#[test]
@@ -1288,7 +1228,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
 
-		assert!(matches!(result, Err(LexerError::RestrictedXml(_))));
+		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
 
 	#[test]
@@ -1299,7 +1239,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
 
-		assert!(matches!(result, Err(LexerError::RestrictedXml(_))));
+		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
 
 	#[test]
@@ -1310,7 +1250,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
 
-		assert!(matches!(result, Err(LexerError::RestrictedXml(_))));
+		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
 
 	#[test]
@@ -1321,7 +1261,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink(&mut lexer, &mut buffered, &mut sink);
 
-		assert!(matches!(result, Err(LexerError::RestrictedXml(_))));
+		assert!(matches!(result, Err(Error::RestrictedXml(_))));
 	}
 
 	#[test]
@@ -1356,7 +1296,7 @@ mod tests {
 		let src = &b"<!xml v<!xml v\x85rers\x8bon<!xml \x03\xe8\xff"[..];
 		let result = run_fuzz_test(src, 128);
 		assert!(result.is_err());
-		assert!(matches!(result, Err(LexerError::NotWellFormed(_))));
+		assert!(matches!(result, Err(Error::NotWellFormed(_))));
 	}
 
 	#[test]
