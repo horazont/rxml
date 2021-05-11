@@ -225,7 +225,7 @@ fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut String) -> Re
 		into.push(ch);
 		Ok(())
 	} else {
-		Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_UNKNOWN, ch, None)))
+		Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_UNKNOWN, codepoint, true)))
 	}
 }
 
@@ -358,7 +358,7 @@ impl Lexer {
 							tok,
 						))
 					},
-					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_TEXT, other, None))),
+					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, other as u32, false))),
 				},
 			},
 			ContentState::MaybeElement(MaybeElementState::Initial) => match self.read_single(r)? {
@@ -561,10 +561,10 @@ impl Lexer {
 						},
 						Some(Token::AttributeValue(self.flush_scratchpad()?)),
 					)),
-					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					other => Err(Error::NotWellFormed(WFError::InvalidChar(
 						ERRCTX_ATTVAL,
-						other,
-						None,
+						other as u32,
+						false,
 					)))
 				},
 			},
@@ -904,6 +904,20 @@ mod tests {
 			}
 			self.dest.push(token);
 		}
+	}
+
+	fn lex(data: &[u8], token_limit: usize) -> (Vec<Token>, Result<()>) {
+		let mut buff = io::BufReader::new(data);
+		let mut src = DecodingReader::new(&mut buff);
+		let mut lexer = Lexer::new();
+		let mut sink = VecSink::new(token_limit);
+		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
+		(sink.dest, result)
+	}
+
+	fn lex_err(data: &[u8], token_limit: usize) -> Option<Error> {
+		let (_, r) = lex(data, token_limit);
+		r.err()
 	}
 
 	fn run_fuzz_test(data: &[u8], token_limit: usize) -> Result<Vec<Token>> {
@@ -1326,5 +1340,71 @@ mod tests {
 		let src = &b"&#x9999999999;"[..];
 		let result = run_fuzz_test(src, 128);
 		assert!(result.is_err());
+	}
+
+	#[test]
+	fn lexer_rejects_invalid_names() {
+		let err = lex_err(b"<123/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+
+		let err = lex_err(b"<'foo/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+
+		let err = lex_err(b"<.bar/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+	}
+
+	#[test]
+	fn lexer_rejects_undeclared_or_invalid_references() {
+		let err = lex_err(b"&123;", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UndeclaredEntity)));
+
+		let err = lex_err(b"&foobar;", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UndeclaredEntity)));
+
+		let err = lex_err(b"&?;", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+	}
+
+	#[test]
+	fn lexer_rejects_non_scalar_char_refs() {
+		let err = lex_err(b"&#x110000;", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+	}
+
+	#[test]
+	fn lexer_rejects_non_xml_10_chars_via_refs_in_text() {
+		let err = lex_err(b"&#x00;", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+
+		let err = lex_err(b"&#x1f;", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+	}
+
+	#[test]
+	fn lexer_rejects_non_xml_10_chars_via_refs_in_attrs() {
+		let err = lex_err(b"<a foo='&#x00;'/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+
+		let err = lex_err(b"<a foo='&#x1f;'/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+	}
+
+	#[test]
+	fn lexer_rejects_non_xml_10_chars_verbatim_in_text() {
+		let err = lex_err(b"\x00", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+
+		let err = lex_err(b"\x1f", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+	}
+
+	#[test]
+	fn lexer_rejects_non_xml_10_chars_verbatim_in_attrs() {
+		let err = lex_err(b"<a foo='\x00'/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+
+		let err = lex_err(b"<a foo='\x1f'/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
 	}
 }
