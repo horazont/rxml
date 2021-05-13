@@ -5,6 +5,7 @@ pub const ERR_NODATA: &'static str = "no data in buffer";
 
 pub struct BufferQueue {
 	q: VecDeque<Vec<u8>>,
+	offset: usize,
 	len: usize,
 	eof: bool,
 }
@@ -13,6 +14,7 @@ impl BufferQueue {
 	pub fn new() -> BufferQueue {
 		BufferQueue{
 			q: VecDeque::new(),
+			offset: 0,
 			len: 0,
 			eof: false,
 		}
@@ -56,15 +58,18 @@ impl io::Read for BufferQueue {
 				},
 				Some(v) => v,
 			};
-			debug_assert!(front.len() > 0);
-			let to_read = std::cmp::min(dst.len(), front.len());
-			for (src, dst) in front.drain(..to_read).zip(dst.iter_mut()) {
-				*dst = src;
+			debug_assert!(self.offset < front.len());
+			let effective_len = front.len() - self.offset;
+			let to_read = std::cmp::min(dst.len(), effective_len);
+			for (src, dst) in front[self.offset..(to_read+self.offset)].iter().zip(dst.iter_mut()) {
+				*dst = *src;
 			};
-			(to_read, front.len())
+			self.offset += to_read;
+			(to_read, front.len() - self.offset)
 		};
 		if remaining == 0 {
 			self.q.pop_front();
+			self.offset = 0;
 		}
 		self.len -= read;
 		Ok(read)
@@ -81,14 +86,17 @@ impl io::BufRead for BufferQueue {
 				None => panic!("attempt to consume beyond end of buffer"),
 				Some(v) => v,
 			};
-			if amt > front.len() {
+			debug_assert!(self.offset < front.len());
+			let effective_len = front.len() - self.offset;
+			if amt > effective_len {
 				panic!("attempt to consume beyond end of buffer");
 			}
-			front.drain(..amt);
-			front.len()
+			self.offset += amt;
+			front.len() - self.offset
 		};
 		if remaining == 0 {
 			self.q.pop_front();
+			self.offset = 0;
 		}
 		self.len -= amt;
 	}
@@ -100,7 +108,7 @@ impl io::BufRead for BufferQueue {
 			} else {
 				Err(io::Error::new(io::ErrorKind::WouldBlock, ERR_NODATA))
 			},
-			Some(v) => Ok(v.as_slice()),
+			Some(v) => Ok(&v[self.offset..]),
 		}
 	}
 }
