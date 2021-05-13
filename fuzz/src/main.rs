@@ -9,9 +9,11 @@ fn main() {
 		let mut lexer = xmppxml::Lexer::new();
 		let mut buffered = io::BufReader::new(data);
 		let mut reader = xmppxml::DecodingReader::new(&mut buffered);
+		let mut adapter = xmppxml::LexerAdapter::new(&mut lexer, &mut reader);
+		let mut parser = xmppxml::Parser::new();
 
 		loop {
-			match lexer.lex(&mut reader) {
+			match parser.parse(&mut adapter) {
 				Err(_) => return,
 				Ok(None) => return,
 				Ok(Some(_)) => (),

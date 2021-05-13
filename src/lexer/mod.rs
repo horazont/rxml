@@ -1,3 +1,5 @@
+// needed for trait bounds
+#[allow(unused_imports)]
 use std::io;
 use std::fmt;
 
@@ -5,25 +7,11 @@ mod selectors;
 mod read;
 
 use selectors::*;
-use read::{CodepointRead, Utf8Char, read_validated, CharSelector, Endpoint, skip_matching};
+use read::{read_validated, CharSelector, Endpoint, skip_matching};
 use crate::error::{Error, Result, WFError};
+use crate::error::*;
 
-pub use read::DecodingReader;
-
-const ERRCTX_UNKNOWN: &'static str = "in unknown context";
-const ERRCTX_TEXT: &'static str = "in text node";
-const ERRCTX_ATTVAL: &'static str = "in attribute value";
-const ERRCTX_NAME: &'static str = "in name";
-const ERRCTX_NAMESTART: &'static str = "at start of name";
-const ERRCTX_ELEMENT: &'static str = "in element";
-const ERRCTX_ELEMENT_FOOT: &'static str = "in element footer";
-const ERRCTX_ELEMENT_CLOSE: &'static str = "at element close";
-const ERRCTX_CDATA_SECTION: &'static str = "in CDATA section";
-const ERRCTX_CDATA_SECTION_START: &'static str = "at CDATA section marker";
-const ERRCTX_XML_DECL: &'static str = "in XML declaration";
-const ERRCTX_XML_DECL_START: &'static str = "at start of XML declaration";
-const ERRCTX_XML_DECL_END: &'static str = "at end of XML declaration";
-const ERRCTX_REF: &'static str = "in entity or character reference";
+pub use read::{Utf8Char, CodepointRead, DecodingReader};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -46,6 +34,36 @@ pub enum Token {
 	Text(String),
 }
 
+impl Token {
+	pub const NAME_NAME: &'static str = "Name";
+	pub const NAME_EQ: &'static str = "'='";
+	pub const NAME_ATTRIBUTEVALUE: &'static str = "AttValue";
+	pub const NAME_XMLDECLEND: &'static str = "'?>'";
+	pub const NAME_ELEMENTHEADCLOSE: &'static str = "'/>'";
+	pub const NAME_ELEMENTHFEND: &'static str = "'>'";
+	pub const NAME_REFERENCE: &'static str = "Reference";
+	pub const NAME_XMLDECLSTART: &'static str = "'<?xml'";
+	pub const NAME_ELEMENTHEADSTART: &'static str = "'<'";
+	pub const NAME_ELEMENTFOOTSTART: &'static str = "'</'";
+	pub const NAME_TEXT: &'static str = "Text";
+
+	pub fn name(&self) -> &'static str {
+		match self {
+			Self::Name(..) => Self::NAME_NAME,
+			Self::Eq => Self::NAME_EQ,
+			Self::AttributeValue(..) => Self::NAME_ATTRIBUTEVALUE,
+			Self::XMLDeclEnd => Self::NAME_XMLDECLEND,
+			Self::ElementHeadClose => Self::NAME_ELEMENTHEADCLOSE,
+			Self::ElementHFEnd => Self::NAME_ELEMENTHFEND,
+			Self::Reference(..) => Self::NAME_REFERENCE,
+			Self::XMLDeclStart => Self::NAME_XMLDECLSTART,
+			Self::ElementHeadStart(..) => Self::NAME_ELEMENTHEADSTART,
+			Self::ElementFootStart(..) => Self::NAME_ELEMENTFOOTSTART,
+			Self::Text(..) => Self::NAME_TEXT,
+		}
+	}
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum CharRefRadix {
 	Decimal,
@@ -61,6 +79,8 @@ enum RefKind {
 #[derive(Debug, Clone, PartialEq)]
 enum ElementState {
 	Start,
+	/// Only used after <?xml
+	SpaceRequired,
 	Blank,
 	Name,
 	Eq,
@@ -318,13 +338,11 @@ impl Lexer {
 
 	fn lex_content<'r, R: CodepointRead>(&mut self, state: ContentState, r: &'r mut R) -> Result<ST>
 	{
-		println!("{:?}", state);
 		match state {
 			// read until next `<` or `&`, which are the only things which
 			// can break us out of this state.
 			ContentState::Initial => match self.read_validated(r, &CodepointRanges(VALID_XML_CDATA_RANGES_TEXT_DELIMITED), self.opts.max_token_length)? {
 				Endpoint::Eof => {
-					println!("eof");
 					Ok(ST(
 						State::Eof,
 						self.maybe_flush_scratchpad_as_text()?,
@@ -420,7 +438,7 @@ impl Lexer {
 					Ok(ST(
 						State::Element{
 							kind: ElementKind::XMLDecl,
-							state: ElementState::Blank,
+							state: ElementState::SpaceRequired,
 						},
 						Some(Token::XMLDeclStart),
 					))
@@ -509,16 +527,23 @@ impl Lexer {
 					))
 				},
 			},
-			// look for next non-space thing and check what to do with it
-			ElementState::Blank => match skip_matching(r, &CLASS_XML_SPACES)? {
-				Endpoint::Eof | Endpoint::Limit => Err(Error::wfeof(ERRCTX_ELEMENT)),
-				Endpoint::Delimiter(ch) => Ok(ST(
-					State::Element{
-						kind: kind,
-						state: self.lex_element_postblank(kind, ch)?,
-					},
-					None,
-				)),
+			ElementState::SpaceRequired | ElementState::Blank => match skip_matching(r, &CLASS_XML_SPACES)? {
+				(_, Endpoint::Eof) | (_, Endpoint::Limit) => Err(Error::wfeof(ERRCTX_ELEMENT)),
+				(nmatching, Endpoint::Delimiter(ch)) => {
+					if state == ElementState::SpaceRequired && nmatching == 0 {
+						Err(Error::NotWellFormed(WFError::InvalidSyntax(
+							"space required after xml declaration header",
+						)))
+					} else {
+						Ok(ST(
+							State::Element{
+								kind: kind,
+								state: self.lex_element_postblank(kind, ch)?,
+							},
+							None,
+						))
+					}
+				},
 			},
 			ElementState::Name => match self.read_validated(r, &CLASS_XML_NAME, self.opts.max_token_length)? {
 				Endpoint::Eof => Err(Error::wfeof(ERRCTX_NAME)),
@@ -752,13 +777,6 @@ impl Lexer {
 		}
 	}
 
-	fn is_valid_terminal_state(&self) -> bool {
-		match &self.state {
-			State::Content(ContentState::Initial) => true,
-			_ => false,
-		}
-	}
-
 	/// Lex bytes from the reader until either an error occurs, a valid
 	/// token is produced or the stream ends between two tokens.
 	///
@@ -767,26 +785,14 @@ impl Lexer {
 	pub fn lex<'r, R: CodepointRead>(&mut self, r: &'r mut R) -> Result<Option<Token>>
 	{
 		loop {
-			let result = match self.state.clone() {
-				State::Content(substate) => self.lex_content(substate.clone(), r),
-				State::Element{ kind, state: substate } => self.lex_element(kind, substate.clone(), r),
+			let mut tmp_state = State::Eof;
+			std::mem::swap(&mut tmp_state, &mut self.state);
+			let st = match tmp_state {
+				State::Content(substate) => self.lex_content(substate, r),
+				State::Element{ kind, state: substate } => self.lex_element(kind, substate, r),
 				State::Reference{ ctx, ret, kind } => self.lex_reference(ctx, ret, kind, r),
 				State::CDataSection(nend) => self.lex_cdata_section(nend, r),
 				State::Eof => return Ok(None),
-			};
-			let st = match result {
-				Err(e) => match e {
-					Error::IO(ref sube) if sube.kind() == io::ErrorKind::UnexpectedEof => {
-						if self.is_valid_terminal_state() {
-							// Important to return here to break out of the loop.
-							return Ok(None)
-						} else {
-							Err(e)
-						}
-					},
-					e => Err(e),
-				},
-				Ok(st) => Ok(st),
 			}?;
 			match st.splice(&mut self.state) {
 				Some(tok) => {
@@ -937,6 +943,18 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
 		assert_eq!(sink.dest[0], Token::XMLDeclStart);
+	}
+
+	#[test]
+	fn lexer_lex_rejects_invalid_xml_decl_opener() {
+		let mut src = "<?xmlversion".as_bytes();
+		let mut lexer = Lexer::new();
+		let mut sink = VecSink::new(128);
+		let err = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
+		assert!(!matches!(err, Error::NotWellFormed(WFError::InvalidEof(..))));
+
+		assert_eq!(sink.dest[0], Token::XMLDeclStart);
+		assert_eq!(sink.dest.len(), 1);
 	}
 
 	#[test]

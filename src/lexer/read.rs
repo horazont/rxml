@@ -228,17 +228,19 @@ pub fn read_validated<'r, 's, R: CodepointRead, S: CharSelector>(
 pub fn skip_matching<'r, 's, R: CodepointRead, S: CharSelector>(
 	r: &'r mut R,
 	selector: &'s S,
-	) -> Result<Endpoint>
+	) -> Result<(usize, Endpoint)>
 {
+	let mut count = 0;
 	loop {
 		let utf8ch = match r.read()? {
-			None => return Ok(Endpoint::Eof),
+			None => return Ok((count, Endpoint::Eof)),
 			Some(ch) => ch,
 		};
 		let ch = utf8ch.to_char();
 		if !selector.select(ch) {
-			return Ok(Endpoint::Delimiter(utf8ch))
+			return Ok((count, Endpoint::Delimiter(utf8ch)))
 		}
+		count += 1;
 	}
 }
 
@@ -313,7 +315,7 @@ mod tests {
 		for first in 0xc0..=0xc1 {
 			let mut src = &[first, b'\xa5'][..];
 			let mut r = DecodingReader::new(&mut src);
-			let (v, err) = r.read_all();
+			let (_v, err) = r.read_all();
 			match err {
 				Err(Error::InvalidStartByte(..)) => Ok(()),
 				Err(e) => Err(e),
@@ -326,7 +328,7 @@ mod tests {
 	fn decoding_reader_rejects_utf8_which_is_noncanonical_three_byte_sequence() {
 		let mut src = &b"\xe0\x82"[..];
 		let mut r = DecodingReader::new(&mut src);
-		let (v, err) = r.read_all();
+		let (_, err) = r.read_all();
 		match err {
 			Err(Error::InvalidContByte(..)) => Ok(()),
 			Err(e) => Err(e),
@@ -338,7 +340,7 @@ mod tests {
 	fn decoding_reader_rejects_utf8_which_is_noncanonical_four_byte_sequence() {
 		let mut src = &b"\xf0\x82"[..];
 		let mut r = DecodingReader::new(&mut src);
-		let (v, err) = r.read_all();
+		let (_v, err) = r.read_all();
 		match err {
 			Err(Error::InvalidContByte(..)) => Ok(()),
 			Err(e) => Err(e),
