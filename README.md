@@ -3,6 +3,10 @@
 This crate provides "restricted" parsing of XML 1.0 documents with
 namespacing.
 
+**Warning:** This crate is alpha-quality! That means you should probably not
+yet put it in a network-facing position. CVE numbers may or may not be
+allocated for security issues in releases where this text is present.
+
 ## Features (some call them restrictions)
 
 * No external resources
