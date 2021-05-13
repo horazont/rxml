@@ -124,7 +124,8 @@ impl CodepointRange {
 	}
 }
 
-pub struct CodepointRanges<'r>(pub &'r [CodepointRange]);
+#[derive(Copy)]
+pub struct CodepointRanges(pub &'static [CodepointRange]);
 
 pub static CLASS_XML_NAME: CodepointRanges = CodepointRanges(VALID_XML_NAME_RANGES);
 pub static CLASS_XML_NAMESTART: CodepointRanges = CodepointRanges(VALID_XML_NAME_START_RANGES);
@@ -138,7 +139,7 @@ impl CharSelector for CodepointRange {
 	}
 }
 
-impl CharSelector for CodepointRanges<'_> {
+impl CharSelector for CodepointRanges {
 	fn select(&self, c: char) -> bool {
 		contained_in_ranges(c, self.0)
 	}
@@ -153,20 +154,20 @@ pub fn contained_in_ranges(c: char, rs: &[CodepointRange]) -> bool {
 	false
 }
 
-impl fmt::Debug for CodepointRanges<'_> {
+impl fmt::Debug for CodepointRanges {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		write!(f, "CodepointRanges(<{} ranges>)", self.0.len())
 	}
 }
 
-impl Clone for CodepointRanges<'static> {
+impl Clone for CodepointRanges {
 	fn clone(&self) -> Self {
 		CodepointRanges(self.0)
 	}
 }
 
-impl PartialEq for CodepointRanges<'static> {
-	fn eq(&self, other: &CodepointRanges<'static>) -> bool {
+impl PartialEq for CodepointRanges {
+	fn eq(&self, other: &CodepointRanges) -> bool {
 		std::ptr::eq(&self.0, &other.0)
 	}
 }

@@ -73,6 +73,11 @@ impl From<Utf8Char> for char {
 pub trait CodepointRead {
 	fn read(&mut self) -> Result<Option<Utf8Char>>;
 
+	/// Read all codepoints into a String until the end of file or an error
+	/// occurs.
+	///
+	/// The string is always returned, even on error. The result is ok only on
+	/// EOF.
 	fn read_all(&mut self) -> (String, Result<()>) {
 		let mut result = String::new();
 		loop {
@@ -85,85 +90,160 @@ pub trait CodepointRead {
 	}
 }
 
-pub struct DecodingReader<'x, T: io::BufRead + ?Sized> {
-	backend: &'x mut T,
+/**
+# Streaming UTF-8 decoder
+
+Decode UTF-8 from a [`std::io::Read`] and emit individual [`Utf8Char`]s.
+
+**Note:** While the [`DecodingReader`] can work with any [`std::io::Read`], it
+is highly recommended to **use a reader with an internal buffer** (such as
+[`std::io::BufReader`]), as the decoder reads the source byte-by-byte.
+
+To read codepoints from the reader, use [`DecodingReader::read()`].
+
+It is possible to resume a reader which has previously failed with an error,
+but not recommended or guaranteed.
+*/
+pub struct DecodingReader<T: io::Read + Sized> {
+	backend: T,
+	buf: [u8; 4],
+	buflen: usize,
+	accum: u32,
+	cont_mask: u8,
+	seqlen: u8,
 }
 
-impl<'x, T: io::BufRead + ?Sized> DecodingReader<'x, T> {
-	pub fn new(r: &'x mut T) -> Self {
+impl<T: io::Read + Sized> DecodingReader<T> {
+	/// Create a new decoding reader
+	pub fn new(r: T) -> Self {
 		Self{
 			backend: r,
+			buf: [0; 4],
+			buflen: 0,
+			seqlen: 0,
+			accum: 0,
+			cont_mask: 0,
 		}
+	}
+
+	/// Consume the reader and return the backing Read
+	///
+	/// **Warning:** The [`DecodingReader`] buffers a small amount of data
+	/// (up to four bytes) while decoding UTF-8 sequences. That data is lost
+	/// when using this function.
+	pub fn into_inner(self) -> T {
+		self.backend
+	}
+
+	fn reset(&mut self) {
+		self.seqlen = 0;
+		self.buflen = 0;
+	}
+
+	fn feed(&mut self, c: u8) -> Result<Option<Utf8Char>> {
+		debug_assert!(self.buflen < 4);
+		if self.seqlen == 0 {
+			// new char, analyze starter
+			let (raw, len, required_cont_mask) = match c {
+				0x00..=0x7fu8 => {
+					return Ok(Some(unsafe { Utf8Char::from_ascii_unchecked(c) }));
+				},
+				// note that 0xc0 and 0xc1 are a invalid start bytes because that is still ascii range
+				0xc2..=0xdfu8 => {
+					((c & 0x1f) as u32, 2u8, 0xffu8)
+				},
+				0xe0..=0xefu8 => {
+					((c & 0x0f) as u32, 3u8, 0x20u8)
+				},
+				0xf0..=0xf7u8 => {
+					((c & 0x07) as u32, 4u8, 0x30u8)
+				},
+				_ => return Err(Error::InvalidStartByte(c)),
+			};
+			self.accum = raw;
+			self.seqlen = len;
+			self.buf = [c, 0, 0, 0];
+			self.accum = raw;
+			self.buflen = 1;
+			self.cont_mask = required_cont_mask;
+			Ok(None)
+		} else {
+			if c & 0xc0 != 0x80 || c & self.cont_mask == 0 {
+				self.reset();
+				return Err(Error::InvalidContByte(c));
+			}
+			self.cont_mask = 0xff;
+			self.accum = (self.accum << 6) | ((c & 0x3f) as u32);
+			self.buf[self.buflen] = c;
+			self.buflen += 1;
+			if self.seqlen as usize == self.buflen {
+				match std::char::from_u32(self.accum) {
+					None => {
+						self.reset();
+						Err(Error::InvalidChar(self.accum))
+					},
+					Some(ch) => {
+						let utf8ch = Utf8Char{
+							bytes: self.buf,
+							nbytes: self.seqlen,
+							ch: ch
+						};
+						self.reset();
+						Ok(Some(utf8ch))
+					},
+				}
+			} else {
+				Ok(None)
+			}
+		}
+	}
+
+	/// Get a reference to the backing Read.
+	pub fn get_ref(&self) -> &T {
+		&self.backend
+	}
+
+	/// Get a reference to the backing Read.
+	pub fn get_mut(&mut self) -> &mut T {
+		&mut self.backend
 	}
 }
 
-impl<'x, T: io::BufRead + ?Sized> CodepointRead for DecodingReader<'x, T> {
+impl<T: io::Read + Sized> std::borrow::Borrow<T> for DecodingReader<T> {
+	fn borrow(&self) -> &T {
+		&self.backend
+	}
+}
+
+impl<T: io::Read + Sized> std::borrow::BorrowMut<T> for DecodingReader<T> {
+	fn borrow_mut(&mut self) -> &mut T {
+		&mut self.backend
+	}
+}
+
+impl<T: io::Read + Sized> CodepointRead for DecodingReader<T> {
+	/// Decode a single codepoint and return it
+	///
+	/// If UTF-8 decoding fails, an error is returned. If the data source
+	/// reports an [`std::io::Error`] that error is also passed through.
+	///
+	/// I/O errors are resumable, which means that you can call `read()` again
+	/// after it has returned an I/O error.
 	fn read(&mut self) -> Result<Option<Utf8Char>> {
-		let mut backing = self.backend.fill_buf()?;
-		let mut out: [u8; 4] = [0, 0, 0, 0];
-		let mut out_offset = 0usize;
-		let starter = match backing.first() {
-			None => return Ok(None),
-			Some(ch) => *ch,
-		};
-		let (mut raw, len, mut required_cont_mask) = match starter {
-			0x00..=0x7fu8 => {
-				// ascii
-				self.backend.consume(1);
-				return Ok(Some(unsafe { Utf8Char::from_ascii_unchecked(starter) }));
-			},
-			// note that 0xc0 and 0xc1 are a invalid start bytes because that is still ascii range
-			0xc2..=0xdfu8 => {
-				((starter & 0x1f) as u32, 2usize, 0xffu8)
-			},
-			0xe0..=0xefu8 => {
-				((starter & 0x0f) as u32, 3usize, 0x20u8)
-			},
-			0xf0..=0xf7u8 => {
-				((starter & 0x07) as u32, 4usize, 0x30u8)
-			},
-			_ => return Err(Error::InvalidStartByte(starter)),
-		};
-		out[out_offset] = starter;
-		out_offset += 1;
-
-		let mut more = len - 1;
-		let mut offset = 1;
-		while more > 0 {
-			if backing.len() <= offset {
-				self.backend.consume(offset);
-				offset = 0;
-				backing = self.backend.fill_buf()?;
+		let mut buf = [0u8; 1];
+		loop {
+			if self.backend.read(&mut buf[..])? == 0 {
+				if self.seqlen > 0 {
+					// in the middle of a sequence
+					return Err(Error::io(io::Error::new(io::ErrorKind::UnexpectedEof, "eof in utf-8 sequence")));
+				}
+				// eof
+				return Ok(None)
 			}
-			let next = *match backing[offset..].first() {
-				Some(b) => b,
-				None => {
-					self.backend.consume(offset);
-					return Err(Error::IO(io::Error::new(io::ErrorKind::UnexpectedEof, "eof within utf-8 sequence")));
-				},
-			};
-			if next & 0xc0 != 0x80 || next & required_cont_mask == 0 {
-				self.backend.consume(offset);
-				return Err(Error::InvalidContByte(next));
+			match self.feed(buf[0])? {
+				Some(utf8ch) => return Ok(Some(utf8ch)),
+				None => (),
 			}
-			required_cont_mask = 0xff;
-			out[out_offset] = next;
-			raw = (raw << 6) | ((next & 0x3f) as u32);
-			offset += 1;
-			out_offset += 1;
-			more -= 1;
-		}
-		if offset > 0 {
-			self.backend.consume(offset);
-		}
-
-		match std::char::from_u32(raw) {
-			None => Err(Error::InvalidChar(raw)),
-			Some(ch) => Ok(Some(Utf8Char{
-				bytes: out,
-				nbytes: len as u8,
-				ch: ch
-			})),
 		}
 	}
 }
@@ -247,6 +327,7 @@ pub fn skip_matching<'r, 's, R: CodepointRead, S: CharSelector>(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::bufq;
 
 	#[test]
 	fn decoding_reader_can_read_ascii() {
@@ -349,6 +430,47 @@ mod tests {
 	}
 
 	#[test]
+	fn decoding_reader_can_parse_segmented_utf8_sequence() {
+		let seq = &b"\xf0\x9f\x8e\x89"[..];
+		let mut bq = bufq::BufferQueue::new();
+		bq.push(seq[..2].to_vec());
+		bq.push(seq[2..4].to_vec());
+		bq.push_eof();
+		let mut r = DecodingReader::new(&mut bq);
+		let (v, err) = r.read_all();
+		err.unwrap();
+		assert_eq!(v, "🎉");
+	}
+
+	#[test]
+	fn decoding_reader_can_resume_from_wouldblock_during_utf8_sequence() {
+		let seq = &b"\xf0\x9f\x8e\x89"[..];
+		let mut bq = bufq::BufferQueue::new();
+		bq.push(seq[..2].to_vec());
+		let mut r = DecodingReader::new(&mut bq);
+		let (v, err) = r.read_all();
+		assert_eq!(v, "");
+		assert!(matches!(err.err().unwrap(), Error::IO(ioe) if ioe.kind() == io::ErrorKind::WouldBlock));
+		r.get_mut().push(seq[2..4].to_vec());
+		let (v, err) = r.read_all();
+		assert_eq!(v, "🎉");
+		assert!(matches!(err.err().unwrap(), Error::IO(ioe) if ioe.kind() == io::ErrorKind::WouldBlock));
+	}
+
+	#[test]
+	fn decoding_reader_fuzz() {
+		let mut src = &b"?\xf0\xa4\xa4\xa4\x9e\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4\xa4"[..];
+		let mut r = DecodingReader::new(&mut src);
+		let (_, err) = r.read_all();
+		match err {
+			Err(Error::InvalidStartByte(158)) => Ok(()),
+			Err(e) => Err(e),
+			Ok(()) => panic!("expected error"),
+		}.unwrap(); // let this panic usefully on mis-match
+	}
+
+
+	#[test]
 	fn utf8char_from_char() {
 		let ch = Utf8Char::from_char('x');
 		assert_eq!(AsRef::<str>::as_ref(&ch), "x");
@@ -427,5 +549,4 @@ mod tests {
 		assert!(matches!(result.unwrap(), Endpoint::Delimiter(c) if c.to_char() == 'n'));
 		assert_eq!(out, "fff".to_string());
 	}
-
 }

@@ -1,5 +1,5 @@
 [package]
-name = "xmppxml"
+name = "rxml"
 version = "0.1.0"
 authors = ["Jonas Schäfer <j.wielicki@sotecware.net>"]
 edition = "2018"

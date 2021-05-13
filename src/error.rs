@@ -1,7 +1,8 @@
 use std::io;
+use std::sync::Arc;
 use std::fmt;
 use std::error;
-use std::string;
+use std::ops::Deref;
 use std::result::Result as StdResult;
 
 pub const ERRCTX_UNKNOWN: &'static str = "in unknown context";
@@ -20,27 +21,60 @@ pub const ERRCTX_XML_DECL_START: &'static str = "at start of XML declaration";
 pub const ERRCTX_XML_DECL_END: &'static str = "at end of XML declaration";
 pub const ERRCTX_REF: &'static str = "in entity or character reference";
 pub const ERRCTX_DOCBEGIN: &'static str = "at beginning of document";
+pub const ERRCTX_DOCEND: &'static str = "at end of document";
 
-#[derive(Debug, Clone)]
+/// Violation of a well-formedness constraint or the XML 1.0 grammar.
+#[derive(Debug, Clone, PartialEq)]
 pub enum WFError {
-	/// Indicate in which state the invalid EOF happened
+	/// End-of-file encountered during a construct where more data was
+	/// expected.
+	///
+	/// The contents are implementation details.
 	InvalidEof(&'static str),
+
+	/// Attempt to refer to an undeclared entity.
+	///
+	/// **Note**: May also be emitted in some cases of malformed entities as
+	/// the lexer is very conservative about how many chars are read to
+	/// interpret an entity.
 	UndeclaredEntity,
-	/// Context, codepoint encountered + whether it came from a character
-	/// reference
+
+	/// Unicode codepoint which is not allowed in XML 1.0 encountered.
+	///
+	/// The contents are implementation details.
 	InvalidChar(&'static str, u32, bool),
-	/// Context, codepoint encountered, expected chars
+
+	/// Unicode codepoint which was not expected at that point in the
+	/// grammar.
+	///
+	/// The contents are implementation details.
 	UnexpectedChar(&'static str, char, Option<&'static [&'static str]>),
-	/// Invalid syntax
+
+	/// Generalized invalid syntactic construct which does not fit into any
+	/// of the other categories.
+	///
+	/// The contents are implementation details.
 	InvalidSyntax(&'static str),
-	/// Context, token encountered, expected tokens
+
+	/// Token was not expected by the parser at that point in the grammar.
+	///
+	/// The contents are implementation details.
 	UnexpectedToken(&'static str, &'static str, Option<&'static [&'static str]>),
+
+	/// Attribute was declared multiple times in the same element.
+	///
+	/// **Note:** This will also be emitted for namespaced attributes which
+	/// resolve to the same `(uri, localname)` pair after prefix resolution,
+	/// even though that is technically a namespace-well-formedness
+	/// constraint.
 	DuplicateAttribute,
+
+	/// Ending tag name does not match opening tag.
 	ElementMismatch,
 }
 
 impl WFError {
-	pub fn with_context(self, ctx: &'static str) -> WFError {
+	pub(crate) fn with_context(self, ctx: &'static str) -> WFError {
 		match self {
 			WFError::InvalidEof(_) => WFError::InvalidEof(ctx),
 			WFError::InvalidChar(_, cp, fromref) => WFError::InvalidChar(ctx, cp, fromref),
@@ -99,16 +133,31 @@ impl fmt::Display for WFError {
 	}
 }
 
-#[derive(Debug, Clone)]
+/// Violation of a namespace-well-formedness constraint or the Namespaces for
+/// XML 1.0 grammar.
+#[derive(Debug, Clone, PartialEq)]
 pub enum NWFError {
+	/// More than one colon encountered in a name.
+	///
+	/// The contents are implementation details.
 	MultiColonName(&'static str),
+
+	/// One side of the colon in a name was empty.
+	///
+	/// The contents are implementation details.
 	EmptyNamePart(&'static str),
+
+	/// Use of an undeclared namespace prefix.
+	///
+	/// The contents are implementation details.
 	UndeclaredNamesacePrefix(&'static str),
+
+	/// Attempt to redefine a reserved namespace prefix.
 	ReservedNamespacePrefix,
 }
 
 impl NWFError {
-	pub fn with_context(self, ctx: &'static str) -> NWFError {
+	pub(crate) fn with_context(self, ctx: &'static str) -> NWFError {
 		match self {
 			Self::MultiColonName(_) => Self::MultiColonName(ctx),
 			Self::EmptyNamePart(_) => Self::EmptyNamePart(ctx),
@@ -129,16 +178,82 @@ impl fmt::Display for NWFError {
 	}
 }
 
-#[derive(Debug)]
+/// [`std::sync::Arc`]-based around [`std::io::Error`] to allow cloning.
+#[derive(Clone)]
+pub struct IOErrorWrapper(Arc<io::Error>);
+
+impl IOErrorWrapper {
+	fn wrap(e: io::Error) -> IOErrorWrapper {
+		IOErrorWrapper(Arc::new(e))
+	}
+}
+
+impl fmt::Debug for IOErrorWrapper {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		fmt::Debug::fmt(&**self, f)
+	}
+}
+
+impl fmt::Display for IOErrorWrapper {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		fmt::Display::fmt(&**self, f)
+	}
+}
+
+impl PartialEq for IOErrorWrapper {
+	fn eq(&self, other: &Self) -> bool {
+		Arc::ptr_eq(&self.0, &other.0)
+	}
+}
+
+impl AsRef<io::Error> for IOErrorWrapper {
+	fn as_ref(&self) -> &io::Error {
+		&*self.0
+	}
+}
+
+impl Deref for IOErrorWrapper {
+	type Target = io::Error;
+
+	fn deref(&self) -> &io::Error {
+		&*self.0
+	}
+}
+
+impl std::borrow::Borrow<io::Error> for IOErrorWrapper {
+	fn borrow(&self) -> &io::Error {
+		&*self.0
+	}
+}
+
+/// Error types which may be returned from the parser or lexer.
+///
+/// With the exception of [`Error::IO`], all errors are fatal and will be returned indefinitely from the parser or lexer after the first encounter.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Error {
-	IO(io::Error),
-	Utf8(string::FromUtf8Error),
+	/// An I/O error was encountered during lexing.
+	///
+	/// I/O errors are not fatal and may be retried. This is especially important for (but not limited to) [`std::io::ErrorKind::WouldBlock`] errors.
+	///
+	/// **Note:** When an unexpected end-of-file situation is encountered during parsing or lexing, that is signalled using [`Error::NotWellFormed`] instead of a [`std::io::ErrorKind::UnexpectedEof`] error.
+	IO(IOErrorWrapper),
+
+	/// An invalid UTF-8 start byte was encountered during decoding.
 	InvalidStartByte(u8),
+	/// An invalid UTF-8 continuation byte was encountered during decoding.
 	InvalidContByte(u8),
+	/// An invalid Unicode scalar value was encountered during decoding.
 	InvalidChar(u32),
+	/// A violation of the XML 1.0 grammar or a well-formedness constraint was
+	/// encountered during parsing or lexing.
 	NotWellFormed(WFError),
+	/// A violation of the Namespaces in XML 1.0 grammar or a
+	/// namespace-well-formedness constraint was encountered during parsing.
 	NotNamespaceWellFormed(NWFError),
-	/// Forbidden element
+	/// A forbidden construct was encountered during lexing or parsing.
+	///
+	/// The string indicates the context and should not be interpreted by user
+	/// code.
 	RestrictedXml(&'static str),
 }
 
@@ -146,14 +261,14 @@ pub type Result<T> = StdResult<T, Error>;
 
 impl Error {
 	pub fn io(e: io::Error) -> Error {
-		Error::IO(e)
+		Error::IO(IOErrorWrapper::wrap(e))
 	}
 
 	pub(crate) fn wfeof(ctx: &'static str) -> Error {
 		Error::NotWellFormed(WFError::InvalidEof(ctx))
 	}
 
-	pub fn with_context(self, ctx: &'static str) -> Self {
+	pub(crate) fn with_context(self, ctx: &'static str) -> Self {
 		match self {
 			Self::NotWellFormed(wf) => Self::NotWellFormed(wf.with_context(ctx)),
 			Self::NotNamespaceWellFormed(nwf) => Self::NotNamespaceWellFormed(nwf.with_context(ctx)),
@@ -168,12 +283,6 @@ impl From<io::Error> for Error {
 	}
 }
 
-impl From<string::FromUtf8Error> for Error {
-	fn from(e: string::FromUtf8Error) -> Error {
-		Error::Utf8(e)
-	}
-}
-
 impl fmt::Display for Error {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		match self {
@@ -184,7 +293,6 @@ impl fmt::Display for Error {
 			Error::InvalidContByte(b) => write!(f, "invalid utf-8 continuation byte: \\x{:02x}", b),
 			Error::InvalidChar(ch) => write!(f, "invalid char: U+{:08x}", ch),
 			Error::IO(e) => write!(f, "I/O error: {}", e),
-			Error::Utf8(e) => write!(f, "utf8 error: {}", e),
 		}
 	}
 }
@@ -192,8 +300,7 @@ impl fmt::Display for Error {
 impl error::Error for Error {
 	fn source(&self) -> Option<&(dyn error::Error + 'static)> {
 		match self {
-			Error::IO(e) => Some(e),
-			Error::Utf8(e) => Some(e),
+			Error::IO(e) => Some(&**e),
 			Error::NotNamespaceWellFormed(_) |
 				Error::NotWellFormed(_) |
 				Error::RestrictedXml(_) |

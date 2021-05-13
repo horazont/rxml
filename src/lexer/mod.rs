@@ -64,19 +64,19 @@ impl Token {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum CharRefRadix {
 	Decimal,
 	Hexadecimal,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum RefKind {
 	Entity,
 	Char(CharRefRadix),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum ElementState {
 	Start,
 	/// Only used after <?xml
@@ -86,7 +86,7 @@ enum ElementState {
 	Eq,
 	Close,
 	/// Delimiter and Alphabet
-	AttributeValue(char, CodepointRanges<'static>),
+	AttributeValue(char, CodepointRanges),
 	/// Encountered ?
 	MaybeXMLDeclEnd,
 	/// Encountered /
@@ -103,7 +103,7 @@ enum ElementKind {
 	XMLDecl,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum MaybeElementState {
 	Initial,
 	/// Number of correct CDATA section start characters
@@ -112,20 +112,41 @@ enum MaybeElementState {
 	XMLDeclStart(usize),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum ContentState {
 	Initial,
 	/// Encountered <
 	MaybeElement(MaybeElementState),
+	/// only whitespace allowed, e.g. between ?> and <
+	Whitespace,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RefReturnState {
+	AttributeValue(ElementKind, char, CodepointRanges),
+	Text,
+}
+
+impl RefReturnState {
+	fn to_state(self) -> State {
+		match self {
+			Self::AttributeValue(kind, delim, selector) => State::Element{
+				kind: kind,
+				state: ElementState::AttributeValue(delim, selector),
+			},
+			Self::Text => State::Content(ContentState::Initial),
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum State {
 	Content(ContentState),
 	Element{ kind: ElementKind, state: ElementState },
 
 	/// encountered &
-	Reference{ ctx: &'static str, ret: Box<State>, kind: RefKind },
+	Reference{ ctx: &'static str, ret: RefReturnState, kind: RefKind },
 
 	/// Count the number of correct consecutive CDataSectionEnd characters
 	/// encountered
@@ -178,42 +199,46 @@ const TOK_XML_DECL_START: &'static [u8] = b"<?xml";
 const TOK_XML_CDATA_START: &'static [u8] = b"<![CDATA[";
 // const CLASS_XML_NAME_START_CHAR:
 
+/// Hold options to configure a [`Lexer`].
+///
+/// See also [`Lexer::with_options()`].
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct LexerOptions {
+	/// Maximum number of bytes which can form a token.
+	///
+	/// This exists to limit the memory use of the Lexer for tokens where the
+	/// data needs to be buffered in memory (most notably
+	/// [`Token::Text`] and [`Token::AttributeValue`]).
+	///
+	/// If token data exceeds this limit, it depends on the token type whether
+	/// a partial token is emitted or the lexing fails with
+	/// [`Error::RestrictedXml`]: Text tokens are split and emitted in parts
+	/// (and lexing continues), all other tokens exceeding this limit will
+	/// cause an error.
 	pub max_token_length: usize,
 }
 
 impl LexerOptions {
+	/// Constructs default lexer options.
+	///
+	/// The defaults are implementation-defined and should not be relied upon.
 	pub fn defaults() -> LexerOptions {
 		LexerOptions{
 			max_token_length: 65535,
 		}
 	}
 
-	pub fn max_token_length<'a>(&'a mut self, v: usize) -> &'a mut LexerOptions {
+	/// Set the [`LexerOptions::max_token_length`] value.
+	///
+	/// # Example
+	///
+	/// ```
+	/// use rxml::{Lexer, LexerOptions};
+	/// let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(1024));
+	/// ```
+	pub fn max_token_length(mut self, v: usize) -> LexerOptions {
 		self.max_token_length = v;
 		self
-	}
-}
-
-pub struct Lexer {
-	state: State,
-	scratchpad: String,
-	swap: String,
-	opts: LexerOptions,
-	/// keep the scratchpad and state for debugging
-	#[cfg(debug_assertions)]
-	prev_state: (String, State),
-	#[cfg(debug_assertions)]
-	last_single_read: Option<Utf8Char>,
-}
-
-struct ST(State, Option<Token>);
-
-impl ST {
-	fn splice<'a>(self, st: &'a mut State) -> Option<Token> {
-		*st = self.0;
-		self.1
 	}
 }
 
@@ -250,10 +275,7 @@ fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut String) -> Re
 }
 
 fn add_context<T>(r: Result<T>, ctx: &'static str) -> Result<T> {
-	r.or_else(|e| { match e {
-		Error::NotWellFormed(wf) => Err(Error::NotWellFormed(wf.with_context(ctx))),
-		other => Err(other),
-	} })
+	r.or_else(|e| { Err(e.with_context(ctx)) })
 }
 
 fn handle_eof<T>(v: Option<T>, ctx: &'static str) -> Result<T> {
@@ -262,11 +284,42 @@ fn handle_eof<T>(v: Option<T>, ctx: &'static str) -> Result<T> {
 	})
 }
 
+struct ST(State, Option<Token>);
+
+impl ST {
+	fn splice<'a>(self, st: &'a mut State) -> Option<Token> {
+		*st = self.0;
+		self.1
+	}
+}
+
+
+/**
+# Restricted XML 1.0 lexer
+
+This lexer is able to lex a restricted subset of XML 1.0. For an overview
+of the restrictions (including those imposed by [`Parser`](`crate::Parser`)),
+see [`rxml`](`crate`).
+*/
+pub struct Lexer {
+	state: State,
+	scratchpad: String,
+	swap: String,
+	opts: LexerOptions,
+	/// keep the scratchpad and state for debugging
+	#[cfg(debug_assertions)]
+	prev_state: (String, State),
+	#[cfg(debug_assertions)]
+	last_single_read: Option<Utf8Char>,
+	err: Option<Error>,
+}
 impl Lexer {
+	/// Construct a new Lexer based on [`LexerOptions::defaults()`].
 	pub fn new() -> Lexer {
 		Lexer::with_options(LexerOptions::defaults())
 	}
 
+	/// Construct a new Lexer with the given options.
 	pub fn with_options(opts: LexerOptions) -> Lexer {
 		Lexer {
 			state: State::Content(ContentState::Initial),
@@ -277,6 +330,7 @@ impl Lexer {
 			prev_state: (String::new(), State::Content(ContentState::Initial)),
 			#[cfg(debug_assertions)]
 			last_single_read: None,
+			err: None,
 		}
 	}
 
@@ -370,7 +424,7 @@ impl Lexer {
 						Ok(ST(
 							State::Reference{
 								ctx: ERRCTX_TEXT,
-								ret: Box::new(State::Content(ContentState::Initial)),
+								ret: RefReturnState::Text,
 								kind: RefKind::Entity,
 							},
 							tok,
@@ -378,6 +432,24 @@ impl Lexer {
 					},
 					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, other as u32, false))),
 				},
+			},
+			ContentState::Whitespace => match skip_matching(r, &CLASS_XML_SPACES)? {
+				(_, Endpoint::Eof) | (_, Endpoint::Limit) => {
+					Ok(ST(
+						State::Eof,
+						None,
+					))
+				},
+				(_, Endpoint::Delimiter(ch)) => match ch.to_char() {
+					'<' => Ok(ST(
+						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
+					)),
+					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+						ERRCTX_XML_DECL_END,
+						other,
+						Some(&["Spaces", "<"]),
+					))),
+				}
 			},
 			ContentState::MaybeElement(MaybeElementState::Initial) => match self.read_single(r)? {
 				Some(utf8ch) => match utf8ch.to_char() {
@@ -571,10 +643,11 @@ impl Lexer {
 						Ok(ST(
 							State::Reference{
 								ctx: ERRCTX_ATTVAL,
-								ret: Box::new(State::Element{
-									kind: kind,
-									state: ElementState::AttributeValue(delim, selector),
-								}),
+								ret: RefReturnState::AttributeValue(
+									kind,
+									delim,
+									selector,
+								),
 								kind: RefKind::Entity,
 							}, None
 						))
@@ -597,7 +670,7 @@ impl Lexer {
 				Some(ch) if ch.to_char() == '>' => {
 					self.drop_scratchpad()?;
 					Ok(ST(
-						State::Content(ContentState::Initial),
+						State::Content(ContentState::Whitespace),
 						Some(Token::XMLDeclEnd),
 					))
 				},
@@ -642,7 +715,7 @@ impl Lexer {
 		}
 	}
 
-	fn lex_reference<'r, R: CodepointRead>(&mut self, ctx: &'static str, ret: Box<State>, kind: RefKind, r: &'r mut R) -> Result<ST> {
+	fn lex_reference<'r, R: CodepointRead>(&mut self, ctx: &'static str, ret: RefReturnState, kind: RefKind, r: &'r mut R) -> Result<ST> {
 		let result = match kind {
 			RefKind::Entity => self.read_validated(r, &CLASS_XML_NAME, MAX_REFERENCE_LENGTH)?,
 			RefKind::Char(CharRefRadix::Decimal) => self.read_validated(r, &CLASS_XML_DECIMAL_DIGITS, MAX_REFERENCE_LENGTH)?,
@@ -707,7 +780,7 @@ impl Lexer {
 			}
 		};
 		match result {
-			Ok(_) => Ok(ST(*ret, None)),
+			Ok(_) => Ok(ST(ret.to_state(), None)),
 			Err(ch) => return Err(Error::NotWellFormed(WFError::UnexpectedChar(
 				ERRCTX_REF,
 				ch,
@@ -777,23 +850,43 @@ impl Lexer {
 		}
 	}
 
-	/// Lex bytes from the reader until either an error occurs, a valid
-	/// token is produced or the stream ends between two tokens.
+	/// Lex codepoints from the reader until either an error occurs, a valid
+	/// token is produced or a valid end-of-file situation is encountered.
 	///
-	/// **Note**: While it is possible to swap the reader, that is highly
-	/// not recommended as the lexer state may depend on lookaheads.
+	/// If an [`Error::IO`] is encountered, that error is just returned
+	/// directly and it is valid to call `lex()` again. However, if an error
+	/// which is not [`Error::IO`] is encountered, the Lexer is poisoned and
+	/// all future calls to `lex()` will return a clone of the same error.
+	///
+	/// **Note**: While it is possible to swap the reader between calls, that
+	/// is highly not recommended as the lexer state may depend on lookaheads.
 	pub fn lex<'r, R: CodepointRead>(&mut self, r: &'r mut R) -> Result<Option<Token>>
 	{
+		if let Some(e) = self.err.as_ref() {
+			return Err(e.clone())
+		}
+
 		loop {
-			let mut tmp_state = State::Eof;
-			std::mem::swap(&mut tmp_state, &mut self.state);
-			let st = match tmp_state {
+			let stresult = match self.state {
 				State::Content(substate) => self.lex_content(substate, r),
 				State::Element{ kind, state: substate } => self.lex_element(kind, substate, r),
 				State::Reference{ ctx, ret, kind } => self.lex_reference(ctx, ret, kind, r),
 				State::CDataSection(nend) => self.lex_cdata_section(nend, r),
 				State::Eof => return Ok(None),
-			}?;
+			};
+			let st = match stresult {
+				Err(Error::IO(ioerr)) => {
+					// we do not cache I/O errors
+					return Err(Error::IO(ioerr));
+				},
+				Err(other) => {
+					// we cache all other errors because we don't want to read / emit invalid data
+					let err = other.clone();
+					self.err = Some(other);
+					return Err(err);
+				},
+				Ok(st) => st,
+			};
 			match st.splice(&mut self.state) {
 				Some(tok) => {
 					#[cfg(debug_assertions)]
@@ -839,6 +932,7 @@ mod tests {
 	use std::fmt;
 	use std::error;
 	use crate::lexer::read::DecodingReader;
+	use crate::bufq::BufferQueue;
 
 	/// Stream tokens to the sink until the end of stream is reached.
 	fn stream_to_sink<'r, 's, 'l, R: CodepointRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> Result<()> {
@@ -1271,7 +1365,7 @@ mod tests {
 	fn lexer_lex_restrict_element_name_by_token_length() {
 		let src = &b"<foobar2342/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1282,7 +1376,7 @@ mod tests {
 	fn lexer_lex_restrict_attribute_name_by_token_length() {
 		let src = &b"<a foobar2342='foo'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1293,7 +1387,7 @@ mod tests {
 	fn lexer_lex_restrict_attribute_value_by_token_length() {
 		let src = &b"<a b='foobar2342'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1304,7 +1398,7 @@ mod tests {
 	fn lexer_lex_restrict_attribute_value_by_token_length_even_with_entities() {
 		let src = &b"<a b='foob&amp;r'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1315,7 +1409,7 @@ mod tests {
 	fn lexer_lex_attribute_value_entities_do_only_count_for_expansion() {
 		let src = &b"<a b='foob&amp;'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).unwrap();
 	}
@@ -1324,7 +1418,7 @@ mod tests {
 	fn lexer_lex_token_length_causes_text_nodes_to_be_split() {
 		let src = &b"<a>foo001foo002foo003</a>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(*LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).unwrap();
 
@@ -1424,5 +1518,47 @@ mod tests {
 
 		let err = lex_err(b"<a foo='\x1f'/>", 128).unwrap();
 		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+	}
+
+	#[test]
+	fn lexer_re_emits_error_on_next_call() {
+		let src = &b"<a>\x00</a>"[..];
+		let mut buffered = io::BufReader::with_capacity(1, src);
+		let mut lexer = Lexer::new();
+		let mut sink = VecSink::new(128);
+		let e1 = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).err().unwrap();
+		let e2 = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).err().unwrap();
+		assert_eq!(e1, e2);
+
+		let mut iter = sink.dest.iter();
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
+		assert!(iter.next().is_none());
+	}
+
+	#[test]
+	fn lexer_recovers_from_wouldblock() {
+		let seq = &b"<?xml version='1.0'?>"[..];
+		let mut r = DecodingReader::new(BufferQueue::new());
+		let mut lexer = Lexer::new();
+		let mut sink: Vec<Token> = Vec::new();
+		for chunk in seq.chunks(5) {
+			r.get_mut().push(std::borrow::Cow::from(chunk));
+			loop {
+				match lexer.lex(&mut r) {
+					Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
+					Err(other) => panic!("unexpected error: {:?}", other),
+					Ok(None) => panic!("unexpected eof signal: {:?}", lexer),
+					Ok(Some(tok)) => sink.push(tok),
+				}
+			}
+		}
+
+		let mut iter = sink.iter();
+		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart);
+		assert_eq!(*iter.next().unwrap(), Token::Name("version".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Eq);
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("1.0".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd);
 	}
 }

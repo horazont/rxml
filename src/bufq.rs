@@ -1,17 +1,59 @@
 use std::io;
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 pub const ERR_NODATA: &'static str = "no data in buffer";
 
-pub struct BufferQueue {
-	q: VecDeque<Vec<u8>>,
+/**
+# Zero-copy buffered reader for a queue of byte slices.
+
+The BufferQueue acts as a [`std::io::BufRead`] and [`std::io::Read`]. The
+data which is to be read from it must be provided using the
+[`BufferQueue::push()`] method.
+
+When a buffer which has been pushed to the queue has been read completely, it
+is dropped. Users can read arbitrary subsequences of buffers at a time, but
+reads will be shortened at buffer edges.
+
+When more data is being read than being pushed, a
+[`std::io::ErrorKind::WouldBlock`] I/O error is returned.
+
+## Example
+
+```
+use std::io::{Read, ErrorKind};
+use rxml::{BufferQueue, Error};
+let mut bq = BufferQueue::new();
+let mut buf = [0; 4];
+// buffer queue has no data, put some into it
+bq.push(&b"foo"[..]);
+assert_eq!(bq.read(&mut buf).unwrap(), 3);
+assert_eq!(&buf[..3], b"foo");
+// buffer is now empty, will get WouldBlock
+assert!(bq.read(&mut buf).err().unwrap().kind() == ErrorKind::WouldBlock);
+// add more data + eof
+bq.push(&b"bar"[..]);
+bq.push(&b"2342"[..]);
+bq.push_eof();
+// reads do not go beyond the individual buffers in the queue
+assert_eq!(bq.read(&mut buf).unwrap(), 3);
+assert_eq!(&buf[..3], b"bar");
+assert_eq!(bq.read(&mut buf).unwrap(), 4);
+assert_eq!(&buf[..4], b"2342");
+// zero-length read on eof
+assert_eq!(bq.read(&mut buf).unwrap(), 0);
+```
+*/
+pub struct BufferQueue<'x> {
+	q: VecDeque<Cow<'x, [u8]>>,
 	offset: usize,
 	len: usize,
 	eof: bool,
 }
 
-impl BufferQueue {
-	pub fn new() -> BufferQueue {
+impl<'x> BufferQueue<'x> {
+	/// Create a new, empty buffer queue.
+	pub fn new() -> BufferQueue<'x> {
 		BufferQueue{
 			q: VecDeque::new(),
 			offset: 0,
@@ -20,7 +62,16 @@ impl BufferQueue {
 		}
 	}
 
-	pub fn push(&mut self, new: Vec<u8>) {
+	/// Add the given buffer to the end of the queue.
+	///
+	/// Any data which can be converted into a `[u8]` Cow can be passed.
+	///
+	/// # Panics
+	///
+	/// If [`BufferQueue::push_eof`] has been called.
+	pub fn push<'a: 'x, T: Into<Cow<'a, [u8]>>>(&mut self, new: T)
+	{
+		let new = new.into();
 		if self.eof {
 			panic!("cannot push behind eof");
 		}
@@ -32,23 +83,48 @@ impl BufferQueue {
 		self.len = new_len;
 	}
 
+	/// Number of bytes which have been enqueued, but not read yet.
+	///
+	/// Note that this does not count the number of bytes currently owned or
+	/// borrowed by the `BufferQueue`; if a buffer has been partially read,
+	/// that will be reflected by `len()` even though the memory has not been
+	/// released yet.
 	pub fn len(&self) -> usize {
 		self.len
 	}
 
+	/// Push an end-of-file marker to the queue.
+	///
+	/// After an end-of-file marker has been pushed, it is not possible to
+	/// push further buffers. Once the [`BufferQueue`] is then depleted, it
+	/// will signal EOF to the caller instead of `WouldBlock`.
 	pub fn push_eof(&mut self) {
 		self.eof = true;
 	}
 
+	/// Return whether the end-of-file marker has been pushed to the queue
+	/// already.
+	///
+	/// [`BufferQueue::push()`] will panic if this function returns true.
 	pub fn eof_pushed(&self) -> bool {
 		self.eof
 	}
 }
 
-impl io::Read for BufferQueue {
+impl io::Read for BufferQueue<'_> {
+	/// Read from the buffer queue.
+	///
+	/// The read will return bytes up to the next buffer boundary at most;
+	/// this means that a short read is **not** an indicator for an impending
+	/// end-of-file (this is within the [`std::io::Read`] contract).
+	///
+	/// When the end-of-file is reached (see [`BufferQueue::push_eof()`]),
+	/// zero is returned. When no buffer is available in the queue but the
+	/// end-of-file has not been reached yet, a
+	/// [`std::io::ErrorKind::WouldBlock`] is returned.
 	fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
 		let (read, remaining) = {
-			let front = match self.q.front_mut() {
+			let front = match self.q.front() {
 				None => {
 					if self.eof {
 						return Ok(0)
@@ -76,13 +152,37 @@ impl io::Read for BufferQueue {
 	}
 }
 
-impl io::BufRead for BufferQueue {
+impl io::BufRead for BufferQueue<'_> {
+	/// Return the current buffer contents
+	///
+	/// This will only return the contents up to the next buffer boundary,
+	/// so callers need to be prepared to see single-byte buffers even though
+	/// the end-of-file is not close yet.
+	///
+	/// If data is currently available and the end-of-file has not been
+	/// reached yet, [`std::io::ErrorKind::WouldBlock`] is returned.
+	fn fill_buf(&mut self) -> io::Result<&[u8]> {
+		match self.q.front() {
+			None => if self.eof {
+				Ok(&[])
+			} else {
+				Err(io::Error::new(io::ErrorKind::WouldBlock, ERR_NODATA))
+			},
+			Some(v) => Ok(&v[self.offset..]),
+		}
+	}
+
+	/// Skip forward by `amt` bytes
+	///
+	/// # Panics
+	///
+	/// If the `amt` bytes is larger than what `fill_buf()` would return.
 	fn consume(&mut self, amt: usize) {
 		if amt == 0 {
 			return;
 		}
 		let remaining = {
-			let front = match self.q.front_mut() {
+			let front = match self.q.front() {
 				None => panic!("attempt to consume beyond end of buffer"),
 				Some(v) => v,
 			};
@@ -101,16 +201,6 @@ impl io::BufRead for BufferQueue {
 		self.len -= amt;
 	}
 
-	fn fill_buf(&mut self) -> io::Result<&[u8]> {
-		match self.q.front() {
-			None => if self.eof {
-				Ok(&[])
-			} else {
-				Err(io::Error::new(io::ErrorKind::WouldBlock, ERR_NODATA))
-			},
-			Some(v) => Ok(&v[self.offset..]),
-		}
-	}
 }
 
 #[cfg(test)]

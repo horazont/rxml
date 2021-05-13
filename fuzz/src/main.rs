@@ -1,12 +1,12 @@
 #[macro_use]
 extern crate afl;
-extern crate xmppxml;
+extern crate rxml;
 
 use std::io;
 
 fn main() {
     fuzz!(|data: &[u8]| {
-		let mut parser = xmppxml::FeedParser::new();
+		let mut parser = rxml::FeedParser::new();
 		parser.feed(data.to_vec());
 		parser.feed_eof();
 
