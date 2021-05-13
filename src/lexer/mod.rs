@@ -829,21 +829,31 @@ impl Lexer {
 				// we read two consecutive ']', so we now need to check for a single '>'.
 				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION)?;
 				let ch = utf8ch.to_char();
-				if ch == '>' {
+				match ch {
 					// end of CDATA section, flush the scratchpad
-					Ok(ST(
+					'>' => Ok(ST(
 						State::Content(ContentState::Initial),
 						self.maybe_flush_scratchpad_as_text()?,
-					))
-				} else {
-					// not a '>', thus we have to add the two ']' and whatever we just found to the scratchpad
-					self.scratchpad.push_str("]]");
-					self.scratchpad.push_str(utf8ch.as_str());
-					// continue with the CDATA section as before without unnecessary flush
-					Ok(ST(
-						State::CDataSection(0),
-						None,
-					))
+					)),
+					']' => {
+						// could be either the end of the cdata section, or a sequence of closing square brackets
+						// we have to add one `]` to the scratchpad and then continue in the same state
+						self.scratchpad.push_str("]");
+						Ok(ST(
+							State::CDataSection(2),
+							None,
+						))
+					},
+					_ => {
+						// not a `>` and not a `]`, we thus have read a `]]` without `>` -> add it to the scratchpad and continue lexing the CDATA section
+						self.scratchpad.push_str("]]");
+						self.scratchpad.push_str(utf8ch.as_str());
+						// continue with the CDATA section as before without unnecessary flush
+						Ok(ST(
+							State::CDataSection(0),
+							None,
+						))
+					},
 				}
 			},
 			_ => panic!("invalid state"),
@@ -1534,6 +1544,21 @@ mod tests {
 		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("a".to_string()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 		assert!(iter.next().is_none());
+	}
+
+	#[test]
+	fn lexer_handles_closing_brackets_in_cdata_section() {
+		let mut src = &b"<a><![CDATA[]]]></a>"[..];
+		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut sink = VecSink::new(128);
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
+
+		let mut iter = sink.dest.iter();
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
+		assert_eq!(*iter.next().unwrap(), Token::Text("]".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
 	#[test]
