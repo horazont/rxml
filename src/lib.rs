@@ -48,11 +48,11 @@ implements [`io::BufRead`].
 #[allow(unused_imports)]
 use std::io;
 
-pub mod error;
+mod error;
 pub mod lexer;
 pub mod parser;
-pub mod bufq;
-mod strings;
+mod bufq;
+pub mod strings;
 mod selectors;
 
 #[cfg(test)]
@@ -66,7 +66,6 @@ pub use lexer::{Lexer, LexerOptions, DecodingReader};
 pub use parser::{Parser, Event, LexerAdapter, XMLVersion};
 #[doc(inline)]
 pub use bufq::BufferQueue;
-#[doc(inline)]
 pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
 
 /**

@@ -1,3 +1,6 @@
+/*!
+# XML 1.0 Parser
+*/
 use std::fmt;
 use std::result::Result as StdResult;
 use std::collections::HashMap;

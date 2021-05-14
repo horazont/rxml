@@ -1,3 +1,29 @@
+/*!
+# Strongly-typed strings for use with XML 1.0 documents
+
+This module defines various string- and str-like types which represent pieces
+of text as they may occur in XML documents. These types are checked to contain
+only text which conforms to the respective grammar in the XML specifications.
+
+This allows to carry information about the checking which already took place
+in the parser to the application, avoiding the need to execute checks multiple
+times.
+
+## Type Overview
+
+- [`Name`] and [`NameStr`] represent the `Name` production and can be used
+  for element and attribute names before namespace prefix expansion.
+- [`NCName`] and [`NCNameStr`] represent the `Name` production but without a
+  colon inside; they are used for localnames after prefix expansion and to
+  carry the prefixes themselves.
+- [`CData`] and [`CDataStr`] represent strings of XML `Char`s, which are
+  slightly more restrictive than Rust `char`. They are used for attribute
+  values and text nodes.
+
+  Note that [`CData`] strings do not contain references or CDATA sections;
+  those are expanded by the lexer.
+*/
+
 use std::ops::Deref;
 use std::borrow::Borrow;
 use crate::selectors;

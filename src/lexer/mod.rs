@@ -1,3 +1,6 @@
+/*!
+# XML 1.0 Lexer
+*/
 // needed for trait bounds
 #[allow(unused_imports)]
 use std::io;
