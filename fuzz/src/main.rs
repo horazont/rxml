@@ -3,6 +3,7 @@ extern crate afl;
 extern crate rxml;
 
 use std::io;
+use rxml::EventRead;
 
 fn main() {
     fuzz!(|data: &[u8]| {
