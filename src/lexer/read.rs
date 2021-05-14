@@ -1,5 +1,6 @@
 use std::io;
 use crate::error::{Result, Error};
+use crate::selectors::CharSelector;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Utf8Char{
@@ -248,36 +249,6 @@ impl<T: io::Read + Sized> CodepointRead for DecodingReader<T> {
 	}
 }
 
-pub trait CharSelector {
-	fn select(&self, c: char) -> bool;
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct AllChars();
-
-impl CharSelector for char {
-	fn select(&self, c: char) -> bool {
-		*self == c
-	}
-}
-
-impl CharSelector for &'_ [char] {
-	fn select(&self, c: char) -> bool {
-		for r in self.iter() {
-			if *r == c {
-				return true;
-			}
-		}
-		false
-	}
-}
-
-impl CharSelector for AllChars {
-	fn select(&self, _c: char) -> bool {
-		return true;
-	}
-}
-
 pub enum Endpoint {
 	Eof,
 	Limit,
@@ -327,6 +298,7 @@ pub fn skip_matching<'r, 's, R: CodepointRead, S: CharSelector>(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::selectors::AllChars;
 	use crate::bufq;
 
 	#[test]

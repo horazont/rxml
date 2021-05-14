@@ -3,22 +3,22 @@
 use std::io;
 use std::fmt;
 
-mod selectors;
 mod read;
 
-use selectors::*;
-use read::{read_validated, CharSelector, Endpoint, skip_matching};
+use crate::selectors::*;
+use read::{read_validated, Endpoint, skip_matching};
 use crate::error::{Error, Result, WFError};
 use crate::error::*;
+use crate::strings::*;
 
 pub use read::{Utf8Char, CodepointRead, DecodingReader};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
 	/* the following tokens are only emitted in the Element lexer state */
-	Name(String),
+	Name(Name),
 	Eq,  // =
-	AttributeValue(String),  // '...' | "..."
+	AttributeValue(CData),  // '...' | "..."
 	XMLDeclEnd,  // ?>
 	ElementHeadClose,  // />
 	ElementHFEnd,  // >
@@ -26,12 +26,12 @@ pub enum Token {
 	/* the following tokens are only emitted in the Content lexer state */
 	Reference(char), // &...;
 	XMLDeclStart,  // <?xml
-	ElementHeadStart(String),  // <
-	ElementFootStart(String),  // </
+	ElementHeadStart(Name),  // <
+	ElementFootStart(Name),  // </
 
 	/* the following tokens may be emitted in the CDataSection and Content
 	lexer states */
-	Text(String),
+	Text(CData),
 }
 
 impl Token {
@@ -382,11 +382,35 @@ impl Lexer {
 		Ok(result)
 	}
 
+	fn flush_scratchpad_as_name(&mut self) -> Result<Name> {
+		let result = self.flush_scratchpad()?;
+		#[cfg(debug_assertions)]
+		{
+			return Ok(Name::from_string(result)?);
+		}
+		#[cfg(not(debug_assertions))]
+		unsafe {
+			return Name::from_string_unchecked(result);
+		}
+	}
+
+	fn flush_scratchpad_as_cdata(&mut self) -> Result<CData> {
+		let result = self.flush_scratchpad()?;
+		#[cfg(debug_assertions)]
+		{
+			return Ok(CData::from_string(result)?);
+		}
+		#[cfg(not(debug_assertions))]
+		unsafe {
+			return CData::from_string_unchecked(result);
+		}
+	}
+
 	fn maybe_flush_scratchpad_as_text(&mut self) -> Result<Option<Token>> {
 		if self.scratchpad.len() == 0 {
 			Ok(None)
 		} else {
-			Ok(Some(Token::Text(self.flush_scratchpad()?)))
+			Ok(Some(Token::Text(self.flush_scratchpad_as_cdata()?)))
 		}
 	}
 
@@ -592,8 +616,8 @@ impl Lexer {
 							state: self.lex_element_postblank(kind, ch)?
 						},
 						Some(match kind {
-							ElementKind::Header => Token::ElementHeadStart(self.flush_scratchpad()?),
-							ElementKind::Footer => Token::ElementFootStart(self.flush_scratchpad()?),
+							ElementKind::Header => Token::ElementHeadStart(self.flush_scratchpad_as_name()?),
+							ElementKind::Footer => Token::ElementFootStart(self.flush_scratchpad_as_name()?),
 							ElementKind::XMLDecl => panic!("invalid state"),
 						}),
 					))
@@ -626,7 +650,7 @@ impl Lexer {
 							kind: kind,
 							state: self.lex_element_postblank(kind, ch)?
 						},
-						Some(Token::Name(self.flush_scratchpad()?)),
+						Some(Token::Name(self.flush_scratchpad_as_name()?)),
 					))
 				},
 			},
@@ -657,7 +681,7 @@ impl Lexer {
 							kind: kind,
 							state: ElementState::Blank
 						},
-						Some(Token::AttributeValue(self.flush_scratchpad()?)),
+						Some(Token::AttributeValue(self.flush_scratchpad_as_cdata()?)),
 					)),
 					other => Err(Error::NotWellFormed(WFError::InvalidChar(
 						ERRCTX_ATTVAL,
@@ -1068,7 +1092,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[1], Token::Name("version".to_string()));
+		assert_eq!(sink.dest[1], Token::Name(Name::from_str("version").unwrap()));
 	}
 
 	#[test]
@@ -1088,7 +1112,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[3], Token::AttributeValue("1.0".to_string()));
+		assert_eq!(sink.dest[3], Token::AttributeValue(CData::from_str("1.0").unwrap()));
 	}
 
 	#[test]
@@ -1098,7 +1122,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[3], Token::AttributeValue("1.0".to_string()));
+		assert_eq!(sink.dest[3], Token::AttributeValue(CData::from_str("1.0").unwrap()));
 	}
 
 	#[test]
@@ -1120,12 +1144,12 @@ mod tests {
 
 		assert!(result.is_ok());
 		assert_eq!(sink.dest[0], Token::XMLDeclStart);
-		assert_eq!(sink.dest[1], Token::Name("version".to_string()));
+		assert_eq!(sink.dest[1], Token::Name(Name::from_str("version").unwrap()));
 		assert_eq!(sink.dest[2], Token::Eq);
-		assert_eq!(sink.dest[3], Token::AttributeValue("1.0".to_string()));
-		assert_eq!(sink.dest[4], Token::Name("encoding".to_string()));
+		assert_eq!(sink.dest[3], Token::AttributeValue(CData::from_str("1.0").unwrap()));
+		assert_eq!(sink.dest[4], Token::Name(Name::from_str("encoding").unwrap()));
 		assert_eq!(sink.dest[5], Token::Eq);
-		assert_eq!(sink.dest[6], Token::AttributeValue("utf-8".to_string()));
+		assert_eq!(sink.dest[6], Token::AttributeValue(CData::from_str("utf-8").unwrap()));
 		assert_eq!(sink.dest[7], Token::XMLDeclEnd);
 	}
 
@@ -1136,7 +1160,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(Name::from_str("element").unwrap()));
 	}
 
 	#[test]
@@ -1146,7 +1170,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(Name::from_str("element").unwrap()));
 		assert_eq!(sink.dest[1], Token::ElementHeadClose);
 	}
 
@@ -1157,7 +1181,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(Name::from_str("element").unwrap()));
 		assert_eq!(sink.dest[1], Token::ElementHFEnd);
 	}
 
@@ -1168,9 +1192,9 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart("element".to_string()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(Name::from_str("element").unwrap()));
 		assert_eq!(sink.dest[1], Token::ElementHFEnd);
-		assert_eq!(sink.dest[2], Token::ElementFootStart("element".to_string()));
+		assert_eq!(sink.dest[2], Token::ElementFootStart(Name::from_str("element").unwrap()));
 		assert_eq!(sink.dest[3], Token::ElementHFEnd);
 	}
 
@@ -1182,19 +1206,19 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("element".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Name("x".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("element").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(Name::from_str("x").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("foo".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Name("y".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("foo").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(Name::from_str("y").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("bar".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Name("xmlns".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("bar").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(Name::from_str("xmlns").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("baz".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Name("xmlns:abc".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("baz").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(Name::from_str("xmlns:abc").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("fnord".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("fnord").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1206,10 +1230,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::Text("Hello World!".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("Hello World!").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1221,10 +1245,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::Text("&".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("&").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1236,10 +1260,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::Text("<".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("<").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1251,10 +1275,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::Text(">".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str(">").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1266,13 +1290,13 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 
 		let mut texts: Vec<String> = Vec::new();
 		for tok in iter {
 			match tok {
-				Token::Text(t) => texts.push(t.clone()),
+				Token::Text(t) => texts.push(t.to_string()),
 				_ => break,
 			}
 		}
@@ -1298,10 +1322,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Name("foo".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(Name::from_str("foo").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("&".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("&").unwrap()));
 	}
 
 	#[test]
@@ -1312,10 +1336,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Name("foo".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(Name::from_str("foo").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("<example foo=\"bar\" baz='fnord'/>".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("<example foo=\"bar\" baz='fnord'/>").unwrap()));
 	}
 
 	#[test]
@@ -1326,10 +1350,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::Text("<example foo=\"bar\" baz='fnord'/>".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("<example foo=\"bar\" baz='fnord'/>").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1341,9 +1365,9 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1355,14 +1379,14 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("root".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 
 
 		let mut texts: Vec<String> = Vec::new();
 		for tok in iter {
 			match tok {
-				Token::Text(t) => texts.push(t.clone()),
+				Token::Text(t) => texts.push(t.to_string()),
 				_ => break,
 			}
 		}
@@ -1433,12 +1457,12 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("a").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::Text("foo001".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Text("foo002".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::Text("foo003".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("foo001").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("foo002").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("foo003").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("a").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1541,7 +1565,7 @@ mod tests {
 		assert_eq!(e1, e2);
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("a").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 		assert!(iter.next().is_none());
 	}
@@ -1554,10 +1578,10 @@ mod tests {
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("a").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
-		assert_eq!(*iter.next().unwrap(), Token::Text("]".to_string()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart("a".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("a").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
 	}
 
@@ -1581,9 +1605,9 @@ mod tests {
 
 		let mut iter = sink.iter();
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart);
-		assert_eq!(*iter.next().unwrap(), Token::Name("version".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(Name::from_str("version").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue("1.0".to_string()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("1.0").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd);
 	}
 }

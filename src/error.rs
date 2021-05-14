@@ -73,8 +73,8 @@ pub enum WFError {
 	ElementMismatch,
 }
 
-impl WFError {
-	pub(crate) fn with_context(self, ctx: &'static str) -> WFError {
+impl ErrorWithContext for WFError {
+	fn with_context(self, ctx: &'static str) -> WFError {
 		match self {
 			WFError::InvalidEof(_) => WFError::InvalidEof(ctx),
 			WFError::InvalidChar(_, cp, fromref) => WFError::InvalidChar(ctx, cp, fromref),
@@ -154,14 +154,18 @@ pub enum NWFError {
 
 	/// Attempt to redefine a reserved namespace prefix.
 	ReservedNamespacePrefix,
+
+	/// Local name does not conform to Name production (invalid start char)
+	InvalidLocalName(&'static str),
 }
 
-impl NWFError {
-	pub(crate) fn with_context(self, ctx: &'static str) -> NWFError {
+impl ErrorWithContext for NWFError {
+	fn with_context(self, ctx: &'static str) -> NWFError {
 		match self {
 			Self::MultiColonName(_) => Self::MultiColonName(ctx),
 			Self::EmptyNamePart(_) => Self::EmptyNamePart(ctx),
 			Self::UndeclaredNamesacePrefix(_) => Self::UndeclaredNamesacePrefix(ctx),
+			Self::InvalidLocalName(_) => Self::InvalidLocalName(ctx),
 			other => other,
 		}
 	}
@@ -174,6 +178,7 @@ impl fmt::Display for NWFError {
 			Self::EmptyNamePart(ctx) => write!(f, "empty string on one side of the colon {} name", ctx),
 			Self::UndeclaredNamesacePrefix(ctx) => write!(f, "use of undeclared namespace prefix {} name", ctx),
 			Self::ReservedNamespacePrefix => f.write_str("reserved namespace prefix"),
+			Self::InvalidLocalName(ctx) => write!(f, "local name is invalid {} name", ctx),
 		}
 	}
 }
@@ -259,6 +264,10 @@ pub enum Error {
 
 pub type Result<T> = StdResult<T, Error>;
 
+pub(crate) trait ErrorWithContext {
+	fn with_context(self, ctx: &'static str) -> Self;
+}
+
 impl Error {
 	pub fn io(e: io::Error) -> Error {
 		Error::IO(IOErrorWrapper::wrap(e))
@@ -267,8 +276,10 @@ impl Error {
 	pub(crate) fn wfeof(ctx: &'static str) -> Error {
 		Error::NotWellFormed(WFError::InvalidEof(ctx))
 	}
+}
 
-	pub(crate) fn with_context(self, ctx: &'static str) -> Self {
+impl ErrorWithContext for Error {
+	fn with_context(self, ctx: &'static str) -> Self {
 		match self {
 			Self::NotWellFormed(wf) => Self::NotWellFormed(wf.with_context(ctx)),
 			Self::NotNamespaceWellFormed(nwf) => Self::NotNamespaceWellFormed(nwf.with_context(ctx)),
@@ -280,6 +291,18 @@ impl Error {
 impl From<io::Error> for Error {
 	fn from(e: io::Error) -> Error {
 		Error::io(e)
+	}
+}
+
+impl From<WFError> for Error {
+	fn from(e: WFError) -> Error {
+		Error::NotWellFormed(e)
+	}
+}
+
+impl From<NWFError> for Error {
+	fn from(e: NWFError) -> Error {
+		Error::NotNamespaceWellFormed(e)
 	}
 }
 

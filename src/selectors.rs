@@ -1,6 +1,35 @@
 use std::fmt;
 
-use crate::lexer::read::CharSelector;
+
+pub trait CharSelector {
+	fn select(&self, c: char) -> bool;
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct AllChars();
+
+impl CharSelector for char {
+	fn select(&self, c: char) -> bool {
+		*self == c
+	}
+}
+
+impl CharSelector for &'_ [char] {
+	fn select(&self, c: char) -> bool {
+		for r in self.iter() {
+			if *r == c {
+				return true;
+			}
+		}
+		false
+	}
+}
+
+impl CharSelector for AllChars {
+	fn select(&self, _c: char) -> bool {
+		return true;
+	}
+}
 
 
 // start to end (incl., because some of our edge points are not valid chars
@@ -15,6 +44,14 @@ pub const VALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 	CodepointRange('\u{0020}', '\u{d7ff}'),
 	CodepointRange('\u{e000}', '\u{fffd}'),
 	CodepointRange('\u{10000}', '\u{10ffff}'),
+];
+
+
+// XML 1.0 § 2.2
+pub const INVALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
+	CodepointRange('\x00', '\x09'),
+	CodepointRange('\x0b', '\x0c'),
+	CodepointRange('\u{fffe}', '\u{ffff}'),
 ];
 
 

@@ -1,14 +1,15 @@
 use std::fmt;
+use std::result::Result as StdResult;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
 use crate::lexer::{Token, Lexer, CodepointRead};
 use crate::error::*;
+use crate::strings::*;
 
-pub const XML_NAMESPACE: &'static str = "http://www.w3.org/XML/1998/namespace";
+pub const XML_NAMESPACE: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
 
-type QName = (Option<String>, String);
-type NCName = String;
+type QName = (Option<CData>, NCName);
 
 /**
 # XML version number
@@ -39,7 +40,7 @@ pub enum Event {
 	/// Contains the qualified (expanded) name of the element as pair of
 	/// optional namespace URI and localname as well as a hash map of
 	/// attributes.
-	StartElement(QName, HashMap<QName, String>),
+	StartElement(QName, HashMap<QName, CData>),
 	/// The end of an XML element.
 	///
 	/// The parser enforces that start/end pairs are correctly nested, which
@@ -55,7 +56,7 @@ pub enum Event {
 	/// **Note:** Multiple consecutive `Text` events may be emitted for long
 	/// sections of text or because of implementation details in the
 	/// processing.
-	Text(String),
+	Text(CData),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -100,7 +101,7 @@ enum State {
 	Eof,
 }
 
-fn add_context<T>(r: Result<T>, ctx: &'static str) -> Result<T> {
+fn add_context<T, E: ErrorWithContext>(r: StdResult<T, E>, ctx: &'static str) -> StdResult<T, E> {
 	r.or_else(|e| { Err(e.with_context(ctx)) })
 }
 
@@ -120,46 +121,16 @@ pub trait TokenRead {
 	fn read(&mut self) -> Result<Option<Token>>;
 }
 
-fn split_name<'a>(mut name: String) -> Result<(Option<String>, String)> {
-	let colon_pos = match name.find(':') {
-		None => return Ok((None, name)),
-		Some(pos) => pos,
-	};
-	if colon_pos == 0 || colon_pos == name.len() - 1 {
-		return Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamePart(
-			ERRCTX_UNKNOWN,
-		)));
-	}
-
-	let localname = name.split_off(colon_pos+1);
-	let mut prefix = name;
-
-	if localname.find(':').is_some() {
-		// Namespaces in XML 1.0 (Third Edition) namespace-well-formed criterium 1
-		return Err(Error::NotNamespaceWellFormed(NWFError::MultiColonName(
-			ERRCTX_UNKNOWN,
-		)));
-	};
-
-	prefix.pop();
-	// do not shrink to fit here -- the prefix will be used when the element
-	// is finalized to put it on the stack for quick validation of the
-	// </element> token.
-
-	debug_assert!(prefix.len() > 0);
-	debug_assert!(localname.len() > 0);
-	Ok((Some(prefix), localname))
-}
-
 struct ElementScratchpad {
-	prefix: Option<String>,
-	localname: String,
+	prefix: Option<NCName>,
+	localname: NCName,
 	// no hashmap here as we have to resolve the k/v pairs later on anyway
-	attributes: Vec<(Option<String>, String, String)>,
-	namespace_decls: HashMap<String, String>,
+	attributes: Vec<(Option<NCName>, NCName, CData)>,
+	default_namespace_decl: Option<CData>,
+	namespace_decls: HashMap<NCName, CData>,
 	// attribute scratchpad
-	attrprefix: Option<String>,
-	attrlocalname: Option<String>,
+	attrprefix: Option<NCName>,
+	attrlocalname: Option<NCName>,
 }
 
 /**
@@ -174,8 +145,8 @@ pub struct Parser {
 	state: State,
 	/// keep a stack of the element Names (i.e. (Prefix:)?Localname) as a
 	/// stack for quick checks
-	element_stack: Vec<String>,
-	namespace_stack: Vec<HashMap<String, String>>,
+	element_stack: Vec<Name>,
+	namespace_stack: Vec<(Option<CData>, HashMap<NCName, CData>)>,
 	element_scratchpad: Option<ElementScratchpad>,
 	/// Internal queue for events which will be returned from the current
 	/// and potentially future calls to `parse()`.
@@ -222,15 +193,16 @@ impl Parser {
 	/// Initialize the element scratchpad for further processing.
 	///
 	/// May fail if the name is not namespace-well-formed.
-	fn start_processing_element(&mut self, name: String) -> Result<()> {
+	fn start_processing_element(&mut self, name: Name) -> Result<()> {
 		if self.element_scratchpad.is_some() {
 			panic!("element scratchpad is not None at start of element");
 		}
-		let (prefix, localname) = add_context(split_name(name), ERRCTX_ELEMENT)?;
+		let (prefix, localname) = add_context(name.split_name(), ERRCTX_ELEMENT)?;
 		self.element_scratchpad = Some(ElementScratchpad{
 			prefix: prefix,
 			localname: localname,
 			attributes: Vec::new(),
+			default_namespace_decl: None,
 			namespace_decls: HashMap::new(),
 			attrprefix: None,
 			attrlocalname: None,
@@ -239,15 +211,25 @@ impl Parser {
 	}
 
 	/// Lookup a namespace by prefix in the current stack of declarations.
-	fn lookup_namespace<'a>(&self, prefix: &'a str) -> Option<&str> {
-		if prefix == "xml" {
-			return Some(XML_NAMESPACE)
-		}
-		for decls in self.namespace_stack.iter().rev() {
-			match decls.get(prefix) {
-				Some(uri) => return Some(uri),
-				None => (),
-			};
+	fn lookup_namespace<'a>(&self, prefix: Option<&'a str>) -> Option<&CDataStr> {
+		match prefix {
+			Some("xml") => return Some(XML_NAMESPACE),
+			Some(prefix) => {
+				for decls in self.namespace_stack.iter().rev() {
+					match decls.1.get(prefix) {
+						Some(uri) => return Some(uri.as_cdata_str()),
+						None => (),
+					};
+				};
+			},
+			None => {
+				for decls in self.namespace_stack.iter().rev() {
+					match decls.0.as_ref() {
+						Some(uri) => return Some(uri.as_cdata_str()),
+						None => (),
+					};
+				};
+			}
 		}
 		None
 	}
@@ -257,29 +239,28 @@ impl Parser {
 	/// This may fail for various reasons, such as duplicate attributes or
 	/// references to undeclared namespace prefixes.
 	fn finalize_element(&mut self) -> Result<()> {
-		let ElementScratchpad{ prefix, localname, mut attributes, namespace_decls, attrprefix: _, attrlocalname: _ } = {
+		let ElementScratchpad{ prefix, localname, mut attributes, default_namespace_decl, namespace_decls, attrprefix: _, attrlocalname: _ } = {
 			let mut tmp: Option<ElementScratchpad> = None;
 			std::mem::swap(&mut tmp, &mut self.element_scratchpad);
 			tmp.unwrap()
 		};
-		self.namespace_stack.push(namespace_decls);
+		self.namespace_stack.push((default_namespace_decl, namespace_decls));
 		let (assembled_name, nsuri, localname) = match prefix {
-			None => (localname.clone(), self.lookup_namespace(""), localname),
-			Some(mut prefix) => {
-				let nsuri = self.lookup_namespace(&prefix).ok_or_else(|| {
+			None => (localname.clone().as_name(), self.lookup_namespace(None), localname),
+			Some(prefix) => {
+				let nsuri = self.lookup_namespace(Some(&prefix)).ok_or_else(|| {
 					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(ERRCTX_ELEMENT))
 				})?;
-				prefix.push_str(":");
-				prefix.push_str(&localname);
-				(prefix, Some(nsuri), localname)
+				let assembled = prefix.add_suffix(&localname);
+				(assembled, Some(nsuri), localname)
 			}
 		};
-		let mut resolved_attributes: HashMap<QName, String> = HashMap::new();
+		let mut resolved_attributes: HashMap<QName, CData> = HashMap::new();
 		for (prefix, localname, value) in attributes.drain(..) {
 			let nsuri = match prefix {
-				Some(prefix) => Some(self.lookup_namespace(&prefix).ok_or_else(|| {
+				Some(prefix) => Some(self.lookup_namespace(Some(&prefix)).ok_or_else(|| {
 					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(ERRCTX_ATTNAME))
-				})?.to_string()),
+				})?.to_cdata()),
 				None => None,
 			};
 			if resolved_attributes.insert((nsuri, localname), value).is_some() {
@@ -287,7 +268,7 @@ impl Parser {
 			}
 		}
 		let ev = Event::StartElement(
-			(nsuri.and_then(|s| { Some(s.to_string()) }), localname),
+			(nsuri.and_then(|s| { Some(s.to_cdata()) }), localname),
 			resolved_attributes,
 		);
 		self.emit_event(ev);
@@ -438,11 +419,11 @@ impl Parser {
 	///
 	/// May fail for various reasons, such as attempts to redefine namespace
 	/// prefixes and duplicate attributes.
-	fn push_attribute(&mut self, val: String) -> Result<()> {
+	fn push_attribute(&mut self, val: CData) -> Result<()> {
 		let scratchpad = self.element_scratchpad.as_mut().unwrap();
 		let (prefix, localname) = {
-			let mut tmp_prefix: Option<String> = None;
-			let mut tmp_localname: Option<String> = None;
+			let mut tmp_prefix: Option<NCName> = None;
+			let mut tmp_localname: Option<NCName> = None;
 			std::mem::swap(&mut tmp_prefix, &mut scratchpad.attrprefix);
 			std::mem::swap(&mut tmp_localname, &mut scratchpad.attrlocalname);
 			(tmp_prefix, tmp_localname.unwrap())
@@ -466,9 +447,10 @@ impl Parser {
 			},
 			(None, localname) if localname == "xmlns" => {
 				// declares default xml namespace, move elsewhere for later lookups
-				if scratchpad.namespace_decls.insert("".to_string(), val).is_some() {
+				if scratchpad.default_namespace_decl.is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
+					scratchpad.default_namespace_decl = Some(val);
 					Ok(())
 				}
 			},
@@ -516,7 +498,7 @@ impl Parser {
 			},
 			Some(Token::Name(name)) => match state {
 				ElementSt::AttrName => {
-					let (prefix, localname) = add_context(split_name(name), ERRCTX_ATTNAME)?;
+					let (prefix, localname) = add_context(name.split_name(), ERRCTX_ATTNAME)?;
 					let sp = self.element_scratchpad.as_mut().unwrap();
 					sp.attrprefix = prefix;
 					sp.attrlocalname = Some(localname);
@@ -788,9 +770,9 @@ mod tests {
 	fn parser_parse_xml_declaration() {
 		let (evs, r) = parse(&[
 			Token::XMLDeclStart,
-			Token::Name("version".to_string()),
+			Token::Name(Name::from_str("version").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("1.0".to_string()),
+			Token::AttributeValue(CData::from_str("1.0").unwrap()),
 			Token::XMLDeclEnd,
 		]);
 		assert!(matches!(&evs[0], Event::XMLDeclaration(XMLVersion::V1_0)));
@@ -818,9 +800,9 @@ mod tests {
 	fn parser_recovers_from_wouldblock() {
 		let toks = &[
 			Token::XMLDeclStart,
-			Token::Name("version".to_string()),
+			Token::Name(Name::from_str("version").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("1.0".to_string()),
+			Token::AttributeValue(CData::from_str("1.0").unwrap()),
 			Token::XMLDeclEnd,
 		];
 		let mut reader = SometimesBlockingTokenSliceReader::new(toks);
@@ -844,11 +826,11 @@ mod tests {
 	fn parser_parse_stepwise() {
 		let toks = &[
 			Token::XMLDeclStart,
-			Token::Name("version".to_string()),
+			Token::Name(Name::from_str("version").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("1.0".to_string()),
+			Token::AttributeValue(CData::from_str("1.0").unwrap()),
 			Token::XMLDeclEnd,
-			Token::ElementHeadStart("root".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
 		];
 		let mut reader = TokenSliceReader::new(toks);
 		let mut parser = Parser::new();
@@ -860,11 +842,11 @@ mod tests {
 	fn parser_parse_element_after_xml_declaration() {
 		let (evs, r) = parse(&[
 			Token::XMLDeclStart,
-			Token::Name("version".to_string()),
+			Token::Name(Name::from_str("version").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("1.0".to_string()),
+			Token::AttributeValue(CData::from_str("1.0").unwrap()),
 			Token::XMLDeclEnd,
-			Token::ElementHeadStart("root".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
@@ -875,7 +857,7 @@ mod tests {
 	#[test]
 	fn parser_parse_element_without_decl() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
@@ -886,10 +868,10 @@ mod tests {
 	#[test]
 	fn parser_parse_element_with_attr() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("foo".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("foo").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("bar".to_string()),
+			Token::AttributeValue(CData::from_str("bar").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
@@ -897,7 +879,7 @@ mod tests {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
 				assert!(nsuri.is_none());
-				assert_eq!(attrs.get(&(None, "foo".to_string())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -907,10 +889,10 @@ mod tests {
 	#[test]
 	fn parser_parse_element_with_xmlns() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("xmlns".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
@@ -928,20 +910,20 @@ mod tests {
 	#[test]
 	fn parser_parse_attribute_without_namespace_prefix() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("xmlns".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("foo".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("foo").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("bar".to_string()),
+			Token::AttributeValue(CData::from_str("bar").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
 		match &evs[0] {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, "foo".to_string())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 				assert_eq!(*nsuri.as_ref().unwrap(), TEST_NS);
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -952,20 +934,20 @@ mod tests {
 	#[test]
 	fn parser_parse_attribute_with_namespace_prefix() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("xmlns:foo".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns:foo").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("foo:bar".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("foo:bar").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("baz".to_string()),
+			Token::AttributeValue(CData::from_str("baz").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
 		match &evs[0] {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(TEST_NS.to_string()), "bar".to_string())).unwrap(), "baz");
+				assert_eq!(attrs.get(&(Some(CData::from_str(TEST_NS).unwrap()), NCName::from_str("bar").unwrap())).unwrap(), "baz");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -976,17 +958,17 @@ mod tests {
 	#[test]
 	fn parser_parse_xml_prefix_without_declaration() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("xml:lang".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xml:lang").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("en".to_string()),
+			Token::AttributeValue(CData::from_str("en").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
 		match &evs[0] {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some("http://www.w3.org/XML/1998/namespace".to_string()), "lang".to_string())).unwrap(), "en");
+				assert_eq!(attrs.get(&(Some(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap()), NCName::from_str("lang").unwrap())).unwrap(), "en");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -997,13 +979,13 @@ mod tests {
 	#[test]
 	fn parser_parse_reject_reserved_xmlns_prefix() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("xmlns:xmlns".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns:xmlns").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("foo:bar".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("foo:bar").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("baz".to_string()),
+			Token::AttributeValue(CData::from_str("baz").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)));
@@ -1013,10 +995,10 @@ mod tests {
 	#[test]
 	fn parser_parse_allow_xml_redeclaration() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("xmlns:xml".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns:xml").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("http://www.w3.org/XML/1998/namespace".to_string()),
+			Token::AttributeValue(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		r.unwrap();
@@ -1026,13 +1008,13 @@ mod tests {
 	#[test]
 	fn parser_parse_reject_reserved_xml_prefix_with_incorrect_value() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
-			Token::Name("xmlns:xml".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns:xml").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("foo:bar".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("foo:bar").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("baz".to_string()),
+			Token::AttributeValue(CData::from_str("baz").unwrap()),
 			Token::ElementHeadClose,
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)));
@@ -1042,13 +1024,13 @@ mod tests {
 	#[test]
 	fn parser_parse_nested_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementHeadStart("child".to_string()),
+			Token::ElementHeadStart(Name::from_str("child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("child".to_string()),
+			Token::ElementFootStart(Name::from_str("child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("root".to_string()),
+			Token::ElementFootStart(Name::from_str("root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		r.unwrap();
@@ -1062,16 +1044,16 @@ mod tests {
 	#[test]
 	fn parser_parse_mixed_content() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
 			Token::ElementHFEnd,
-			Token::Text("Hello".to_string()),
-			Token::ElementHeadStart("child".to_string()),
+			Token::Text(CData::from_str("Hello").unwrap()),
+			Token::ElementHeadStart(Name::from_str("child").unwrap()),
 			Token::ElementHFEnd,
-			Token::Text("mixed".to_string()),
-			Token::ElementFootStart("child".to_string()),
+			Token::Text(CData::from_str("mixed").unwrap()),
+			Token::ElementFootStart(Name::from_str("child").unwrap()),
 			Token::ElementHFEnd,
-			Token::Text("world!".to_string()),
-			Token::ElementFootStart("root".to_string()),
+			Token::Text(CData::from_str("world!").unwrap()),
+			Token::ElementFootStart(Name::from_str("root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		r.unwrap();
@@ -1088,13 +1070,13 @@ mod tests {
 	#[test]
 	fn parser_reject_mismested_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("root".to_string()),
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementHeadStart("child".to_string()),
+			Token::ElementHeadStart(Name::from_str("child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("nonchild".to_string()),
+			Token::ElementFootStart(Name::from_str("nonchild").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("root".to_string()),
+			Token::ElementFootStart(Name::from_str("root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::ElementMismatch)));
@@ -1107,19 +1089,19 @@ mod tests {
 	#[test]
 	fn parser_parse_prefixed_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("x:root".to_string()),
-			Token::Name("foo".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:root").unwrap()),
+			Token::Name(Name::from_str("foo").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("bar".to_string()),
-			Token::Name("xmlns:x".to_string()),
+			Token::AttributeValue(CData::from_str("bar").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementHeadStart("child".to_string()),
+			Token::ElementHeadStart(Name::from_str("child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("child".to_string()),
+			Token::ElementFootStart(Name::from_str("child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:root".to_string()),
+			Token::ElementFootStart(Name::from_str("x:root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		r.unwrap();
@@ -1128,7 +1110,7 @@ mod tests {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(*nsuri.as_ref().unwrap(), TEST_NS);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, "foo".to_string())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -1140,19 +1122,19 @@ mod tests {
 	#[test]
 	fn parser_parse_nested_prefixed_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("x:root".to_string()),
-			Token::Name("foo".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:root").unwrap()),
+			Token::Name(Name::from_str("foo").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("bar".to_string()),
-			Token::Name("xmlns:x".to_string()),
+			Token::AttributeValue(CData::from_str("bar").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementHeadStart("x:child".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:child".to_string()),
+			Token::ElementFootStart(Name::from_str("x:child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:root".to_string()),
+			Token::ElementFootStart(Name::from_str("x:root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		r.unwrap();
@@ -1161,7 +1143,7 @@ mod tests {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(*nsuri.as_ref().unwrap(), TEST_NS);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, "foo".to_string())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -1173,19 +1155,19 @@ mod tests {
 	#[test]
 	fn parser_parse_overriding_prefix_decls() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("x:root".to_string()),
-			Token::Name("xmlns:x".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:root").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementHeadStart("x:child".to_string()),
-			Token::Name("xmlns:x".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:child").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS2.to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS2).unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:child".to_string()),
+			Token::ElementFootStart(Name::from_str("x:child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:root".to_string()),
+			Token::ElementFootStart(Name::from_str("x:root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		r.unwrap();
@@ -1199,19 +1181,19 @@ mod tests {
 	#[test]
 	fn parser_parse_multiple_prefixes() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("x:root".to_string()),
-			Token::Name("xmlns:x".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:root").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("xmlns:y".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("xmlns:y").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS2.to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS2).unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementHeadStart("y:child".to_string()),
+			Token::ElementHeadStart(Name::from_str("y:child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("y:child".to_string()),
+			Token::ElementFootStart(Name::from_str("y:child").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:root".to_string()),
+			Token::ElementFootStart(Name::from_str("x:root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		r.unwrap();
@@ -1225,21 +1207,21 @@ mod tests {
 	#[test]
 	fn parser_parse_reject_duplicate_attribute_post_ns_expansion() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart("x:root".to_string()),
-			Token::Name("xmlns:x".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:root").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("xmlns:y".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("xmlns:y").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("x:a".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("x:a").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("foo".to_string()),
-			Token::Name("y:a".to_string()),
+			Token::AttributeValue(CData::from_str("foo").unwrap()),
+			Token::Name(Name::from_str("y:a").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("foo".to_string()),
+			Token::AttributeValue(CData::from_str("foo").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:root".to_string()),
+			Token::ElementFootStart(Name::from_str("x:root").unwrap()),
 			Token::ElementHFEnd,
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::DuplicateAttribute)));
@@ -1249,21 +1231,21 @@ mod tests {
 	#[test]
 	fn parser_parse_repeats_error_after_first_encounter() {
 		let toks = &[
-			Token::ElementHeadStart("x:root".to_string()),
-			Token::Name("xmlns:x".to_string()),
+			Token::ElementHeadStart(Name::from_str("x:root").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("xmlns:y".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("xmlns:y").unwrap()),
 			Token::Eq,
-			Token::AttributeValue(TEST_NS.to_string()),
-			Token::Name("x:a".to_string()),
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::Name(Name::from_str("x:a").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("foo".to_string()),
-			Token::Name("y:a".to_string()),
+			Token::AttributeValue(CData::from_str("foo").unwrap()),
+			Token::Name(Name::from_str("y:a").unwrap()),
 			Token::Eq,
-			Token::AttributeValue("foo".to_string()),
+			Token::AttributeValue(CData::from_str("foo").unwrap()),
 			Token::ElementHFEnd,
-			Token::ElementFootStart("x:root".to_string()),
+			Token::ElementFootStart(Name::from_str("x:root").unwrap()),
 			Token::ElementHFEnd,
 		];
 		let mut reader = TokenSliceReader::new(toks);

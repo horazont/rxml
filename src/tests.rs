@@ -25,8 +25,8 @@ fn feedparser_can_read_xml_document() {
 				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, "a".to_string())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, "b".to_string())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, NCName::from_str("a").unwrap())).unwrap(), "foo");
+				assert_eq!(attrs.get(&(None, NCName::from_str("b").unwrap())).unwrap(), "bar");
 			},
 			other => panic!("unexpected event: {:?}", other),
 		};
@@ -38,7 +38,7 @@ fn feedparser_can_read_xml_document() {
 			},
 			other => panic!("unexpected event: {:?}", other),
 		};
-		assert_eq!(*iter.next().unwrap(), Event::Text("with some text".to_string()));
+		assert_eq!(*iter.next().unwrap(), Event::Text(CData::from_str("with some text").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Event::EndElement);
 		assert_eq!(*iter.next().unwrap(), Event::EndElement);
 	}
@@ -79,8 +79,8 @@ fn feedparser_can_handle_chunked_input() {
 				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, "a".to_string())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, "b".to_string())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, NCName::from_str("a").unwrap())).unwrap(), "foo");
+				assert_eq!(attrs.get(&(None, NCName::from_str("b").unwrap())).unwrap(), "bar");
 			},
 			other => panic!("unexpected event: {:?}", other),
 		};
@@ -92,7 +92,7 @@ fn feedparser_can_handle_chunked_input() {
 			},
 			other => panic!("unexpected event: {:?}", other),
 		};
-		assert_eq!(*iter.next().unwrap(), Event::Text("with some text".to_string()));
+		assert_eq!(*iter.next().unwrap(), Event::Text(CData::from_str("with some text").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Event::EndElement);
 		assert_eq!(*iter.next().unwrap(), Event::EndElement);
 	}
@@ -128,8 +128,8 @@ fn pullparser_can_read_xml_document() {
 				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, "a".to_string())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, "b".to_string())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, NCName::from_str("a").unwrap())).unwrap(), "foo");
+				assert_eq!(attrs.get(&(None, NCName::from_str("b").unwrap())).unwrap(), "bar");
 			},
 			other => panic!("unexpected event: {:?}", other),
 		};
@@ -141,7 +141,7 @@ fn pullparser_can_read_xml_document() {
 			},
 			other => panic!("unexpected event: {:?}", other),
 		};
-		assert_eq!(*iter.next().unwrap(), Event::Text("with some text".to_string()));
+		assert_eq!(*iter.next().unwrap(), Event::Text(CData::from_str("with some text").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Event::EndElement);
 		assert_eq!(*iter.next().unwrap(), Event::EndElement);
 	}
