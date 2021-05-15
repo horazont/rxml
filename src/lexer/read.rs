@@ -262,7 +262,8 @@ pub fn read_validated<'r, 's, R: CodepointRead, S: CharSelector>(
 	into: &mut String,
 	) -> Result<Endpoint>
 {
-	for _ in 0..limit {
+	let mut remaining = limit;
+	while remaining > 0 {
 		let utf8ch = match r.read()? {
 			None => return Ok(Endpoint::Eof),
 			Some(ch) => ch,
@@ -272,6 +273,7 @@ pub fn read_validated<'r, 's, R: CodepointRead, S: CharSelector>(
 			return Ok(Endpoint::Delimiter(utf8ch))
 		}
 		into.push_str(utf8ch.as_ref());
+		remaining = remaining.checked_sub(utf8ch.as_str().len()).unwrap_or(0)
 	}
 	Ok(Endpoint::Limit)
 }
@@ -490,6 +492,27 @@ mod tests {
 		let result = read_validated(&mut r, &AllChars(), 6, &mut out);
 		assert!(matches!(result.unwrap(), Endpoint::Limit));
 		assert_eq!(out, "foobar".to_string());
+	}
+
+	#[test]
+	fn read_validated_limits_by_bytes() {
+		let mut s1 = &b"f\xc3\xb6\xc3\xb6b\xc3\xa4r2342"[..];
+		let mut r = DecodingReader::new(&mut s1);
+		let mut out = String::new();
+		let result = read_validated(&mut r, &AllChars(), 6, &mut out);
+		assert!(matches!(result.unwrap(), Endpoint::Limit));
+		assert_eq!(out, "fööb".to_string());
+	}
+
+	#[test]
+	fn read_validated_may_exceed_limit_slightly_for_utf8_sequence() {
+		let mut s1 = &b"f\xc3\xb6\xc3\xb6b\xc3\xa4r2342"[..];
+		let mut r = DecodingReader::new(&mut s1);
+		let mut out = String::new();
+		let result = read_validated(&mut r, &AllChars(), 4, &mut out);
+		assert!(matches!(result.unwrap(), Endpoint::Limit));
+		assert_eq!(out, "föö".to_string());
+		assert_eq!(out.len(), 5);
 	}
 
 	#[test]
