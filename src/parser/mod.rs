@@ -2,6 +2,7 @@
 # XML 1.0 Parser
 */
 use std::fmt;
+use std::sync::Arc;
 use std::result::Result as StdResult;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -12,7 +13,7 @@ use crate::strings::*;
 
 pub const XML_NAMESPACE: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
 
-type QName = (Option<CData>, NCName);
+type QName = (Option<Arc<CData>>, NCName);
 
 /**
 # XML version number
@@ -129,8 +130,8 @@ struct ElementScratchpad {
 	localname: NCName,
 	// no hashmap here as we have to resolve the k/v pairs later on anyway
 	attributes: Vec<(Option<NCName>, NCName, CData)>,
-	default_namespace_decl: Option<CData>,
-	namespace_decls: HashMap<NCName, CData>,
+	default_namespace_decl: Option<Arc<CData>>,
+	namespace_decls: HashMap<NCName, Arc<CData>>,
 	// attribute scratchpad
 	attrprefix: Option<NCName>,
 	attrlocalname: Option<NCName>,
@@ -146,10 +147,11 @@ source.
 */
 pub struct Parser {
 	state: State,
+	fixed_xml_namespace: Arc<CData>,
 	/// keep a stack of the element Names (i.e. (Prefix:)?Localname) as a
 	/// stack for quick checks
 	element_stack: Vec<Name>,
-	namespace_stack: Vec<(Option<CData>, HashMap<NCName, CData>)>,
+	namespace_stack: Vec<(Option<Arc<CData>>, HashMap<NCName, Arc<CData>>)>,
 	element_scratchpad: Option<ElementScratchpad>,
 	/// Internal queue for events which will be returned from the current
 	/// and potentially future calls to `parse()`.
@@ -166,6 +168,7 @@ impl Parser {
 	pub fn new() -> Parser {
 		Parser{
 			state: State::Initial,
+			fixed_xml_namespace: Arc::new(XML_NAMESPACE.to_cdata()),
 			element_stack: Vec::new(),
 			namespace_stack: Vec::new(),
 			element_scratchpad: None,
@@ -214,13 +217,13 @@ impl Parser {
 	}
 
 	/// Lookup a namespace by prefix in the current stack of declarations.
-	fn lookup_namespace<'a>(&self, prefix: Option<&'a str>) -> Option<&CDataStr> {
+	fn lookup_namespace<'a>(&self, prefix: Option<&'a str>) -> Option<&Arc<CData>> {
 		match prefix {
-			Some("xml") => return Some(XML_NAMESPACE),
+			Some("xml") => return Some(&self.fixed_xml_namespace),
 			Some(prefix) => {
 				for decls in self.namespace_stack.iter().rev() {
 					match decls.1.get(prefix) {
-						Some(uri) => return Some(uri.as_cdata_str()),
+						Some(uri) => return Some(&uri),
 						None => (),
 					};
 				};
@@ -229,7 +232,7 @@ impl Parser {
 				for decls in self.namespace_stack.iter().rev() {
 					match decls.0.as_ref() {
 						Some(uri) => if uri.len() > 0 {
-							return Some(uri.as_cdata_str())
+							return Some(&uri)
 						} else {
 							return None
 						},
@@ -267,7 +270,7 @@ impl Parser {
 			let nsuri = match prefix {
 				Some(prefix) => Some(self.lookup_namespace(Some(&prefix)).ok_or_else(|| {
 					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(ERRCTX_ATTNAME))
-				})?.to_cdata()),
+				})?.clone()),
 				None => None,
 			};
 			if resolved_attributes.insert((nsuri, localname), value).is_some() {
@@ -275,7 +278,7 @@ impl Parser {
 			}
 		}
 		let ev = Event::StartElement(
-			(nsuri.and_then(|s| { Some(s.to_cdata()) }), localname),
+			(nsuri.and_then(|s| { Some(s.clone()) }), localname),
 			resolved_attributes,
 		);
 		self.emit_event(ev);
@@ -448,7 +451,7 @@ impl Parser {
 					}
 				} else if val.len() == 0 {
 					Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri))
-				} else if scratchpad.namespace_decls.insert(localname, val).is_some() {
+				} else if scratchpad.namespace_decls.insert(localname, Arc::new(val)).is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
 					Ok(())
@@ -459,7 +462,7 @@ impl Parser {
 				if scratchpad.default_namespace_decl.is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
-					scratchpad.default_namespace_decl = Some(val);
+					scratchpad.default_namespace_decl = Some(Arc::new(val));
 					Ok(())
 				}
 			},
@@ -914,7 +917,7 @@ mod tests {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 0);
-				assert_eq!(*nsuri.as_ref().unwrap(), TEST_NS);
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -938,7 +941,7 @@ mod tests {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
-				assert_eq!(*nsuri.as_ref().unwrap(), TEST_NS);
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -961,7 +964,7 @@ mod tests {
 		match &evs[0] {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(CData::from_str(TEST_NS).unwrap()), NCName::from_str("bar").unwrap())).unwrap(), "baz");
+				assert_eq!(attrs.get(&(Some(Arc::new(CData::from_str(TEST_NS).unwrap())), NCName::from_str("bar").unwrap())).unwrap(), "baz");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -982,7 +985,7 @@ mod tests {
 		match &evs[0] {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap()), NCName::from_str("lang").unwrap())).unwrap(), "en");
+				assert_eq!(attrs.get(&(Some(Arc::new(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap())), NCName::from_str("lang").unwrap())).unwrap(), "en");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -1122,7 +1125,7 @@ mod tests {
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), TEST_NS);
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
@@ -1155,13 +1158,13 @@ mod tests {
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), TEST_NS);
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap() == TEST_NS && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "child"));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));
 	}
@@ -1186,8 +1189,8 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap() == TEST_NS2 && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));
 	}
@@ -1212,8 +1215,8 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap() == TEST_NS2 && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));
 	}
@@ -1321,7 +1324,7 @@ mod tests {
 		let (evs, r) = parse(toks);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap() == TEST_NS && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
 		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));
 		assert!(matches!(iter.next().unwrap(), Event::EndElement));

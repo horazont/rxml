@@ -22,7 +22,7 @@ fn feedparser_can_read_xml_document() {
 		};
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(attrs.get(&(None, NCName::from_str("a").unwrap())).unwrap(), "foo");
@@ -32,7 +32,7 @@ fn feedparser_can_read_xml_document() {
 		};
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
 			},
@@ -76,7 +76,7 @@ fn feedparser_can_handle_chunked_input() {
 		};
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(attrs.get(&(None, NCName::from_str("a").unwrap())).unwrap(), "foo");
@@ -86,7 +86,7 @@ fn feedparser_can_handle_chunked_input() {
 		};
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
 			},
@@ -125,7 +125,7 @@ fn pullparser_can_read_xml_document() {
 		};
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(attrs.get(&(None, NCName::from_str("a").unwrap())).unwrap(), "foo");
@@ -135,7 +135,7 @@ fn pullparser_can_read_xml_document() {
 		};
 		match iter.next().unwrap() {
 			Event::StartElement((nsuri, localname), attrs) => {
-				assert_eq!(*nsuri.as_ref().unwrap(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
 			},
