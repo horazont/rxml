@@ -8,7 +8,4 @@ edition = "2018"
 
 [dependencies]
 afl = "*"
-rxml = "*"
-
-[patch.crates-io]
 rxml = { path = "../" }
