@@ -2,7 +2,10 @@
 # XML 1.0 Parser
 */
 use std::fmt;
+#[cfg(feature = "mt")]
 use std::sync::Arc;
+#[cfg(not(feature = "mt"))]
+use std::rc::Rc;
 use std::result::Result as StdResult;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -13,7 +16,13 @@ use crate::strings::*;
 
 pub const XML_NAMESPACE: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
 
-type QName = (Option<Arc<CData>>, NCName);
+type QName = (Option<RcPtr<CData>>, NCName);
+
+#[cfg(feature = "mt")]
+pub type RcPtr<T> = Arc<T>;
+
+#[cfg(not(feature = "mt"))]
+pub type RcPtr<T> = Rc<T>;
 
 /**
 # XML version number
@@ -130,8 +139,8 @@ struct ElementScratchpad {
 	localname: NCName,
 	// no hashmap here as we have to resolve the k/v pairs later on anyway
 	attributes: Vec<(Option<NCName>, NCName, CData)>,
-	default_namespace_decl: Option<Arc<CData>>,
-	namespace_decls: HashMap<NCName, Arc<CData>>,
+	default_namespace_decl: Option<RcPtr<CData>>,
+	namespace_decls: HashMap<NCName, RcPtr<CData>>,
 	// attribute scratchpad
 	attrprefix: Option<NCName>,
 	attrlocalname: Option<NCName>,
@@ -147,11 +156,11 @@ source.
 */
 pub struct Parser {
 	state: State,
-	fixed_xml_namespace: Arc<CData>,
+	fixed_xml_namespace: RcPtr<CData>,
 	/// keep a stack of the element Names (i.e. (Prefix:)?Localname) as a
 	/// stack for quick checks
 	element_stack: Vec<Name>,
-	namespace_stack: Vec<(Option<Arc<CData>>, HashMap<NCName, Arc<CData>>)>,
+	namespace_stack: Vec<(Option<RcPtr<CData>>, HashMap<NCName, RcPtr<CData>>)>,
 	element_scratchpad: Option<ElementScratchpad>,
 	/// Internal queue for events which will be returned from the current
 	/// and potentially future calls to `parse()`.
@@ -168,7 +177,7 @@ impl Parser {
 	pub fn new() -> Parser {
 		Parser{
 			state: State::Initial,
-			fixed_xml_namespace: Arc::new(XML_NAMESPACE.to_cdata()),
+			fixed_xml_namespace: RcPtr::new(XML_NAMESPACE.to_cdata()),
 			element_stack: Vec::new(),
 			namespace_stack: Vec::new(),
 			element_scratchpad: None,
@@ -217,7 +226,7 @@ impl Parser {
 	}
 
 	/// Lookup a namespace by prefix in the current stack of declarations.
-	fn lookup_namespace<'a>(&self, prefix: Option<&'a str>) -> Option<&Arc<CData>> {
+	fn lookup_namespace<'a>(&self, prefix: Option<&'a str>) -> Option<&RcPtr<CData>> {
 		match prefix {
 			Some("xml") => return Some(&self.fixed_xml_namespace),
 			Some(prefix) => {
@@ -451,7 +460,7 @@ impl Parser {
 					}
 				} else if val.len() == 0 {
 					Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri))
-				} else if scratchpad.namespace_decls.insert(localname, Arc::new(val)).is_some() {
+				} else if scratchpad.namespace_decls.insert(localname, RcPtr::new(val)).is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
 					Ok(())
@@ -462,7 +471,7 @@ impl Parser {
 				if scratchpad.default_namespace_decl.is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
-					scratchpad.default_namespace_decl = Some(Arc::new(val));
+					scratchpad.default_namespace_decl = Some(RcPtr::new(val));
 					Ok(())
 				}
 			},
@@ -964,7 +973,7 @@ mod tests {
 		match &evs[0] {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(Arc::new(CData::from_str(TEST_NS).unwrap())), NCName::from_str("bar").unwrap())).unwrap(), "baz");
+				assert_eq!(attrs.get(&(Some(RcPtr::new(CData::from_str(TEST_NS).unwrap())), NCName::from_str("bar").unwrap())).unwrap(), "baz");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -985,7 +994,7 @@ mod tests {
 		match &evs[0] {
 			Event::StartElement((nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(Arc::new(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap())), NCName::from_str("lang").unwrap())).unwrap(), "en");
+				assert_eq!(attrs.get(&(Some(RcPtr::new(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap())), NCName::from_str("lang").unwrap())).unwrap(), "en");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
