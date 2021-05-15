@@ -629,15 +629,16 @@ impl Lexer {
 			ElementState::SpaceRequired | ElementState::Blank => match skip_matching(r, &CLASS_XML_SPACES)? {
 				(_, Endpoint::Eof) | (_, Endpoint::Limit) => Err(Error::wfeof(ERRCTX_ELEMENT)),
 				(nmatching, Endpoint::Delimiter(ch)) => {
-					if state == ElementState::SpaceRequired && nmatching == 0 {
+					let next_state = self.lex_element_postblank(kind, ch)?;
+					if next_state == ElementState::Name && state == ElementState::SpaceRequired && nmatching == 0 {
 						Err(Error::NotWellFormed(WFError::InvalidSyntax(
-							"space required after xml declaration header",
+							"space required before attribute names",
 						)))
 					} else {
 						Ok(ST(
 							State::Element{
 								kind: kind,
-								state: self.lex_element_postblank(kind, ch)?,
+								state: next_state,
 							},
 							None,
 						))
@@ -682,7 +683,8 @@ impl Lexer {
 					d if d == delim => Ok(ST(
 						State::Element{
 							kind: kind,
-							state: ElementState::Blank
+							// require whitespace after attribute as the grammar demands
+							state: ElementState::SpaceRequired,
 						},
 						Some(Token::AttributeValue(self.flush_scratchpad_as_cdata()?)),
 					)),
@@ -1612,5 +1614,12 @@ mod tests {
 		assert_eq!(*iter.next().unwrap(), Token::Eq);
 		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(CData::from_str("1.0").unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd);
+	}
+
+	#[test]
+	fn lexer_rejects_missing_whitespace_between_attrvalue_and_attrname() {
+		let err = lex_err(b"<a a='x'b='y'/>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+
 	}
 }
