@@ -61,7 +61,8 @@ pub const VALID_XML_CDATA_RANGES_TEXT_DELIMITED: &'static [CodepointRange] = &[
 	CodepointRange('\x0d', '\x0d'),
 	CodepointRange('\u{0020}', '\u{0025}'), // excludes &
 	CodepointRange('\u{0027}', '\u{003b}'), // excludes <
-	CodepointRange('\u{003d}', '\u{d7ff}'),
+	CodepointRange('\u{003d}', '\u{005c}'), // excludes ]
+	CodepointRange('\u{005e}', '\u{d7ff}'),
 	CodepointRange('\u{e000}', '\u{fffd}'),
 	CodepointRange('\u{10000}', '\u{10ffff}'),
 ];
@@ -170,6 +171,7 @@ pub static CLASS_XML_SPACES: &'static [char] = &[' ', '\t', '\r', '\n'];
 pub const CLASS_XML_DECIMAL_DIGITS: CodepointRange = CodepointRange('0', '9');
 pub static CLASS_XML_HEXADECIMAL_DIGITS: CodepointRanges = CodepointRanges(VALID_XML_HEXADECIMALS);
 pub static CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED: CodepointRanges = CodepointRanges(VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED);
+pub static CLASS_XML_NONCHAR: CodepointRanges = CodepointRanges(INVALID_XML_CDATA_RANGES);
 
 impl CharSelector for CodepointRange {
 	fn select(&self, c: char) -> bool {

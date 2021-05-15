@@ -118,10 +118,15 @@ enum MaybeElementState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ContentState {
 	Initial,
+	/// Within cdata section
+	CDataSection,
 	/// Encountered <
 	MaybeElement(MaybeElementState),
 	/// only whitespace allowed, e.g. between ?> and <
 	Whitespace,
+	/// `]]>` sequence, either within cdata (true) or not (false)
+	/// if not within cdata, encountering this sequence is illegal
+	MaybeCDataEnd(bool, usize),
 }
 
 
@@ -150,10 +155,6 @@ enum State {
 
 	/// encountered &
 	Reference{ ctx: &'static str, ret: RefReturnState, kind: RefKind },
-
-	/// Count the number of correct consecutive CDataSectionEnd characters
-	/// encountered
-	CDataSection(usize),
 
 	Eof,
 }
@@ -200,6 +201,7 @@ const MAX_REFERENCE_LENGTH: usize = 8usize;
 
 const TOK_XML_DECL_START: &'static [u8] = b"<?xml";
 const TOK_XML_CDATA_START: &'static [u8] = b"<![CDATA[";
+const TOK_XML_CDATA_END: &'static [u8] = b"]]>";
 // const CLASS_XML_NAME_START_CHAR:
 
 /// Hold options to configure a [`Lexer`].
@@ -417,68 +419,53 @@ impl Lexer {
 		}
 	}
 
-	fn lex_content<'r, R: CodepointRead>(&mut self, state: ContentState, r: &'r mut R) -> Result<ST>
-	{
+	fn flush_limited_scratchpad_as_text(&mut self) -> Result<Option<Token>> {
+		if self.scratchpad.len() >= self.opts.max_token_length {
+			Ok(Some(Token::Text(self.flush_scratchpad_as_cdata()?)))
+		} else {
+			Ok(None)
+		}
+	}
+
+	/// Interpret a character found inside a text section.
+	///
+	/// If no interpretation can be found, an Ok result but no next state is
+	/// returned.
+	///
+	/// THIS DOES NOT MEAN THAT THE CHAR IS VALID! IT MAY STILL BE A NUL
+	/// BYTE OR SOMESUCH!
+	fn lex_posttext_char(&mut self, utf8ch: Utf8Char) -> Result<Option<ST>> {
+		match utf8ch.to_char() {
+			'<' => Ok(Some(ST(
+				State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), self.maybe_flush_scratchpad_as_text()?,
+			))),
+			// begin of forbidden CDATA section end sequence (see XML 1.0 § 2.4 [14])
+			']' => Ok(Some(ST(
+				State::Content(ContentState::MaybeCDataEnd(false, 1)),
+				// no flush here to avoid needless reallocations on false alarm
+				None,
+			))),
+			'&' => {
+				// We need to be careful here! First, we *have* to swap the scratchpad because that is part of the contract with the Reference state.
+				// Second, we have to do this *after* we "maybe" flush the scratchpad as text -- otherwise, we would flush the empty text and then clobber the entity lookup.
+				let tok = self.maybe_flush_scratchpad_as_text()?;
+				self.swap_scratchpad()?;
+				Ok(Some(ST(
+					State::Reference{
+						ctx: ERRCTX_TEXT,
+						ret: RefReturnState::Text,
+						kind: RefKind::Entity,
+					},
+					tok,
+				)))
+			},
+			_ => Ok(None),
+		}
+	}
+
+	fn lex_maybe_element<'r, R: CodepointRead>(&mut self, state: MaybeElementState, r: &'r mut R) -> Result<ST> {
 		match state {
-			// read until next `<` or `&`, which are the only things which
-			// can break us out of this state.
-			ContentState::Initial => match self.read_validated(r, &CodepointRanges(VALID_XML_CDATA_RANGES_TEXT_DELIMITED), self.opts.max_token_length)? {
-				Endpoint::Eof => {
-					Ok(ST(
-						State::Eof,
-						self.maybe_flush_scratchpad_as_text()?,
-					))
-				},
-				Endpoint::Limit => {
-					Ok(ST(
-						State::Content(ContentState::Initial),
-						self.maybe_flush_scratchpad_as_text()?,
-					))
-				},
-				Endpoint::Delimiter(ch) => match ch.to_char() {
-					'<' => {
-						Ok(ST(
-							State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), self.maybe_flush_scratchpad_as_text()?,
-						))
-					},
-					'&' => {
-						// We need to be careful here! First, we *have* to swap the scratchpad because
-						// that is part of the contract with the Reference state. Second, we have to
-						// do this *after* we "maybe" flush the scratchpad as text -- otherwise, we
-						// would flush the empty text and then clobber the entity lookup.
-						let tok = self.maybe_flush_scratchpad_as_text()?;
-						self.swap_scratchpad()?;
-						Ok(ST(
-							State::Reference{
-								ctx: ERRCTX_TEXT,
-								ret: RefReturnState::Text,
-								kind: RefKind::Entity,
-							},
-							tok,
-						))
-					},
-					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, other as u32, false))),
-				},
-			},
-			ContentState::Whitespace => match skip_matching(r, &CLASS_XML_SPACES)? {
-				(_, Endpoint::Eof) | (_, Endpoint::Limit) => {
-					Ok(ST(
-						State::Eof,
-						None,
-					))
-				},
-				(_, Endpoint::Delimiter(ch)) => match ch.to_char() {
-					'<' => Ok(ST(
-						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
-					)),
-					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(
-						ERRCTX_XML_DECL_END,
-						other,
-						Some(&["Spaces", "<"]),
-					))),
-				}
-			},
-			ContentState::MaybeElement(MaybeElementState::Initial) => match self.read_single(r)? {
+			MaybeElementState::Initial => match self.read_single(r)? {
 				Some(utf8ch) => match utf8ch.to_char() {
 					'?' => {
 						self.drop_scratchpad()?;
@@ -521,7 +508,7 @@ impl Lexer {
 				},
 				None => Err(Error::wfeof(ERRCTX_ELEMENT)),
 			},
-			ContentState::MaybeElement(MaybeElementState::XMLDeclStart(i)) => {
+			MaybeElementState::XMLDeclStart(i) => {
 				debug_assert!(i < TOK_XML_DECL_START.len());
 				// note: exploiting that xml decl only consists of ASCII here
 				let b = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION_START)?.to_char() as u8;
@@ -546,7 +533,7 @@ impl Lexer {
 					))
 				}
 			},
-			ContentState::MaybeElement(MaybeElementState::CDataSectionStart(i)) => {
+			MaybeElementState::CDataSectionStart(i) => {
 				debug_assert!(i < TOK_XML_CDATA_START.len());
 				let b = handle_eof(self.read_single(r)?, ERRCTX_XML_DECL_START)?.to_char() as u8;
 				if i == 1 && b == b'-' {
@@ -558,13 +545,153 @@ impl Lexer {
 				if next == TOK_XML_CDATA_START.len() {
 					self.drop_scratchpad()?;
 					Ok(ST(
-						State::CDataSection(0),
+						State::Content(ContentState::CDataSection),
 						self.maybe_flush_scratchpad_as_text()?,
 					))
 				} else {
 					Ok(ST(
 						State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(next))), None,
 					))
+				}
+			},
+		}
+	}
+
+	fn lex_maybe_cdata_end<'r, R: CodepointRead>(&mut self, in_cdata: bool, nend: usize, r: &'r mut R) -> Result<ST> {
+		debug_assert!(nend < TOK_XML_CDATA_END.len());
+		let ctx = if in_cdata {
+			ERRCTX_CDATA_SECTION
+		} else {
+			ERRCTX_TEXT
+		};
+		let utf8ch = handle_eof(r.read()?, ctx)?;
+		let expected = TOK_XML_CDATA_END[nend] as char;
+		let ch = utf8ch.to_char();
+		if ch == expected {
+			// sequence continues
+			match nend {
+				1 => Ok(ST(
+					State::Content(ContentState::MaybeCDataEnd(in_cdata, 2)),
+					None,
+				)),
+				// ]]> read completely! Do something!
+				2 => if !in_cdata {
+					// ]]> is forbidden outside CDATA sections -> error
+					Err(Error::NotWellFormed(WFError::InvalidSyntax("unescaped ']]>' forbidden in text")))
+				} else {
+					// we are inside the cdata section and the previous char we read was the last byte of the closing delimiter
+					// this means that we can safely exit without interpreting the char.
+					Ok(ST(
+						State::Content(ContentState::Initial),
+						self.maybe_flush_scratchpad_as_text()?,
+					))
+				},
+				_ => panic!("unreachable state: cdata nend = {:?}", nend),
+			}
+		} else if ch == ']' {
+			// sequence was broken, but careful! this could just be `]]]]]]]>` sequence!
+			// those we need to treat the same, no matter whether inside or outside CDATA the previously found ] is moved to the scratchpad and we return to this state
+			self.scratchpad.push_str("]");
+			Ok(ST(
+				State::Content(ContentState::MaybeCDataEnd(in_cdata, nend)),
+				self.flush_limited_scratchpad_as_text()?,
+			))
+		} else {
+			// sequence was broken
+			// the token string constant is utf8 (ascii even), we’re safe.
+			let encountered = unsafe { std::str::from_utf8_unchecked(&TOK_XML_CDATA_END[..nend]) };
+			self.scratchpad.push_str(encountered);
+			if in_cdata {
+				if CLASS_XML_NONCHAR.select(ch) {
+					// that’s a sneaky one!
+					Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, ch as u32, false)))
+				} else {
+					// broken sequence inside cdata section, that’s fine; just push whatever we read to the scratchpad and move on
+					self.scratchpad.push_str(utf8ch.as_str());
+					Ok(ST(
+						State::Content(ContentState::CDataSection),
+						// enforce token size limits here, too
+						self.flush_limited_scratchpad_as_text()?,
+					))
+				}
+			} else {
+				// broken sequence outside cdata section, need to analyze the next char carefully to handle entities and such
+				match self.lex_posttext_char(utf8ch)? {
+					// special delimiter char -> state transition
+					Some(st) => Ok(st),
+					// no special char -> check if it is valid text and proceed accordingly
+					None => if CLASS_XML_NONCHAR.select(ch) {
+						// non-Char, error
+						Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, ch as u32, false)))
+					} else {
+						// nothing special, push to scratchpad and return to initial content state
+						self.scratchpad.push_str(utf8ch.as_str());
+						Ok(ST(
+							State::Content(ContentState::Initial),
+							None,
+						))
+					},
+				}
+			}
+		}
+	}
+
+	fn lex_content<'r, R: CodepointRead>(&mut self, state: ContentState, r: &'r mut R) -> Result<ST>
+	{
+		match state {
+			ContentState::MaybeElement(substate) => self.lex_maybe_element(substate, r),
+			ContentState::MaybeCDataEnd(in_cdata, nend) => self.lex_maybe_cdata_end(in_cdata, nend, r),
+
+			// read until next `<` or `&`, which are the only things which
+			// can break us out of this state.
+			ContentState::Initial => match self.read_validated(r, &CodepointRanges(VALID_XML_CDATA_RANGES_TEXT_DELIMITED), self.opts.max_token_length)? {
+				Endpoint::Eof => {
+					Ok(ST(
+						State::Eof,
+						self.maybe_flush_scratchpad_as_text()?,
+					))
+				},
+				Endpoint::Limit => {
+					Ok(ST(
+						State::Content(ContentState::Initial),
+						self.maybe_flush_scratchpad_as_text()?,
+					))
+				},
+				Endpoint::Delimiter(ch) => match self.lex_posttext_char(ch)? {
+					Some(st) => Ok(st),
+					// not a "special" char but not text either -> error
+					None => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, ch.to_char() as u32, false))),
+				},
+			},
+			ContentState::CDataSection => match self.read_validated(r, &CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED, self.opts.max_token_length)? {
+				Endpoint::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
+				Endpoint::Limit => Ok(ST(
+					State::Content(ContentState::CDataSection),
+					self.maybe_flush_scratchpad_as_text()?,
+				)),
+				// -> transition into the "first delimiter found" state
+				Endpoint::Delimiter(utf8ch) if utf8ch.to_char() == ']' => Ok(ST(
+					State::Content(ContentState::MaybeCDataEnd(true, 1)),
+					None,
+				)),
+				Endpoint::Delimiter(other) => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other.to_char() as u32, false))),
+			},
+			ContentState::Whitespace => match skip_matching(r, &CLASS_XML_SPACES)? {
+				(_, Endpoint::Eof) | (_, Endpoint::Limit) => {
+					Ok(ST(
+						State::Eof,
+						None,
+					))
+				},
+				(_, Endpoint::Delimiter(ch)) => match ch.to_char() {
+					'<' => Ok(ST(
+						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
+					)),
+					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+						ERRCTX_XML_DECL_END,
+						other,
+						Some(&["Spaces", "<"]),
+					))),
 				}
 			},
 		}
@@ -816,78 +943,6 @@ impl Lexer {
 		}
 	}
 
-	fn lex_cdata_section<'r, R: CodepointRead>(&mut self, nend: usize, r: &'r mut R) -> Result<ST> {
-		match nend {
-			0 => match self.read_validated(r, &CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED, self.opts.max_token_length)? {
-				Endpoint::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
-				Endpoint::Limit => Ok(ST(
-					State::CDataSection(0),
-					self.maybe_flush_scratchpad_as_text()?,
-				)),
-				// -> transition into the "first delimiter found" state
-				Endpoint::Delimiter(utf8ch) if utf8ch.to_char() == ']' => Ok(ST(
-					State::CDataSection(1),
-					None,
-				)),
-				Endpoint::Delimiter(other) => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other.to_char() as u32, false))),
-			},
-			1 => {
-				// we found one ']', so we read the next thing and check if it is another ']'
-				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION)?;
-				match utf8ch.to_char() {
-					// one step closer
-					']' => Ok(ST(
-						State::CDataSection(2),
-						None,
-					)),
-					ch if CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED.select(ch) => {
-						// not the ']' we were looking for -- flush the "buffered" non-delimiter to the scratchpad and continue
-						self.scratchpad.push_str("]");
-						self.scratchpad.push_str(utf8ch.as_str());
-						Ok(ST(
-							State::CDataSection(0),
-							None,
-						))
-					},
-					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other as u32, false))),
-				}
-			},
-			2 => {
-				// we read two consecutive ']', so we now need to check for a single '>'.
-				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION)?;
-				let ch = utf8ch.to_char();
-				match ch {
-					// end of CDATA section, flush the scratchpad
-					'>' => Ok(ST(
-						State::Content(ContentState::Initial),
-						self.maybe_flush_scratchpad_as_text()?,
-					)),
-					']' => {
-						// could be either the end of the cdata section, or a sequence of closing square brackets
-						// we have to add one `]` to the scratchpad and then continue in the same state
-						self.scratchpad.push_str("]");
-						Ok(ST(
-							State::CDataSection(2),
-							None,
-						))
-					},
-					ch if CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED.select(ch) => {
-						// not a `>` and not a `]`, we thus have read a `]]` without `>` -> add it to the scratchpad and continue lexing the CDATA section
-						self.scratchpad.push_str("]]");
-						self.scratchpad.push_str(utf8ch.as_str());
-						// continue with the CDATA section as before without unnecessary flush
-						Ok(ST(
-							State::CDataSection(0),
-							None,
-						))
-					},
-					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other as u32, false))),
-				}
-			},
-			_ => panic!("invalid state"),
-		}
-	}
-
 	/// Lex codepoints from the reader until either an error occurs, a valid
 	/// token is produced or a valid end-of-file situation is encountered.
 	///
@@ -909,7 +964,6 @@ impl Lexer {
 				State::Content(substate) => self.lex_content(substate, r),
 				State::Element{ kind, state: substate } => self.lex_element(kind, substate, r),
 				State::Reference{ ctx, ret, kind } => self.lex_reference(ctx, ret, kind, r),
-				State::CDataSection(nend) => self.lex_cdata_section(nend, r),
 				State::Eof => return Ok(None),
 			};
 			let st = match stresult {
@@ -1630,6 +1684,109 @@ mod tests {
 		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 
 		let err = lex_err(b"<a><![CDATA[]]\x00]]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+	}
+
+	#[test]
+	fn lexer_rejects_cdata_end_in_text() {
+		let err = lex_err(b"<a>]]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+
+		let err = lex_err(b"<a>]]]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+
+		let err = lex_err(b"<a>]]]]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+	}
+
+	#[test]
+	fn lexer_handles_partial_cdata_end() {
+		let (toks, r) = lex(&b"<root>]]</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]]").unwrap()));
+
+		let (toks, r) = lex(&b"<root>]]foo</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]]foo").unwrap()));
+
+		let (toks, r) = lex(&b"<root>]]&gt;</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]]").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str(">").unwrap()));
+
+		let (toks, r) = lex(&b"<root>]]]</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]]]").unwrap()));
+
+		let (toks, r) = lex(&b"<root>]]]foo</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]]]foo").unwrap()));
+
+		let (toks, r) = lex(&b"<root>]]]&gt;</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]]]").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str(">").unwrap()));
+	}
+
+	#[test]
+	fn lexer_handles_specials_after_cdata_end() {
+		let (toks, r) = lex(&b"<root><![CDATA[]]></root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		assert_eq!(*iter.next().unwrap(), Token::ElementHeadStart(Name::from_str("root").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(Name::from_str("root").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd);
+
+		let (toks, r) = lex(&b"<root><![CDATA[]]>&amp;</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("&").unwrap()));
+
+		let (toks, r) = lex(&b"<root><![CDATA[]]><![CDATA[]]]]>&gt;</root>"[..], 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str("]]").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(CData::from_str(">").unwrap()));
+	}
+
+	#[test]
+	fn lexer_rejects_nonchar_in_cdata_end_in_text() {
+		let err = lex_err(b"<a>]\x00]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+
+		let err = lex_err(b"<a>]]\x00></a>", 128).unwrap();
 		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 	}
 }
