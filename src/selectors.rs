@@ -169,6 +169,7 @@ pub static CLASS_XML_NAMESTART: CodepointRanges = CodepointRanges(VALID_XML_NAME
 pub static CLASS_XML_SPACES: &'static [char] = &[' ', '\t', '\r', '\n'];
 pub const CLASS_XML_DECIMAL_DIGITS: CodepointRange = CodepointRange('0', '9');
 pub static CLASS_XML_HEXADECIMAL_DIGITS: CodepointRanges = CodepointRanges(VALID_XML_HEXADECIMALS);
+pub static CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED: CodepointRanges = CodepointRanges(VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED);
 
 impl CharSelector for CodepointRange {
 	fn select(&self, c: char) -> bool {

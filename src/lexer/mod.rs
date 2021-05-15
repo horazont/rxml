@@ -818,38 +818,38 @@ impl Lexer {
 
 	fn lex_cdata_section<'r, R: CodepointRead>(&mut self, nend: usize, r: &'r mut R) -> Result<ST> {
 		match nend {
-			0 => match self.read_validated(r, &CodepointRanges(VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED), self.opts.max_token_length)? {
+			0 => match self.read_validated(r, &CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED, self.opts.max_token_length)? {
 				Endpoint::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
 				Endpoint::Limit => Ok(ST(
 					State::CDataSection(0),
 					self.maybe_flush_scratchpad_as_text()?,
 				)),
-				Endpoint::Delimiter(_) => {
-					// we know that the delimiter is ']' -> transition into the "first delimiter found" state
-					Ok(ST(
-						State::CDataSection(1),
-						None,
-					))
-				},
+				// -> transition into the "first delimiter found" state
+				Endpoint::Delimiter(utf8ch) if utf8ch.to_char() == ']' => Ok(ST(
+					State::CDataSection(1),
+					None,
+				)),
+				Endpoint::Delimiter(other) => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other.to_char() as u32, false))),
 			},
 			1 => {
 				// we found one ']', so we read the next thing and check if it is another ']'
 				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION)?;
-				let ch = utf8ch.to_char();
-				if ch == ']' {
+				match utf8ch.to_char() {
 					// one step closer
-					Ok(ST(
+					']' => Ok(ST(
 						State::CDataSection(2),
 						None,
-					))
-				} else {
-					// not the ']' we were looking for -- flush the "buffered" non-delimiter to the scratchpad and continue
-					self.scratchpad.push_str("]");
-					self.scratchpad.push_str(utf8ch.as_str());
-					Ok(ST(
-						State::CDataSection(0),
-						None,
-					))
+					)),
+					ch if CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED.select(ch) => {
+						// not the ']' we were looking for -- flush the "buffered" non-delimiter to the scratchpad and continue
+						self.scratchpad.push_str("]");
+						self.scratchpad.push_str(utf8ch.as_str());
+						Ok(ST(
+							State::CDataSection(0),
+							None,
+						))
+					},
+					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other as u32, false))),
 				}
 			},
 			2 => {
@@ -871,7 +871,7 @@ impl Lexer {
 							None,
 						))
 					},
-					_ => {
+					ch if CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED.select(ch) => {
 						// not a `>` and not a `]`, we thus have read a `]]` without `>` -> add it to the scratchpad and continue lexing the CDATA section
 						self.scratchpad.push_str("]]");
 						self.scratchpad.push_str(utf8ch.as_str());
@@ -881,6 +881,7 @@ impl Lexer {
 							None,
 						))
 					},
+					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other as u32, false))),
 				}
 			},
 			_ => panic!("invalid state"),
@@ -1618,6 +1619,17 @@ mod tests {
 	fn lexer_rejects_missing_whitespace_between_attrvalue_and_attrname() {
 		let err = lex_err(b"<a a='x'b='y'/>", 128).unwrap();
 		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+	}
 
+	#[test]
+	fn lexer_rejects_nonchar_in_cdata_section() {
+		let err = lex_err(b"<a><![CDATA[\x00]]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+
+		let err = lex_err(b"<a><![CDATA[]\x00]]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+
+		let err = lex_err(b"<a><![CDATA[]]\x00]]></a>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 	}
 }
