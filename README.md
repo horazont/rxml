@@ -1,4 +1,4 @@
-# `rxml` -- Restricted, minimalistic XML 1.0 parser
+# `rxml` — Restricted, minimalistic XML 1.0 parser
 
 [![crate badge](https://img.shields.io/crates/v/rxml.svg)](https://crates.io/crates/rxml) [![docs badge](https://docs.rs/rxml/badge.svg)](https://docs.rs/rxml/)
 
