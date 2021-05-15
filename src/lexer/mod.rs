@@ -504,21 +504,19 @@ impl Lexer {
 							None,
 						))
 					},
-					ch => {
-						if CLASS_XML_NAMESTART.select(ch) {
-							// add the first character to the scratchpad, because read_single does not do that
-							self.scratchpad.push_str(utf8ch.as_str());
-							Ok(ST(
-								State::Element{
-									kind: ElementKind::Header,
-									state: ElementState::Start,
-								},
-								None,
-							))
-						} else {
-							self.drop_scratchpad()?;
-							Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_NAMESTART, ch, None)))
-						}
+					ch => if CLASS_XML_NAMESTART.select(ch) {
+						// add the first character to the scratchpad, because read_single does not do that
+						self.scratchpad.push_str(utf8ch.as_str());
+						Ok(ST(
+							State::Element{
+								kind: ElementKind::Header,
+								state: ElementState::Start,
+							},
+							None,
+						))
+					} else {
+						self.drop_scratchpad()?;
+						Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_NAMESTART, ch, None)))
 					},
 				},
 				None => Err(Error::wfeof(ERRCTX_ELEMENT)),
