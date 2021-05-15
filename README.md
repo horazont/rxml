@@ -1,9 +1,9 @@
 # `rxml` — Restricted, minimalistic XML 1.0 parser
 
-[![crate badge](https://img.shields.io/crates/v/rxml.svg)](https://crates.io/crates/rxml) [![docs badge](https://docs.rs/rxml/badge.svg)](https://docs.rs/rxml/)
-
 This crate provides "restricted" parsing of XML 1.0 documents with
 namespacing.
+
+[![crate badge](https://img.shields.io/crates/v/rxml.svg)](https://crates.io/crates/rxml) [![docs badge](https://docs.rs/rxml/badge.svg)](https://docs.rs/rxml/)
 
 **Warning:** This crate is alpha-quality! That means you should probably not
 yet put it in a network-facing position. CVE numbers may or may not be
