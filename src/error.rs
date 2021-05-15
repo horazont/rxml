@@ -157,6 +157,9 @@ pub enum NWFError {
 
 	/// Local name does not conform to Name production (invalid start char)
 	InvalidLocalName(&'static str),
+
+	/// Declared namespace URI is empty
+	EmptyNamespaceUri,
 }
 
 impl ErrorWithContext for NWFError {
@@ -179,6 +182,7 @@ impl fmt::Display for NWFError {
 			Self::UndeclaredNamesacePrefix(ctx) => write!(f, "use of undeclared namespace prefix {} name", ctx),
 			Self::ReservedNamespacePrefix => f.write_str("reserved namespace prefix"),
 			Self::InvalidLocalName(ctx) => write!(f, "local name is invalid {} name", ctx),
+			Self::EmptyNamespaceUri => write!(f, "namespace URI is empty"),
 		}
 	}
 }

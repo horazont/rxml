@@ -228,7 +228,11 @@ impl Parser {
 			None => {
 				for decls in self.namespace_stack.iter().rev() {
 					match decls.0.as_ref() {
-						Some(uri) => return Some(uri.as_cdata_str()),
+						Some(uri) => if uri.len() > 0 {
+							return Some(uri.as_cdata_str())
+						} else {
+							return None
+						},
 						None => (),
 					};
 				};
@@ -442,6 +446,8 @@ impl Parser {
 					} else {
 						Ok(())
 					}
+				} else if val.len() == 0 {
+					Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri))
 				} else if scratchpad.namespace_decls.insert(localname, val).is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
@@ -767,6 +773,11 @@ mod tests {
 
 	fn parse(src: &[Token]) -> (Vec<Event>, Result<()>) {
 		parse_custom::<TokenSliceReader>(src)
+	}
+
+	fn parse_err(src: &[Token]) -> Option<Error> {
+		let (_, r) = parse(src);
+		r.err()
 	}
 
 	#[test]
@@ -1257,5 +1268,77 @@ mod tests {
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::DuplicateAttribute)));
 		let r = parser.parse(&mut reader);
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::DuplicateAttribute)));
+	}
+
+	#[test]
+	fn parser_rejects_empty_namespace_uri() {
+		let toks = &[
+			Token::ElementHeadStart(Name::from_str("x:root").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
+			Token::Eq,
+			Token::AttributeValue(CData::from_str("").unwrap()),
+			Token::ElementHFEnd,
+			Token::ElementFootStart(Name::from_str("x:root").unwrap()),
+			Token::ElementHFEnd,
+		];
+		let err = parse_err(toks).unwrap();
+		assert!(matches!(err, Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri)));
+	}
+
+	#[test]
+	fn parser_allows_empty_namespace_uri_for_default_namespace() {
+		let toks = &[
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns").unwrap()),
+			Token::Eq,
+			Token::AttributeValue(CData::from_str("").unwrap()),
+			Token::ElementHFEnd,
+			Token::ElementFootStart(Name::from_str("root").unwrap()),
+			Token::ElementHFEnd,
+		];
+		let (_evs, r) = parse(toks);
+		r.unwrap();
+	}
+
+	#[test]
+	fn parser_handles_reset_of_default_namespace_correctly() {
+		let toks = &[
+			Token::ElementHeadStart(Name::from_str("root").unwrap()),
+			Token::Name(Name::from_str("xmlns").unwrap()),
+			Token::Eq,
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::ElementHFEnd,
+			Token::ElementHeadStart(Name::from_str("child").unwrap()),
+			Token::Name(Name::from_str("xmlns").unwrap()),
+			Token::Eq,
+			Token::AttributeValue(CData::from_str("").unwrap()),
+			Token::ElementHFEnd,
+			Token::ElementFootStart(Name::from_str("child").unwrap()),
+			Token::ElementHFEnd,
+			Token::ElementFootStart(Name::from_str("root").unwrap()),
+			Token::ElementHFEnd,
+		];
+		let (evs, r) = parse(toks);
+		r.unwrap();
+		let mut iter = evs.iter();
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap() == TEST_NS && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+	}
+
+	#[test]
+	fn parser_rejects_undeclared_namespace_prefix_on_element() {
+		let toks = &[
+			Token::ElementHeadStart(Name::from_str("y:root").unwrap()),
+			Token::Name(Name::from_str("xmlns:x").unwrap()),
+			Token::Eq,
+			Token::AttributeValue(CData::from_str(TEST_NS).unwrap()),
+			Token::ElementHFEnd,
+			Token::ElementFootStart(Name::from_str("root").unwrap()),
+			Token::ElementHFEnd,
+		];
+		let err = parse_err(toks).unwrap();
+		assert!(matches!(err, Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(_))));
 	}
 }
