@@ -1,6 +1,6 @@
 [package]
 name = "rxml"
-version = "0.2.0-alpha.0"
+version = "0.2.0"
 authors = ["Jonas Schäfer <jonas@zombofant.net>"]
 license = "MIT"
 edition = "2018"
