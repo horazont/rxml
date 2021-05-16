@@ -38,12 +38,19 @@ impl Utf8Char {
 		}
 	}
 
+	#[inline]
 	pub fn to_char(&self) -> char {
 		self.ch
 	}
 
+	#[inline]
 	pub fn as_str<'x>(&'x self) -> &'x str {
 		AsRef::<str>::as_ref(self)
+	}
+
+	#[inline]
+	pub fn len(&self) -> usize {
+		self.nbytes as usize
 	}
 }
 
@@ -281,17 +288,18 @@ pub fn read_validated<'r, 's, R: CodepointRead, S: CharSelector>(
 pub fn skip_matching<'r, 's, R: CodepointRead, S: CharSelector>(
 	r: &'r mut R,
 	selector: &'s S,
-	) -> Result<(usize, Endpoint)>
+	) -> (usize, Result<Endpoint>)
 {
 	let mut count = 0;
 	loop {
-		let utf8ch = match r.read()? {
-			None => return Ok((count, Endpoint::Eof)),
-			Some(ch) => ch,
+		let utf8ch = match r.read() {
+			Err(e) => return (count, Err(e)),
+			Ok(None) => return (count, Ok(Endpoint::Eof)),
+			Ok(Some(ch)) => ch,
 		};
 		let ch = utf8ch.to_char();
 		if !selector.select(ch) {
-			return Ok((count, Endpoint::Delimiter(utf8ch)))
+			return (count, Ok(Endpoint::Delimiter(utf8ch)))
 		}
 		count += 1;
 	}
