@@ -161,10 +161,10 @@ impl<T: io::Read + Sized> DecodingReader<T> {
 					((c & 0x1f) as u32, 2u8, 0xffu8)
 				},
 				0xe0..=0xefu8 => {
-					((c & 0x0f) as u32, 3u8, 0x20u8)
+					((c & 0x0f) as u32, 3u8, if c == 0xe0 { 0x20u8 } else { 0xffu8 })
 				},
 				0xf0..=0xf7u8 => {
-					((c & 0x07) as u32, 4u8, 0x30u8)
+					((c & 0x07) as u32, 4u8, if c == 0xf0 { 0x30u8 } else { 0xffu8 })
 				},
 				_ => return Err(Error::InvalidStartByte(c)),
 			};
@@ -551,5 +551,22 @@ mod tests {
 		let result = read_validated(&mut r, &'f', 128, &mut out);
 		assert!(matches!(result.unwrap(), Endpoint::Delimiter(c) if c.to_char() == 'n'));
 		assert_eq!(out, "fff".to_string());
+	}
+
+	#[test]
+	fn exhaustive_utf8_test() {
+		let mut buf = [0u8; 4];
+		for chu32 in 0..=0x10ffffu32 {
+			if let Some(ch) = std::char::from_u32(chu32) {
+				let len = ch.encode_utf8(&mut buf[..]).len();
+				let mut src = &buf[..len];
+				let mut r = DecodingReader::new(&mut src);
+				match r.read() {
+					Err(e) => panic!("decoding of U+{:x} {:?} failed: {:?}", chu32, &buf[..len], e),
+					Ok(Some(v)) => (),
+					Ok(None) => panic!("decoding of U+{:x} {:?} incorrectly claims eof", chu32, &buf[..]),
+				}
+			}
+		}
 	}
 }
