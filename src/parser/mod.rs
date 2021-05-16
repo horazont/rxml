@@ -119,6 +119,18 @@ pub enum Event {
 	Text(EventMetrics, CData),
 }
 
+impl Event {
+	/// Return the [`EventMetrics`] of the event
+	pub fn metrics(&self) -> &EventMetrics {
+		match self {
+			Self::XMLDeclaration(m, ..) => &m,
+			Self::StartElement(m, ..) => &m,
+			Self::EndElement(m, ..) => &m,
+			Self::Text(m, ..) => &m,
+		}
+	}
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum DeclSt {
 	VersionName,
