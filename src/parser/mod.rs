@@ -18,9 +18,16 @@ pub const XML_NAMESPACE: &'static CDataStr = unsafe { std::mem::transmute("http:
 
 type QName = (Option<RcPtr<CData>>, NCName);
 
+/// Wrapper pointer around namespace URIs
+///
+/// In builds with the `mt` feature, this is a [`Arc`]. In non-`mt` builds,
+/// this is a [`std::rc::Rc`]
 #[cfg(feature = "mt")]
 pub type RcPtr<T> = Arc<T>;
-
+/// Wrapper pointer around namespace URIs
+///
+/// In builds with the `mt` feature, this is a [`std::sync::Arc`].
+/// In non-`mt` builds, this is a [`Rc`].
 #[cfg(not(feature = "mt"))]
 pub type RcPtr<T> = Rc<T>;
 
