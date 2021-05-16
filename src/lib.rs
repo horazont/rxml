@@ -63,7 +63,7 @@ pub use error::{Error, Result};
 #[doc(inline)]
 pub use lexer::{Lexer, LexerOptions, DecodingReader};
 #[doc(inline)]
-pub use parser::{Parser, Event, LexerAdapter, XMLVersion};
+pub use parser::{QName, Parser, Event, LexerAdapter, XMLVersion, XMLNS_XML};
 #[doc(inline)]
 pub use bufq::BufferQueue;
 pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};

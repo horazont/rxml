@@ -16,7 +16,7 @@ use crate::strings::*;
 
 pub const XML_NAMESPACE: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
 
-type QName = (Option<RcPtr<CData>>, NCName);
+pub type QName = (Option<RcPtr<CData>>, NCName);
 
 /// Wrapper pointer around namespace URIs
 ///
