@@ -18,21 +18,15 @@ pub use read::{Utf8Char, CodepointRead, DecodingReader};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-	/* the following tokens are only emitted in the Element lexer state */
 	Name(Name),
 	Eq,  // =
 	AttributeValue(CData),  // '...' | "..."
 	XMLDeclEnd,  // ?>
 	ElementHeadClose,  // />
 	ElementHFEnd,  // >
-
-	/* the following tokens are only emitted in the Content lexer state */
 	XMLDeclStart,  // <?xml
 	ElementHeadStart(Name),  // <
 	ElementFootStart(Name),  // </
-
-	/* the following tokens may be emitted in the CDataSection and Content
-	lexer states */
 	Text(CData),
 }
 
