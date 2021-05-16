@@ -14,7 +14,7 @@ use crate::lexer::{Token, Lexer, CodepointRead, TokenMetrics};
 use crate::error::*;
 use crate::strings::*;
 
-pub const XML_NAMESPACE: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
+pub const XMLNS_XML: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
 
 pub type QName = (Option<RcPtr<CData>>, NCName);
 
@@ -228,7 +228,7 @@ impl Parser {
 	pub fn new() -> Parser {
 		Parser{
 			state: State::Initial,
-			fixed_xml_namespace: RcPtr::new(XML_NAMESPACE.to_cdata()),
+			fixed_xml_namespace: RcPtr::new(XMLNS_XML.to_cdata()),
 			element_stack: Vec::new(),
 			namespace_stack: Vec::new(),
 			element_scratchpad: None,
@@ -555,7 +555,7 @@ impl Parser {
 				if localname == "xmlns" {
 					Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix))
 				} else if localname == "xml" {
-					if val != XML_NAMESPACE {
+					if val != XMLNS_XML {
 						Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix))
 					} else {
 						Ok(())
