@@ -64,17 +64,102 @@ impl TokenMetrics {
 	}
 }
 
+/**
+A single XML token
+
+Tokens are emitted by the lexer after processing bits of XML. Tokens do not
+map directly to concepts in the XML 1.0 specification. Instead, they are
+modelled in such a way that they provide a useful layer of abstraction for
+processing semantics inside the parser on top of the lexer.
+
+Each token has a [`TokenMetrics`] object attached which describes the byte
+range of the input stream from which the token was derived. Note that the
+ranges denoted by the token metrics may not be consecutive, as some whitespace
+within elements and the XML declaration does not generate tokens.
+*/
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
+	/// A freestanding (i.e. not the element name) XML `Name`.
+	///
+	/// This token is only emitted while the XML declaration or an element
+	/// header or footer is being lexed.
+	///
+	/// See also [`Token::ElementHeadStart`] and [`Token::ElementFootStart`],
+	/// which carry the XML element names.
 	Name(TokenMetrics, Name),
-	Eq(TokenMetrics),  // =
-	AttributeValue(TokenMetrics, CData),  // '...' | "..."
-	XMLDeclEnd(TokenMetrics),  // ?>
-	ElementHeadClose(TokenMetrics),  // />
-	ElementHFEnd(TokenMetrics),  // >
+
+	/// An equal sign.
+	///
+	/// This token is only emitted while the XML declaration or an element
+	/// header or footer is being lexed.
+	Eq(TokenMetrics),
+
+	/// An attribute value.
+	///
+	/// The delimiters are not included in the CData. Any entity references
+	/// are expanded already (i.e. you get `&` instead of `&amp;`).
+	///
+	/// Note that the number of bytes in an AttributeValue token will always
+	/// be less than the number of bytes used to generate it. The delimiters
+	/// are not included in its CData, but they are counted for the token
+	/// metrics. Likewise, any entity references inside the attribute value
+	/// will take more bytes "on the wire" than in the CData.
+	///
+	/// This token is only emitted while the XML declaration or an element
+	/// header or footer is being lexed.
+	AttributeValue(TokenMetrics, CData),
+
+	/// The `?>` sequence.
+	///
+	/// This token is only emitted while the XML declaration is being lexed.
+	/// If the `?>` sequence is encountered in normal elements, an error is
+	/// returned.
+	XMLDeclEnd(TokenMetrics),
+
+	/// The `/>` sequence.
+	///
+	/// This token is only emitted while an element header is being lexed. If
+	/// a `/>` is encountered within an element footer or the XML declaration,
+	/// an error is returned.
+	ElementHeadClose(TokenMetrics),
+
+	/// The `>` sequence.
+	///
+	/// This token is only emitted while an element header or footer is being
+	/// lexed. If a stray `>` is encountered within the XML declaration, an
+	/// error is returned.
+	ElementHFEnd(TokenMetrics),
+
+	/// The `<?xml` sequence.
 	XMLDeclStart(TokenMetrics),  // <?xml
-	ElementHeadStart(TokenMetrics, Name),  // <
-	ElementFootStart(TokenMetrics, Name),  // </
+
+	/// The `<` sequence, not followed by `/` or `?xml`.
+	ElementHeadStart(TokenMetrics, Name),
+
+	/// The `</` sequene.
+	ElementFootStart(TokenMetrics, Name),
+
+	/// A piece of character data inside an element.
+	///
+	/// Entity references and CDATA sections are processed in the lexer, which
+	/// means that while `<![CDATA[foo]]>` will emit a text token with the
+	/// contents `foo`, it is still possible to encounter the verbatim string
+	/// `<![CDATA[foo]]>` inside a Text token (namely when the input
+	/// `&lt;![CDATA[foo]]&gt` is processed).
+	///
+	/// There is no guarantee as to the segmentation of text tokens. It is
+	/// possible that for a single consecutive piece of character data,
+	/// multiple tokens are emitted. This can happen for instance when the
+	/// token length limit is exceeded.
+	///
+	/// Note that the number of bytes in a Text token may be less than the
+	/// number of bytes used to generate it. CDATA sections within the text
+	/// as well as entity references generally boil down to fewer text UTF-8
+	/// bytes than input bytes.
+	///
+	/// This token cannot occur while the XML declaration or an element header
+	/// or footer is being lexed. Stray text eventually leads to an error
+	/// there.
 	Text(TokenMetrics, CData),
 }
 
@@ -90,6 +175,9 @@ impl Token {
 	pub const NAME_ELEMENTFOOTSTART: &'static str = "'</'";
 	pub const NAME_TEXT: &'static str = "Text";
 
+	/// Return a static string describing the token type.
+	///
+	/// This is intended for error messages.
 	pub fn name(&self) -> &'static str {
 		match self {
 			Self::Name(..) => Self::NAME_NAME,
@@ -105,6 +193,7 @@ impl Token {
 		}
 	}
 
+	/// Return a reference to this tokens [`TokenMetrics`].
 	pub fn metrics(&self) -> &TokenMetrics {
 		match self {
 			Self::Name(m, ..) => &m,
