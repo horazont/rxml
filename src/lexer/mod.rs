@@ -27,7 +27,6 @@ pub enum Token {
 	ElementHFEnd,  // >
 
 	/* the following tokens are only emitted in the Content lexer state */
-	Reference(char), // &...;
 	XMLDeclStart,  // <?xml
 	ElementHeadStart(Name),  // <
 	ElementFootStart(Name),  // </
@@ -44,7 +43,6 @@ impl Token {
 	pub const NAME_XMLDECLEND: &'static str = "'?>'";
 	pub const NAME_ELEMENTHEADCLOSE: &'static str = "'/>'";
 	pub const NAME_ELEMENTHFEND: &'static str = "'>'";
-	pub const NAME_REFERENCE: &'static str = "Reference";
 	pub const NAME_XMLDECLSTART: &'static str = "'<?xml'";
 	pub const NAME_ELEMENTHEADSTART: &'static str = "'<'";
 	pub const NAME_ELEMENTFOOTSTART: &'static str = "'</'";
@@ -58,7 +56,6 @@ impl Token {
 			Self::XMLDeclEnd => Self::NAME_XMLDECLEND,
 			Self::ElementHeadClose => Self::NAME_ELEMENTHEADCLOSE,
 			Self::ElementHFEnd => Self::NAME_ELEMENTHFEND,
-			Self::Reference(..) => Self::NAME_REFERENCE,
 			Self::XMLDeclStart => Self::NAME_XMLDECLSTART,
 			Self::ElementHeadStart(..) => Self::NAME_ELEMENTHEADSTART,
 			Self::ElementFootStart(..) => Self::NAME_ELEMENTFOOTSTART,
