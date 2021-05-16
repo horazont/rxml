@@ -169,6 +169,11 @@ impl Name {
 		))
 	}
 
+	/// Consume the Name and return the internal String
+	pub fn as_string(self) -> String {
+		self.0
+	}
+
 	/// Construct a Name without enforcing anything
 	#[doc(hidden)]
 	pub unsafe fn from_string_unchecked(s: String) -> Name {
@@ -373,6 +378,11 @@ impl NCName {
 		unsafe { Name::from_string_unchecked(self.0) }
 	}
 
+	/// Consume the NCName and return the internal String
+	pub fn as_string(self) -> String {
+		self.0
+	}
+
 	/// Construct an NCName without enforcing anything
 	#[doc(hidden)]
 	pub unsafe fn from_string_unchecked(s: String) -> NCName {
@@ -564,6 +574,11 @@ impl CData {
 
 	pub fn as_cdata_str(&self) -> &CDataStr {
 		unsafe { CDataStr::from_str_unchecked(&self.0) }
+	}
+
+	/// Consume the CData and return the internal String
+	pub fn as_string(self) -> String {
+		self.0
 	}
 
 	/// Construct a CData without checking anything.
