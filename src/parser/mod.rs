@@ -10,7 +10,7 @@ use std::result::Result as StdResult;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use crate::lexer::{Token, Lexer, CodepointRead};
+use crate::lexer::{Token, Lexer, CodepointRead, TokenMetrics};
 use crate::error::*;
 use crate::strings::*;
 
@@ -35,11 +35,48 @@ pub enum XMLVersion {
 	V1_0,
 }
 
+/// Carry measurement information about the event
+///
+/// In contrast to tokens (cf. [`crate::lexer::TokenMetrics`]), events are
+/// always consecutive. As a caveat, any whitespace between the XML
+/// declaration and the root element is attributed to the root element header.
+/// While it would, semantically, make more sense to attribute it to the XML
+/// declaration, this is difficult to achieve. This behaviour may change.
+///
+/// Because events may span multiple tokens, the same reasonable assumptions
+/// which are described in [`crate::lexer::TokenMetrics::start()`] do not
+/// apply here; an event may contain lots of non-token whitespace and consist
+/// of many tokens. To ensure that a valid length can always be reported, only
+/// the length is accounted and the start/end positions are not (as those may)
+/// wrap around even while the length does not.
+///
+/// Event length overflows are reported as [`Error::RestrictedXml`] errors.
+#[derive(Copy, Debug, Clone, PartialEq, Eq)]
+pub struct EventMetrics {
+	len: usize,
+}
+
+impl EventMetrics {
+	/// Get the number of bytes used to generate this event.
+	pub fn len(&self) -> usize {
+		self.len
+	}
+
+	// for use in crate unit tests
+	#[allow(dead_code)]
+	pub(crate) const fn new(len: usize) -> EventMetrics {
+		EventMetrics{len: len}
+	}
+}
+
 /**
 # XML document parts
 
 The term *Event* is borrowed from SAX terminology. Each [`Event`] refers to
 a bit of the XML document which has been parsed.
+
+Each event has [`EventMetrics`] attached which give information about the
+number of bytes from the input stream used to generate the event.
 */
 #[derive(Clone, PartialEq, Debug)]
 pub enum Event {
@@ -47,29 +84,32 @@ pub enum Event {
 	///
 	/// As the `encoding` and `standalone` flag are forced to be `utf-8` and
 	/// `yes` respectively (or absent), those values are not emitted.
-	XMLDeclaration(XMLVersion),
+	XMLDeclaration(EventMetrics, XMLVersion),
 	/// The start of an XML element.
 	///
 	/// Contains the qualified (expanded) name of the element as pair of
 	/// optional namespace URI and localname as well as a hash map of
 	/// attributes.
-	StartElement(QName, HashMap<QName, CData>),
+	StartElement(EventMetrics, QName, HashMap<QName, CData>),
 	/// The end of an XML element.
 	///
 	/// The parser enforces that start/end pairs are correctly nested, which
 	/// means that there is no necessity to emit the element information
 	/// again.
-	EndElement,
+	EndElement(EventMetrics),
 	/// Text CData.
 	///
 	/// References are expanded and CDATA sections processed correctly, so
 	/// that the text in the event exactly corresponds to the *logical*
 	/// character data.
 	///
+	/// This implies that the [`EventMetrics::len()`] of a text event is
+	/// generally not equal to the number of bytes in the CData.
+	///
 	/// **Note:** Multiple consecutive `Text` events may be emitted for long
 	/// sections of text or because of implementation details in the
 	/// processing.
-	Text(CData),
+	Text(EventMetrics, CData),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -162,6 +202,10 @@ pub struct Parser {
 	element_stack: Vec<Name>,
 	namespace_stack: Vec<(Option<RcPtr<CData>>, HashMap<NCName, RcPtr<CData>>)>,
 	element_scratchpad: Option<ElementScratchpad>,
+	/// end position of the last token processed in the event
+	event_last_token_end: Option<usize>,
+	/// current length of the event
+	event_length: usize,
 	/// Internal queue for events which will be returned from the current
 	/// and potentially future calls to `parse()`.
 	///
@@ -181,8 +225,51 @@ impl Parser {
 			element_stack: Vec::new(),
 			namespace_stack: Vec::new(),
 			element_scratchpad: None,
+			event_last_token_end: None,
+			event_length: 0,
 			eventq: VecDeque::new(),
 			err: None,
+		}
+	}
+
+	fn start_event(&mut self, tm: &TokenMetrics) {
+		debug_assert!(self.event_last_token_end.is_none());
+		self.event_last_token_end = Some(tm.end());
+		self.event_length = tm.len();
+	}
+
+	fn account_token(&mut self, tm: &TokenMetrics) -> Result<usize> {
+		let last_end = self.event_last_token_end.unwrap();
+		self.event_length = self.event_length.checked_add(
+			tm.len() + tm.start().wrapping_sub(last_end),
+		).ok_or_else(||{ Error::RestrictedXml("event too long") })?;
+		self.event_last_token_end = Some(tm.end());
+		Ok(self.event_length)
+	}
+
+	fn finish_event(&mut self) -> EventMetrics {
+		debug_assert!(self.event_last_token_end.is_some());
+		let len = self.event_length;
+		self.event_last_token_end = None;
+		self.event_length = 0;
+		EventMetrics{len: len}
+	}
+
+	fn fixed_event(&self, len: usize) -> EventMetrics {
+		debug_assert!(self.event_last_token_end.is_none());
+		EventMetrics{len: len}
+	}
+
+	fn read_token<'r, R: TokenRead>(&mut self, r: &'r mut R) -> Result<Option<Token>> {
+		if self.event_last_token_end.is_none() {
+			return r.read();
+		}
+		match r.read()? {
+			Some(tok) => {
+				self.account_token(tok.metrics())?;
+				Ok(Some(tok))
+			},
+			None => Ok(None),
 		}
 	}
 
@@ -286,8 +373,10 @@ impl Parser {
 				return Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 			}
 		}
+		let nsuri = nsuri.and_then(|s| { Some(s.clone()) });
 		let ev = Event::StartElement(
-			(nsuri.and_then(|s| { Some(s.clone()) }), localname),
+			self.finish_event(),
+			(nsuri, localname),
 			resolved_attributes,
 		);
 		self.emit_event(ev);
@@ -297,8 +386,9 @@ impl Parser {
 
 	/// Pop an element off the stack and emit the corresponding EndElement
 	/// event.
-	fn pop_element(&mut self) -> Result<State> {
-		self.emit_event(Event::EndElement);
+	fn pop_element(&mut self, em: EventMetrics) -> Result<State> {
+		let ev = Event::EndElement(em);
+		self.emit_event(ev);
 		debug_assert!(self.element_stack.len() > 0);
 		debug_assert!(self.element_stack.len() == self.namespace_stack.len());
 		self.element_stack.pop();
@@ -314,9 +404,13 @@ impl Parser {
 	///
 	/// See [`State::Initial`].
 	fn parse_initial<'r, R: TokenRead>(&mut self, r: &'r mut R) -> Result<State> {
-		match r.read()? {
-			Some(Token::XMLDeclStart(_)) => Ok(State::Decl{ substate: DeclSt::VersionName, version: None }),
-			Some(Token::ElementHeadStart(_, name)) => {
+		match self.read_token(r)? {
+			Some(Token::XMLDeclStart(tm)) => {
+				self.start_event(&tm);
+				Ok(State::Decl{ substate: DeclSt::VersionName, version: None })
+			},
+			Some(Token::ElementHeadStart(tm, name)) => {
+				self.start_event(&tm);
 				self.start_processing_element(name)?;
 				Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
 			},
@@ -333,7 +427,7 @@ impl Parser {
 	///
 	/// See [`State::Decl`].
 	fn parse_decl<'r, R: TokenRead>(&mut self, state: DeclSt, version: Option<XMLVersion>, r: &'r mut R) -> Result<State> {
-		match r.read()? {
+		match self.read_token(r)? {
 			None => Err(Error::wfeof(ERRCTX_XML_DECL)),
 			Some(Token::Name(_, name)) => match state {
 				DeclSt::VersionName => {
@@ -417,7 +511,8 @@ impl Parser {
 			},
 			Some(Token::XMLDeclEnd(_)) => match state {
 				DeclSt::EncodingName | DeclSt::StandaloneName | DeclSt::Close => {
-					self.emit_event(Event::XMLDeclaration(version.unwrap()));
+					let ev = Event::XMLDeclaration(self.finish_event(), version.unwrap());
+					self.emit_event(ev);
 					Ok(State::Document(DocSt::Element(ElementSt::Expected)))
 				},
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
@@ -486,12 +581,13 @@ impl Parser {
 	///
 	/// See [`DocSt::Element`].
 	fn parse_element<'r, R: TokenRead>(&mut self, state: ElementSt, r: &'r mut R) -> Result<State> {
-		match r.read()? {
+		match self.read_token(r)? {
 			None => match state {
 				ElementSt::Expected => Err(Error::wfeof(ERRCTX_DOCBEGIN)),
 				_ => Err(Error::wfeof(ERRCTX_ELEMENT)),
 			},
-			Some(Token::ElementHeadStart(_, name)) if state == ElementSt::Expected => {
+			Some(Token::ElementHeadStart(tm, name)) if state == ElementSt::Expected => {
+				self.start_event(&tm);
 				self.start_processing_element(name)?;
 				Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
 			},
@@ -509,7 +605,7 @@ impl Parser {
 			Some(Token::ElementHeadClose(_)) => match state {
 				ElementSt::AttrName => {
 					self.finalize_element()?;
-					Ok(self.pop_element()?)
+					Ok(self.pop_element(self.fixed_event(0))?)
 				},
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_ELEMENT,
@@ -564,16 +660,20 @@ impl Parser {
 	fn parse_document<'r, R: TokenRead>(&mut self, state: DocSt, r: &'r mut R) -> Result<State> {
 		match state {
 			DocSt::Element(substate) => self.parse_element(substate, r),
-			DocSt::CData => match r.read()? {
-				Some(Token::Text(_, s)) => {
-					self.emit_event(Event::Text(s));
+			DocSt::CData => match self.read_token(r)? {
+				Some(Token::Text(tm, s)) => {
+					self.start_event(&tm);
+					let ev = Event::Text(self.finish_event(), s);
+					self.emit_event(ev);
 					Ok(State::Document(DocSt::CData))
 				},
-				Some(Token::ElementHeadStart(_, name)) => {
+				Some(Token::ElementHeadStart(tm, name)) => {
+					self.start_event(&tm);
 					self.start_processing_element(name)?;
 					Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
 				},
-				Some(Token::ElementFootStart(_, name)) => {
+				Some(Token::ElementFootStart(tm, name)) => {
+					self.start_event(&tm);
 					if self.element_stack[self.element_stack.len()-1] != name {
 						Err(Error::NotWellFormed(WFError::ElementMismatch))
 					} else {
@@ -587,8 +687,11 @@ impl Parser {
 				))),
 				None => Err(Error::wfeof(ERRCTX_TEXT)),
 			},
-			DocSt::ElementFoot => match r.read()? {
-				Some(Token::ElementHFEnd(_)) => self.pop_element(),
+			DocSt::ElementFoot => match self.read_token(r)? {
+				Some(Token::ElementHFEnd(_)) => {
+					let em = self.finish_event();
+					self.pop_element(em)
+				},
 				Some(other) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_ELEMENT_FOOT,
 					other.name(),
@@ -623,7 +726,7 @@ impl Parser {
 				State::Initial => self.parse_initial(r),
 				State::Decl{ substate, version } => self.parse_decl(substate, version, r),
 				State::Document(substate) => self.parse_document(substate, r),
-				State::End => match r.read()? {
+				State::End => match self.read_token(r)? {
 					None => Ok(State::Eof),
 					Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 						ERRCTX_DOCEND,
@@ -798,14 +901,20 @@ mod tests {
 	#[test]
 	fn parser_parse_xml_declaration() {
 		let (evs, r) = parse(&[
-			Token::XMLDeclStart(DM),
-			Token::Name(DM, Name::from_str("version").unwrap()),
-			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("1.0").unwrap()),
-			Token::XMLDeclEnd(DM),
+			Token::XMLDeclStart(TokenMetrics::new(0, 1)),
+			Token::Name(TokenMetrics::new(2, 3), Name::from_str("version").unwrap()),
+			Token::Eq(TokenMetrics::new(3, 4)),
+			Token::AttributeValue(TokenMetrics::new(4, 5), CData::from_str("1.0").unwrap()),
+			Token::XMLDeclEnd(TokenMetrics::new(6, 7)),
 		]);
-		assert!(matches!(&evs[0], Event::XMLDeclaration(XMLVersion::V1_0)));
-		assert_eq!(evs.len(), 1);
+		let mut iter = evs.iter();
+		match iter.next().unwrap() {
+			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
+				assert_eq!(em.len(), 7);
+			},
+			other => panic!("unexpected event: {:?}", other),
+		}
+		assert!(iter.next().is_none());
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::InvalidEof(ERRCTX_DOCBEGIN))));
 	}
 
@@ -847,7 +956,7 @@ mod tests {
 				Ok(None) => panic!("unexpected eof: {:?}", parser),
 			}
 		}
-		assert!(matches!(&evs[0], Event::XMLDeclaration(XMLVersion::V1_0)));
+		assert!(matches!(&evs[0], Event::XMLDeclaration(EventMetrics{len: 0}, XMLVersion::V1_0)));
 		assert_eq!(evs.len(), 1);
 	}
 
@@ -864,7 +973,7 @@ mod tests {
 		let mut reader = TokenSliceReader::new(toks);
 		let mut parser = Parser::new();
 		let r = parser.parse(&mut reader);
-		assert!(matches!(r.unwrap().unwrap(), Event::XMLDeclaration(XMLVersion::V1_0)));
+		assert!(matches!(r.unwrap().unwrap(), Event::XMLDeclaration(EventMetrics{len: 0}, XMLVersion::V1_0)));
 	}
 
 	#[test]
@@ -879,8 +988,8 @@ mod tests {
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
-		assert!(matches!(&evs[1], Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(&evs[2], Event::EndElement));
+		assert!(matches!(&evs[1], Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(&evs[2], Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -890,8 +999,8 @@ mod tests {
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
-		assert!(matches!(&evs[0], Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(&evs[1], Event::EndElement));
+		assert!(matches!(&evs[0], Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -905,14 +1014,14 @@ mod tests {
 		]);
 		r.unwrap();
 		match &evs[0] {
-			Event::StartElement((nsuri, localname), attrs) => {
+			Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
 				assert!(nsuri.is_none());
 				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement));
+		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -926,14 +1035,15 @@ mod tests {
 		]);
 		r.unwrap();
 		match &evs[0] {
-			Event::StartElement((nsuri, localname), attrs) => {
+			Event::StartElement(em, (nsuri, localname), attrs) => {
+				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement));
+		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -950,14 +1060,15 @@ mod tests {
 		]);
 		r.unwrap();
 		match &evs[0] {
-			Event::StartElement((nsuri, localname), attrs) => {
+			Event::StartElement(em, (nsuri, localname), attrs) => {
+				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement));
+		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -974,14 +1085,15 @@ mod tests {
 		]);
 		r.unwrap();
 		match &evs[0] {
-			Event::StartElement((nsuri, localname), attrs) => {
+			Event::StartElement(em, (nsuri, localname), attrs) => {
+				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(Some(RcPtr::new(CData::from_str(TEST_NS).unwrap())), NCName::from_str("bar").unwrap())).unwrap(), "baz");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement));
+		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -995,14 +1107,15 @@ mod tests {
 		]);
 		r.unwrap();
 		match &evs[0] {
-			Event::StartElement((nsuri, localname), attrs) => {
+			Event::StartElement(em, (nsuri, localname), attrs) => {
+				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(Some(RcPtr::new(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap())), NCName::from_str("lang").unwrap())).unwrap(), "en");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement));
+		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -1064,10 +1177,10 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -1087,13 +1200,13 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::Text(t) if t == "Hello"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::Text(t) if t == "mixed"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
-		assert!(matches!(iter.next().unwrap(), Event::Text(t) if t == "world!"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "Hello"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "mixed"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "world!"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -1110,8 +1223,8 @@ mod tests {
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::ElementMismatch)));
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
 		assert!(iter.next().is_none());
 	}
 
@@ -1136,16 +1249,17 @@ mod tests {
 		r.unwrap();
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
-			Event::StartElement((nsuri, localname), attrs) => {
+			Event::StartElement(em, (nsuri, localname), attrs) => {
+				assert_eq!(em.len, 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -1169,16 +1283,17 @@ mod tests {
 		r.unwrap();
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
-			Event::StartElement((nsuri, localname), attrs) => {
+			Event::StartElement(em, (nsuri, localname), attrs) => {
+				assert_eq!(em.len, 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -1201,10 +1316,10 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -1227,10 +1342,10 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]
@@ -1336,10 +1451,10 @@ mod tests {
 		let (evs, r) = parse(toks);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement((nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
 	}
 
 	#[test]

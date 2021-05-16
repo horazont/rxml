@@ -152,7 +152,7 @@ fp.feed(doc[10..25].to_vec());
 // Now we passed the XML declaration (and some), so we expect a corresponding
 // event
 let ev = fp.read();
-assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(XMLVersion::V1_0)));
+assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0)));
 ```
 */
 pub struct FeedParser<'x> {
@@ -264,7 +264,7 @@ let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
 let mut pp = PullParser::new(&mut doc);
 // we expect the first event to be the XML declaration
 let ev = pp.read();
-assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(XMLVersion::V1_0)));
+assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0)));
 ```
 */
 pub struct PullParser<T: io::Read + Sized> {

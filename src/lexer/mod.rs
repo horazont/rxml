@@ -878,12 +878,9 @@ impl Lexer {
 					))
 				},
 				(_, Endpoint::Delimiter(ch)) => match ch.to_char() {
-					'<' => {
-						self.eat_whitespace_metrics(1); // 1 == len("<")
-						Ok(ST(
-							State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
-						))
-					},
+					'<' => Ok(ST(
+						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
+					)),
 					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(
 						ERRCTX_XML_DECL_END,
 						other,
@@ -2052,7 +2049,9 @@ mod tests {
 	}
 
 	#[test]
-	fn lexer_lex_does_not_account_whitespace_between_xml_decl_and_element() {
+	fn lexer_lex_accounts_whitespace_between_xml_decl_and_element_to_element() {
+		// even though this behaviour may seem strange, it is useful for making sure that all bytes are accounted for in the parser.
+		// discarding whitespace within an element is fine because that is a single event in the parser and it can reconstruct the gaps from the token metrics
 		let mut src = "<?xml version=\"1.0\" encoding='utf-8'?>\n\n<root/>".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
@@ -2071,7 +2070,7 @@ mod tests {
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd(TokenMetrics{start: 36, end: 38}));
 		match iter.next().unwrap() {
 			Token::ElementHeadStart(tm, ..) => {
-				assert_eq!(*tm, TokenMetrics{start: 40, end: 45});
+				assert_eq!(*tm, TokenMetrics{start: 38, end: 45});
 			},
 			other => panic!("unexpected event: {:?}", other),
 		}
