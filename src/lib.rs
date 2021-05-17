@@ -225,6 +225,14 @@ impl<'x> FeedParser<'x> {
 	pub fn buffered(&self) -> usize {
 		self.token_source.get_ref().get_ref().len()
 	}
+
+	/// Return a reference to the internal buffer BufferQueue
+	///
+	/// This can be used to force dropping of all memory in case of error
+	/// conditions.
+	pub fn get_buffer_mut(&mut self) -> &mut BufferQueue<'x> {
+		self.token_source.get_mut().get_mut()
+	}
 }
 
 impl EventRead for FeedParser<'_> {

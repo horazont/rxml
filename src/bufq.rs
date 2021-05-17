@@ -109,6 +109,16 @@ impl<'x> BufferQueue<'x> {
 	pub fn eof_pushed(&self) -> bool {
 		self.eof
 	}
+
+	/// Drop all buffered contents immediately
+	///
+	/// This will effectively reset the length to 0 and cause all future reads
+	/// to return either WouldBlock (if [`push_eof`] has not been called yet)
+	/// or eof.
+	pub fn clear(&mut self) {
+		self.q.clear();
+		self.len = 0;
+	}
 }
 
 impl io::Read for BufferQueue<'_> {
@@ -523,5 +533,37 @@ mod tests {
 		bq.push(s1.to_vec());
 		bq.consume(3);
 		assert_eq!(bq.fill_buf().err().unwrap().kind(), io::ErrorKind::WouldBlock);
+	}
+
+	#[test]
+	fn bufq_empty_after_clear() {
+		let s1 = b"foo";
+		let mut bq = BufferQueue::new();
+		bq.push(s1.to_vec());
+		bq.clear();
+		assert_eq!(bq.len(), 0);
+		assert_eq!(bq.fill_buf().err().unwrap().kind(), io::ErrorKind::WouldBlock);
+	}
+
+	#[test]
+	fn bufq_eof_after_clear_with_push_eof_before_clear() {
+		let s1 = b"foo";
+		let mut bq = BufferQueue::new();
+		bq.push(s1.to_vec());
+		bq.push_eof();
+		bq.clear();
+		assert_eq!(bq.len(), 0);
+		assert_eq!(bq.fill_buf().unwrap(), b"");
+	}
+
+	#[test]
+	fn bufq_eof_after_clear_with_push_eof_after_clear() {
+		let s1 = b"foo";
+		let mut bq = BufferQueue::new();
+		bq.push(s1.to_vec());
+		bq.clear();
+		bq.push_eof();
+		assert_eq!(bq.len(), 0);
+		assert_eq!(bq.fill_buf().unwrap(), b"");
 	}
 }
