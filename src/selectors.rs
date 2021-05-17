@@ -51,6 +51,7 @@ pub const VALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 pub const INVALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 	CodepointRange('\x00', '\x08'),
 	CodepointRange('\x0b', '\x0c'),
+	CodepointRange('\x0e', '\x1f'),
 	CodepointRange('\u{fffe}', '\u{ffff}'),
 ];
 
@@ -209,5 +210,23 @@ impl Clone for CodepointRanges {
 impl PartialEq for CodepointRanges {
 	fn eq(&self, other: &CodepointRanges) -> bool {
 		std::ptr::eq(&self.0, &other.0)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn cdata_inclusion_and_exclusion_are_equivalent() {
+		let excluder = CodepointRanges(INVALID_XML_CDATA_RANGES);
+		let includer = CodepointRanges(VALID_XML_CDATA_RANGES);
+		for cp in 0x0..=0x10ffffu32 {
+			if let Some(ch) = std::char::from_u32(cp) {
+				if !includer.select(ch) != excluder.select(ch) {
+					panic!("INVALID_XML_CDATA_RANGES and VALID_XML_CDATA_RANGES have different opinions about U+{:x}", cp)
+				}
+			}
+		}
 	}
 }
