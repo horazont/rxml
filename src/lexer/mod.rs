@@ -928,29 +928,50 @@ impl Lexer {
 
 	fn lex_element<'r, R: CodepointRead>(&mut self, kind: ElementKind, state: ElementState, r: &'r mut R) -> Result<ST> {
 		match state {
-			ElementState::Start | ElementState::Name => match self.read_validated(r, &CLASS_XML_NAME, self.opts.max_token_length)? {
-				Endpoint::Eof => Err(Error::wfeof(ERRCTX_NAME)),
-				Endpoint::Limit => Err(self.token_length_error()),
-				Endpoint::Delimiter(ch) => {
-					let next_state = self.lex_element_postblank(kind, ch)?;
-					let name = self.flush_scratchpad_as_name();
-					let metrics = self.metrics(ch.len());
-					Ok(ST(
-						State::Element{
-							kind: kind,
-							state: next_state,
-						},
-						Some(if state == ElementState::Name {
-							Token::Name(metrics, name)
-						} else {
-							match kind {
-								ElementKind::Header => Token::ElementHeadStart(metrics, name),
-								ElementKind::Footer => Token::ElementFootStart(metrics, name),
-								ElementKind::XMLDecl => panic!("invalid state"),
-							}
-						}),
-					))
-				},
+			ElementState::Start | ElementState::Name => {
+				if self.scratchpad.len() == 0 {
+					// we are reading the first char; the first one is special because it must match CLASS_XML_NAMESTART, and not just CLASS_XML_NAME
+					let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_NAME)?;
+					let ch = utf8ch.to_char();
+					if !CLASS_XML_NAMESTART.select(ch) {
+						Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_NAME, ch, None)))
+					} else {
+						self.scratchpad.push_str(utf8ch.as_str());
+						// continue in the same state; the branch below will be taken next and read_validated will take care of it if we’re done already
+						Ok(ST(
+							State::Element{
+								kind: kind,
+								state: state,
+							},
+							None,
+						))
+					}
+				} else {
+					match self.read_validated(r, &CLASS_XML_NAME, self.opts.max_token_length)? {
+						Endpoint::Eof => Err(Error::wfeof(ERRCTX_NAME)),
+						Endpoint::Limit => Err(self.token_length_error()),
+						Endpoint::Delimiter(ch) => {
+							let next_state = self.lex_element_postblank(kind, ch)?;
+							let name = self.flush_scratchpad_as_name();
+							let metrics = self.metrics(ch.len());
+							Ok(ST(
+								State::Element{
+									kind: kind,
+									state: next_state,
+								},
+								Some(if state == ElementState::Name {
+									Token::Name(metrics, name)
+								} else {
+									match kind {
+										ElementKind::Header => Token::ElementHeadStart(metrics, name),
+										ElementKind::Footer => Token::ElementFootStart(metrics, name),
+										ElementKind::XMLDecl => panic!("invalid state"),
+									}
+								}),
+							))
+						}
+					}
+				}
 			},
 			ElementState::SpaceRequired | ElementState::Blank => match self.skip_matching(r, &CLASS_XML_SPACES)? {
 				(_, Endpoint::Eof) | (_, Endpoint::Limit) => Err(Error::wfeof(ERRCTX_ELEMENT)),
@@ -2046,6 +2067,20 @@ mod tests {
 
 		let err = lex_err(b"<a>]]\x00></a>", 128).unwrap();
 		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+	}
+
+	#[test]
+	fn lexer_rejects_numeric_start_of_name_in_closing_tag() {
+		// found via fuzzing by moparisthebest
+		let err = lex_err(b"</4foo>", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(_, '4', None))));
+	}
+
+	#[test]
+	fn lexer_rejects_zero_length_name_in_closing_tag() {
+		// found via fuzzing by moparisthebest
+		let err = lex_err(b"</ >", 128).unwrap();
+		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(_, ' ', None))));
 	}
 
 	#[test]
