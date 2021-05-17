@@ -732,6 +732,18 @@ impl AsRef<[u8]> for CDataStr {
 	}
 }
 
+impl PartialEq<str> for CDataStr {
+	fn eq(&self, other: &str) -> bool {
+		&self.0 == other
+	}
+}
+
+impl PartialEq<CDataStr> for str {
+	fn eq(&self, other: &CDataStr) -> bool {
+		self == &other.0
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
