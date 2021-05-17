@@ -21,7 +21,7 @@ for fn in sys.argv[1:]:
 \t#[test]
 \tfn fuzz_{id_}() {{
 \t\tlet src = &b"{data}"[..];
-\t\tlet result = run_fuzz_test(src, 128);
+\t\tlet result = run_fuzz_test(src);
 \t\tassert!(result.is_err());
 \t}}
 """.format(id_=id_, data=data))
