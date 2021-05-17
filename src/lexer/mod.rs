@@ -270,6 +270,11 @@ enum ContentState {
 	/// `]]>` sequence, either within cdata (true) or not (false)
 	/// if not within cdata, encountering this sequence is illegal
 	MaybeCDataEnd(bool, usize),
+	/// `\r` read, we need to look ahead by one char to see if it is a `\n`
+	/// before substituting
+	///
+	/// bool indicates whether we’re in a cdata section, because yes, this also applies to those
+	MaybeCRLF(bool),
 }
 
 
@@ -652,6 +657,13 @@ impl Lexer {
 					tok,
 				)))
 			},
+			'\r' => {
+				// CRLF needs to be folded to LF, and standalone LF needs, too
+				Ok(Some(ST(
+					State::Content(ContentState::MaybeCRLF(false)),
+					None,
+				)))
+			},
 			_ => Ok(None),
 		}
 	}
@@ -750,6 +762,26 @@ impl Lexer {
 		}
 	}
 
+	fn lex_resume_text(&mut self, utf8ch: Utf8Char) -> Result<ST> {
+		let ch = utf8ch.to_char();
+		match self.lex_posttext_char(utf8ch)? {
+			// special delimiter char -> state transition
+			Some(st) => Ok(st),
+			// no special char -> check if it is valid text and proceed accordingly
+			None => if CLASS_XML_NONCHAR.select(ch) {
+				// non-Char, error
+				Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, ch as u32, false)))
+			} else {
+				// nothing special, push to scratchpad and return to initial content state
+				self.scratchpad.push_str(utf8ch.as_str());
+				Ok(ST(
+					State::Content(ContentState::Initial),
+					None,
+				))
+			},
+		}
+	}
+
 	fn lex_maybe_cdata_end<'r, R: CodepointRead>(&mut self, in_cdata: bool, nend: usize, r: &'r mut R) -> Result<ST> {
 		debug_assert!(nend < TOK_XML_CDATA_END.len());
 		let ctx = if in_cdata {
@@ -810,22 +842,7 @@ impl Lexer {
 				}
 			} else {
 				// broken sequence outside cdata section, need to analyze the next char carefully to handle entities and such
-				match self.lex_posttext_char(utf8ch)? {
-					// special delimiter char -> state transition
-					Some(st) => Ok(st),
-					// no special char -> check if it is valid text and proceed accordingly
-					None => if CLASS_XML_NONCHAR.select(ch) {
-						// non-Char, error
-						Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, ch as u32, false)))
-					} else {
-						// nothing special, push to scratchpad and return to initial content state
-						self.scratchpad.push_str(utf8ch.as_str());
-						Ok(ST(
-							State::Content(ContentState::Initial),
-							None,
-						))
-					},
-				}
+				self.lex_resume_text(utf8ch)
 			}
 		}
 	}
@@ -835,6 +852,58 @@ impl Lexer {
 		match state {
 			ContentState::MaybeElement(substate) => self.lex_maybe_element(substate, r),
 			ContentState::MaybeCDataEnd(in_cdata, nend) => self.lex_maybe_cdata_end(in_cdata, nend, r),
+
+			ContentState::MaybeCRLF(in_cdata) => {
+				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_TEXT)?;
+				match utf8ch.to_char() {
+					'\n' => {
+						// CRLF sequence, only insert the \n to the scratchpad.
+						self.scratchpad.push_str("\n");
+						// return to the content state and curse a bit
+						Ok(ST(
+							if in_cdata {
+								State::Content(ContentState::CDataSection)
+							} else {
+								State::Content(ContentState::Initial)
+							},
+							None,
+						))
+					},
+					'\r' => {
+						// double CR, so this may still be followed by an LF; but the first CR gets converted to LF
+						self.scratchpad.push_str("\n");
+						// stay in the same state, we may still get an LF here.
+						Ok(ST(
+							State::Content(ContentState::MaybeCRLF(in_cdata)),
+							None,
+						))
+					},
+					ch => {
+						// we read a single CR, so we push a \n to the scratchpad and hope for the best
+						self.scratchpad.push_str("\n");
+						if in_cdata {
+							// only special thing in CDATA is ']'
+							if ch == ']' {
+								Ok(ST(
+									State::Content(ContentState::MaybeCDataEnd(true, 1)),
+									None,
+								))
+							} else if !CLASS_XML_NONCHAR.select(ch) {
+								// ^ but of course we still need to check for a valid char. Thanks afl.
+								self.scratchpad.push_str(utf8ch.as_str());
+								Ok(ST(
+									State::Content(ContentState::CDataSection),
+									None,
+								))
+							} else{
+								Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, ch as u32, false)))
+							}
+						} else {
+							self.lex_resume_text(utf8ch)
+						}
+					},
+				}
+			},
 
 			// read until next `<` or `&`, which are the only things which
 			// can break us out of this state.
@@ -864,11 +933,17 @@ impl Lexer {
 					self.maybe_flush_scratchpad_as_text(0),
 				)),
 				// -> transition into the "first delimiter found" state
-				Endpoint::Delimiter(utf8ch) if utf8ch.to_char() == ']' => Ok(ST(
-					State::Content(ContentState::MaybeCDataEnd(true, 1)),
-					None,
-				)),
-				Endpoint::Delimiter(other) => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other.to_char() as u32, false))),
+				Endpoint::Delimiter(utf8ch) => match utf8ch.to_char() {
+					']' => Ok(ST(
+						State::Content(ContentState::MaybeCDataEnd(true, 1)),
+						None,
+					)),
+					'\r' => Ok(ST(
+						State::Content(ContentState::MaybeCRLF(true)),
+						None,
+					)),
+					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other as u32, false)))
+				}
 			},
 			ContentState::Whitespace => match self.skip_matching(r, &CLASS_XML_SPACES)? {
 				(_, Endpoint::Eof) | (_, Endpoint::Limit) => {
@@ -2108,6 +2183,175 @@ mod tests {
 				assert_eq!(*tm, TokenMetrics{start: 38, end: 45});
 			},
 			other => panic!("unexpected event: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_folds_crlf_to_lf_in_text() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a>\r\n</a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::Text(_, cdata) => {
+				assert_eq!(cdata, "\n");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_rejects_nonchar_after_cr() {
+		let err = lex_err(b"<a>\r\x01</a>", 128).unwrap();
+		match err {
+			Error::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_rejects_nonchar_after_cr_in_cdata() {
+		// found with afl
+		let err = lex_err(b"<a><![CDATA[\r\x01]]></a>", 128).unwrap();
+		match err {
+			Error::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_does_not_modify_charrefs_for_line_endings() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a>&#xd;&#xa;</a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		let (text, _, _, _) = collect_texts(&mut iter);
+		assert_eq!(text, "\r\n");
+	}
+
+	#[test]
+	fn lexer_folds_crlf_to_lf_in_cdata() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a><![CDATA[\r\n]]></a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::Text(_, cdata) => {
+				assert_eq!(cdata, "\n");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_cr_folding_does_not_break_specials() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a>\r</a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::Text(_, cdata) => {
+				assert_eq!(cdata, "\n");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_cr_folding_in_cdata_does_not_break_exit() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a><![CDATA[\r]]></a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::Text(_, cdata) => {
+				assert_eq!(cdata, "\n");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_cr_folding_in_cdata_does_not_break_exit_cdata_section() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a><![CDATA[\r<>]]></a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::Text(_, cdata) => {
+				assert_eq!(cdata, "\n<>");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_folds_crcrlf_to_lflf_in_text() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a>\r\r\n</a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::Text(_, cdata) => {
+				assert_eq!(cdata, "\n\n");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_folds_cr_to_lf_in_text() {
+		// XML 1.0 § 2.11
+		let (toks, r) = lex(b"<a>\r</a>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::Text(_, cdata) => {
+				assert_eq!(cdata, "\n");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_preserves_whitespace_inserted_via_charrefs_in_attributes() {
+		// XML 1.0 § 3.3.3
+		let (toks, r) = lex(b"<a x='&#xd;&#xa;&#x9; '/>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::AttributeValue(_, cdata) => {
+				assert_eq!(cdata, "\r\n\t ");
+			},
+			other => panic!("unexpected token: {:?}", other),
 		}
 	}
 }

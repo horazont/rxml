@@ -59,7 +59,7 @@ pub const INVALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 // XML 1.0 § 2.4 [14]
 pub const VALID_XML_CDATA_RANGES_TEXT_DELIMITED: &'static [CodepointRange] = &[
 	CodepointRange('\x09', '\x0a'),
-	CodepointRange('\x0d', '\x0d'),
+	// excluding CR as that gets folded to LF
 	CodepointRange('\u{0020}', '\u{0025}'), // excludes &
 	CodepointRange('\u{0027}', '\u{003b}'), // excludes <
 	CodepointRange('\u{003d}', '\u{005c}'), // excludes ]
@@ -97,7 +97,7 @@ pub const VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED: &'static [CodepointRange] =
 // XML 1.0 § 2.4 [14]
 pub const VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED: &'static [CodepointRange] = &[
 	CodepointRange('\x09', '\x0a'),
-	CodepointRange('\x0d', '\x0d'),
+	// excluding CR as that gets folded to LF
 	CodepointRange('\u{0020}', '\u{005c}'), // excludes ]
 	CodepointRange('\u{005e}', '\u{d7ff}'),
 	CodepointRange('\u{e000}', '\u{fffd}'),
