@@ -49,7 +49,7 @@ pub const VALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 
 // XML 1.0 § 2.2
 pub const INVALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
-	CodepointRange('\x00', '\x09'),
+	CodepointRange('\x00', '\x08'),
 	CodepointRange('\x0b', '\x0c'),
 	CodepointRange('\u{fffe}', '\u{ffff}'),
 ];
