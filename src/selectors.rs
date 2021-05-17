@@ -71,8 +71,7 @@ pub const VALID_XML_CDATA_RANGES_TEXT_DELIMITED: &'static [CodepointRange] = &[
 
 // XML 1.0 § 2.3 [10]
 pub const VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED: &'static [CodepointRange] = &[
-	CodepointRange('\x09', '\x0a'),
-	CodepointRange('\x0d', '\x0d'),
+	// exclude all whitespace except normal space because those get converted into spaces
 	CodepointRange('\u{0020}', '\u{0025}'), // excludes &, '
 	CodepointRange('\u{0028}', '\u{003b}'), // excludes <
 	CodepointRange('\u{003d}', '\u{d7ff}'),
@@ -83,8 +82,7 @@ pub const VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED: &'static [CodepointRange] =
 
 // XML 1.0 § 2.3 [10]
 pub const VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED: &'static [CodepointRange] = &[
-	CodepointRange('\x09', '\x0a'),
-	CodepointRange('\x0d', '\x0d'),
+	// exclude all whitespace except normal space because those get converted into spaces
 	CodepointRange('\u{0020}', '\u{0021}'), // excludes "
 	CodepointRange('\u{0023}', '\u{0025}'), // excludes &
 	CodepointRange('\u{0027}', '\u{003b}'), // excludes <

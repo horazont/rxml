@@ -231,8 +231,9 @@ enum ElementState {
 	Name,
 	Eq,
 	Close,
-	/// Delimiter and Alphabet
-	AttributeValue(char, CodepointRanges),
+	/// Delimiter, Alphabet and whether we just read a CR, because of the mess
+	/// which is CRLF -> LF normalization.
+	AttributeValue(char, CodepointRanges, bool),
 	/// Encountered ?
 	MaybeXMLDeclEnd,
 	/// Encountered /
@@ -289,7 +290,7 @@ impl RefReturnState {
 		match self {
 			Self::AttributeValue(kind, delim, selector) => State::Element{
 				kind: kind,
-				state: ElementState::AttributeValue(delim, selector),
+				state: ElementState::AttributeValue(delim, selector, false),
 			},
 			Self::Text => State::Content(ContentState::Initial),
 		}
@@ -969,8 +970,8 @@ impl Lexer {
 	fn lex_element_postblank(&mut self, kind: ElementKind, utf8ch: Utf8Char) -> Result<ElementState> {
 		match utf8ch.to_char() {
 			' ' | '\t' | '\r' | '\n' => Ok(ElementState::Blank),
-			'"' => Ok(ElementState::AttributeValue('"', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED))),
-			'\'' => Ok(ElementState::AttributeValue('\'', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED))),
+			'"' => Ok(ElementState::AttributeValue('"', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED), false)),
+			'\'' => Ok(ElementState::AttributeValue('\'', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED), false)),
 			'=' => Ok(ElementState::Eq),
 			'>' => match kind {
 				ElementKind::Footer | ElementKind::Header => Ok(ElementState::Close),
@@ -998,6 +999,60 @@ impl Lexer {
 				ch,
 				Some(&["whitespace", "\"", "'", "=", ">", "?", "/", "start of name"]),
 			))),
+		}
+	}
+
+	fn lex_attval_next(&mut self, delim: char, selector: CodepointRanges, utf8ch: Utf8Char, element_kind: ElementKind) -> Result<ST> {
+		match utf8ch.to_char() {
+			'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ATTVAL, '<', None))),
+			'&' => {
+				// must swap scratchpad here to avoid clobbering the
+				// attribute value during entity read
+				self.swap_scratchpad()?;
+				Ok(ST(
+					State::Reference{
+						ctx: ERRCTX_ATTVAL,
+						ret: RefReturnState::AttributeValue(
+							element_kind,
+							delim,
+							selector,
+						),
+						kind: RefKind::Entity,
+					}, None
+				))
+			},
+			'\t' | '\n' => {
+				self.scratchpad.push_str(" ");
+				Ok(ST(
+					State::Element{
+						kind: element_kind,
+						state: ElementState::AttributeValue(delim, selector, false),
+					},
+					None,
+				))
+			},
+			'\r' => {
+				Ok(ST(
+					State::Element{
+						kind: element_kind,
+						state: ElementState::AttributeValue(delim, selector, true),
+					},
+					None,
+				))
+			},
+			d if d == delim => Ok(ST(
+				State::Element{
+					kind: element_kind,
+					// require whitespace after attribute as the grammar demands
+					state: ElementState::SpaceRequired,
+				},
+				Some(Token::AttributeValue(self.metrics(0), self.flush_scratchpad_as_cdata())),
+			)),
+			other => Err(Error::NotWellFormed(WFError::InvalidChar(
+				ERRCTX_ATTVAL,
+				other as u32,
+				false,
+			)))
 		}
 	}
 
@@ -1069,41 +1124,28 @@ impl Lexer {
 				},
 			},
 			// XML 1.0 §2.3 [10] AttValue
-			ElementState::AttributeValue(delim, selector) => match self.read_validated(r, &selector, self.opts.max_token_length)? {
+			ElementState::AttributeValue(delim, selector, false) => match self.read_validated(r, &selector, self.opts.max_token_length)? {
 				Endpoint::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
 				Endpoint::Limit => Err(self.token_length_error()),
-				Endpoint::Delimiter(utf8ch) => match utf8ch.to_char() {
-					'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ATTVAL, '<', None))),
-					'&' => {
-						// must swap scratchpad here to avoid clobbering the
-						// attribute value during entity read
-						self.swap_scratchpad()?;
-						Ok(ST(
-							State::Reference{
-								ctx: ERRCTX_ATTVAL,
-								ret: RefReturnState::AttributeValue(
-									kind,
-									delim,
-									selector,
-								),
-								kind: RefKind::Entity,
-							}, None
-						))
-					},
-					d if d == delim => Ok(ST(
+				Endpoint::Delimiter(utf8ch) => self.lex_attval_next(delim, selector, utf8ch, kind),
+			},
+			// CRLF normalization for attributes; cannot reuse the element mechanism here because we have to carry around the delimiter and stuff
+			ElementState::AttributeValue(delim, selector, true) => {
+				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_ATTVAL)?;
+				if utf8ch.to_char() == '\r' {
+					// push the space, continue with CRLF
+					self.scratchpad.push_str(" ");
+					Ok(ST(
 						State::Element{
 							kind: kind,
-							// require whitespace after attribute as the grammar demands
-							state: ElementState::SpaceRequired,
+							state: ElementState::AttributeValue(delim, selector, true),
 						},
-						Some(Token::AttributeValue(self.metrics(0), self.flush_scratchpad_as_cdata())),
-					)),
-					other => Err(Error::NotWellFormed(WFError::InvalidChar(
-						ERRCTX_ATTVAL,
-						other as u32,
-						false,
-					)))
-				},
+						None,
+					))
+				} else {
+					// not another CR, so we can move on to the default handling
+					self.lex_attval_next(delim, selector, utf8ch, kind)
+				}
 			},
 			ElementState::MaybeXMLDeclEnd => match self.read_single(r)? {
 				Some(ch) if ch.to_char() == '>' => {
@@ -2332,6 +2374,44 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_normalizes_whitespace_in_attributes() {
+		// XML 1.0 § 3.3.3
+		let (toks, r) = lex(b"<a x='\r\r\n\t '/>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::AttributeValue(_, cdata) => {
+				// just four spaces, because CRLF normalization happens before attribute value normalization
+				// gotta love this
+				assert_eq!(cdata, "    ");
+			},
+			other => panic!("unexpected token: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_handles_crlf_in_attribute() {
+		// XML 1.0 § 3.3.3
+		let (toks, r) = lex(b"<a x='\r\n\t '/>", 128);
+		r.unwrap();
+
+		let mut iter = toks.iter();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		iter.next().unwrap();
+		match iter.next().unwrap() {
+			Token::AttributeValue(_, cdata) => {
+				assert_eq!(cdata, "   ");
 			},
 			other => panic!("unexpected token: {:?}", other),
 		}
