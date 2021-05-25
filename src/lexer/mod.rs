@@ -467,7 +467,7 @@ pub struct Lexer {
 	prev_state: (String, State),
 	#[cfg(debug_assertions)]
 	last_single_read: Option<Utf8Char>,
-	err: Option<Error>,
+	err: Option<Box<Error>>,
 }
 impl Lexer {
 	/// Construct a new Lexer based on [`LexerOptions::defaults()`].
@@ -1284,7 +1284,7 @@ impl Lexer {
 	pub fn lex<'r, R: CodepointRead>(&mut self, r: &'r mut R) -> Result<Option<Token>>
 	{
 		if let Some(e) = self.err.as_ref() {
-			return Err(e.clone())
+			return Err((**e).clone())
 		}
 
 		loop {
@@ -1302,7 +1302,7 @@ impl Lexer {
 				Err(other) => {
 					// we cache all other errors because we don't want to read / emit invalid data
 					let err = other.clone();
-					self.err = Some(other);
+					self.err = Some(Box::new(other));
 					return Err(err);
 				},
 				Ok(st) => st,
