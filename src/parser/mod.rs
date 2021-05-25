@@ -69,12 +69,13 @@ impl EventMetrics {
 		self.len
 	}
 
-	// for use in crate unit tests
-	#[allow(dead_code)]
-	pub(crate) const fn new(len: usize) -> EventMetrics {
+	// Create new event metrics
+	pub const fn new(len: usize) -> EventMetrics {
 		EventMetrics{len: len}
 	}
 }
+
+pub static ZERO_METRICS: EventMetrics = EventMetrics::new(0);
 
 /**
 # XML document parts
