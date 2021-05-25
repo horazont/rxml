@@ -580,8 +580,9 @@ impl Lexer {
 	}
 
 	fn flush_scratchpad(&mut self) -> String {
-		let result = self.scratchpad.split_off(0);
-		debug_assert!(self.scratchpad.len() == 0);
+		let mut result = String::new();
+		std::mem::swap(&mut result, &mut self.scratchpad);
+		result.shrink_to_fit();
 		result
 	}
 
