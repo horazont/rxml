@@ -602,6 +602,12 @@ impl PartialEq<String> for CData {
 	}
 }
 
+impl PartialEq<CData> for String {
+	fn eq(&self, other: &CData) -> bool {
+		return *self == other.0
+	}
+}
+
 impl PartialEq<&str> for CData {
 	fn eq(&self, other: &&str) -> bool {
 		return self.0.as_str() == *other
