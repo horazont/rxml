@@ -233,7 +233,7 @@ pub struct Parser {
 	/// multiple events need to be pushed from a single token, which is why
 	/// the queue exists as a buffer.
 	eventq: VecDeque<Event>,
-	err: Option<Error>,
+	err: Option<Box<Error>>,
 }
 
 impl Parser {
@@ -300,13 +300,13 @@ impl Parser {
 
 	/// Poison the parser, making it return the same error for all eternity.
 	fn poison(&mut self, e: Error) -> () {
-		self.err = Some(e)
+		self.err = Some(Box::new(e))
 	}
 
 	/// Check if the parser is poisoned and return the corresponding error.
 	fn check_poison(&self) -> Result<()> {
 		if let Some(e) = self.err.as_ref() {
-			Err(e.clone())
+			Err((**e).clone())
 		} else {
 			Ok(())
 		}
