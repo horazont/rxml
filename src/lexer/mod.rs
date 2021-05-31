@@ -538,7 +538,7 @@ impl Lexer {
 		&mut self,
 		r: &'r mut R,
 		selector: &'s S,
-		) -> Result<(usize, Endpoint)>
+		) -> (usize, Result<Endpoint>)
 	{
 		let (nread, result) = read::skip_matching(r, selector);
 		self.ctr = self.ctr.wrapping_add(nread);
@@ -547,9 +547,9 @@ impl Lexer {
 				if let Endpoint::Delimiter(ch) = ep {
 					self.ctr = self.ctr.wrapping_add(ch.len())
 				};
-				Ok((nread, ep))
+				(nread, Ok(ep))
 			},
-			Err(e) => Err(e),
+			Err(e) => (nread, Err(e)),
 		}
 	}
 
@@ -947,14 +947,14 @@ impl Lexer {
 					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other as u32, false)))
 				}
 			},
-			ContentState::Whitespace => match self.skip_matching(r, &CLASS_XML_SPACES)? {
-				(_, Endpoint::Eof) | (_, Endpoint::Limit) => {
+			ContentState::Whitespace => match self.skip_matching(r, &CLASS_XML_SPACES) {
+				(_, Ok(Endpoint::Eof)) | (_, Ok(Endpoint::Limit)) => {
 					Ok(ST(
 						State::Eof,
 						None,
 					))
 				},
-				(_, Endpoint::Delimiter(ch)) => match ch.to_char() {
+				(_, Ok(Endpoint::Delimiter(ch))) => match ch.to_char() {
 					'<' => Ok(ST(
 						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
 					)),
@@ -963,7 +963,8 @@ impl Lexer {
 						other,
 						Some(&["Spaces", "<"]),
 					))),
-				}
+				},
+				(_, Err(e)) => Err(e),
 			},
 		}
 	}
@@ -1104,9 +1105,20 @@ impl Lexer {
 					}
 				}
 			},
-			ElementState::SpaceRequired | ElementState::Blank => match self.skip_matching(r, &CLASS_XML_SPACES)? {
-				(_, Endpoint::Eof) | (_, Endpoint::Limit) => Err(Error::wfeof(ERRCTX_ELEMENT)),
-				(nmatching, Endpoint::Delimiter(ch)) => {
+			ElementState::SpaceRequired | ElementState::Blank => match self.skip_matching(r, &CLASS_XML_SPACES) {
+				(_, Ok(Endpoint::Eof)) | (_, Ok(Endpoint::Limit)) => Err(Error::wfeof(ERRCTX_ELEMENT)),
+				(nmatching, Err(Error::IO(_))) if nmatching > 0 && state == ElementState::SpaceRequired => {
+					// we have to treat IO errors here specially and implicitly retry them (because we swallow this one). that is in line with the contract which says that IO errors are retriable
+					// this is because we need to transition from SpaceRequired to Blank after reading even only a single char. otherwise, we are not resilient against chunking.
+					Ok(ST(
+						State::Element{
+							kind: kind,
+							state: ElementState::Blank,
+						},
+						None,
+					))
+				},
+				(nmatching, Ok(Endpoint::Delimiter(ch))) => {
 					self.eat_whitespace_metrics(ch.len());
 					let next_state = self.lex_element_postblank(kind, ch)?;
 					if next_state == ElementState::Name && state == ElementState::SpaceRequired && nmatching == 0 {
@@ -1123,6 +1135,7 @@ impl Lexer {
 						))
 					}
 				},
+				(_, Err(e)) => Err(e),
 			},
 			// XML 1.0 §2.3 [10] AttValue
 			ElementState::AttributeValue(delim, selector, false) => match self.read_validated(r, &selector, self.opts.max_token_length)? {
@@ -1358,12 +1371,8 @@ mod tests {
 	fn stream_to_sink<'r, 's, 'l, R: CodepointRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> Result<()> {
 		loop {
 			match l.lex(r) {
-				Ok(Some(tok)) => {
-					s.token(tok);
-				},
-				Ok(None) => {
-					break;
-				},
+				Ok(Some(tok)) => s.token(tok),
+				Ok(None) => break,
 				Err(e) => return Err(e),
 			}
 		}
@@ -1431,6 +1440,23 @@ mod tests {
 		let mut src = DecodingReader::new(&mut buff);
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
+		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
+		(sink.dest, result)
+	}
+
+	fn lex_chunked(data: &[&[u8]], token_limit: usize) -> (Vec<Token>, Result<()>) {
+		let mut buff = BufferQueue::new();
+		let mut src = DecodingReader::new(&mut buff);
+		let mut lexer = Lexer::new();
+		let mut sink = VecSink::new(token_limit);
+		for chunk in data.iter() {
+			src.get_mut().push(*chunk);
+			match stream_to_sink(&mut lexer, &mut src, &mut sink) {
+				Ok(()) => panic!("unexpected end of tokens"),Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
+				Err(e) => return (sink.dest, Err(e)),
+			}
+		}
+		src.get_mut().push_eof();
 		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
 		(sink.dest, result)
 	}
@@ -2434,5 +2460,14 @@ mod tests {
 			},
 			other => panic!("unexpected token: {:?}", other),
 		}
+	}
+
+	#[test]
+	fn lexer_is_resilient_to_chunking() {
+		let (_toks, r) = lex_chunked(
+			&[&b"<foo bar='baz' "[..], &b"fnord=''/>"[..]],
+			128,
+		);
+		r.unwrap();
 	}
 }
