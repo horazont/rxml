@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use crate::lexer::{Token, Lexer, CodepointRead, TokenMetrics};
 use crate::error::*;
 use crate::strings::*;
+use crate::context;
 
 pub const XMLNS_XML: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
 
@@ -215,6 +216,7 @@ It is a low-level interface which expects to be driven from a [`TokenRead`]
 source.
 */
 pub struct Parser {
+	ctx: RcPtr<context::Context>,
 	state: State,
 	fixed_xml_namespace: RcPtr<CData>,
 	/// keep a stack of the element Names (i.e. (Prefix:)?Localname) as a
@@ -239,9 +241,15 @@ pub struct Parser {
 impl Parser {
 	/// Create a new parser
 	pub fn new() -> Parser {
+		Self::with_context(RcPtr::new(context::Context::new()))
+	}
+
+	pub fn with_context(ctx: RcPtr<context::Context>) -> Parser {
+		let xmlns = ctx.intern_cdata(XMLNS_XML.to_cdata());
 		Parser{
+			ctx: ctx,
 			state: State::Initial,
-			fixed_xml_namespace: RcPtr::new(XMLNS_XML.to_cdata()),
+			fixed_xml_namespace: xmlns,
 			element_stack: Vec::new(),
 			namespace_stack: Vec::new(),
 			element_scratchpad: None,
@@ -575,7 +583,7 @@ impl Parser {
 					}
 				} else if val.len() == 0 {
 					Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri))
-				} else if scratchpad.namespace_decls.insert(localname, RcPtr::new(val)).is_some() {
+				} else if scratchpad.namespace_decls.insert(localname, self.ctx.intern_cdata(val)).is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
 					Ok(())
@@ -586,7 +594,7 @@ impl Parser {
 				if scratchpad.default_namespace_decl.is_some() {
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
-					scratchpad.default_namespace_decl = Some(RcPtr::new(val));
+					scratchpad.default_namespace_decl = Some(self.ctx.intern_cdata(val));
 					Ok(())
 				}
 			},

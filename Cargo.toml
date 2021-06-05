@@ -14,6 +14,8 @@ exclude = ["/fuzz", "/util", "/target"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+weak-table = { version = "0.3", optional = true }
 
 [features]
 mt = []
+shared_ns = ["weak-table"]

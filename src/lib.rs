@@ -54,6 +54,7 @@ pub mod parser;
 mod bufq;
 pub mod strings;
 mod selectors;
+mod context;
 
 #[cfg(test)]
 mod tests;
@@ -67,6 +68,7 @@ pub use parser::{QName, Parser, Event, LexerAdapter, XMLVersion, XMLNS_XML};
 #[doc(inline)]
 pub use bufq::BufferQueue;
 pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
+pub use context::Context;
 
 /**
 # Source for individual XML events
@@ -178,12 +180,16 @@ pub fn as_eof_flag(r: Result<()>) -> Result<bool> {
 impl<'x> FeedParser<'x> {
 	/// Create a new default `FeedParser`.
 	pub fn new() -> FeedParser<'x> {
+		Self::with_context(parser::RcPtr::new(Context::new()))
+	}
+
+	pub fn with_context(ctx: parser::RcPtr<Context>) -> FeedParser<'x> {
 		FeedParser{
 			token_source: LexerAdapter::new(
 				Lexer::new(),
 				DecodingReader::new(BufferQueue::new()),
 			),
-			parser: Parser::new(),
+			parser: Parser::with_context(ctx),
 		}
 	}
 

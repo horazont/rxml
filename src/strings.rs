@@ -25,7 +25,7 @@ times.
 */
 
 use std::ops::Deref;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, ToOwned, Cow};
 use crate::selectors;
 use crate::selectors::{CharSelector, CodepointRanges};
 use crate::error::{NWFError, WFError, ERRCTX_UNKNOWN};
@@ -590,6 +590,12 @@ impl CData {
 
 impl Eq for CData {}
 
+impl<'a> From<CData> for Cow<'a, CDataStr> {
+	fn from(s: CData) -> Cow<'a, CDataStr> {
+		Cow::Owned(s)
+	}
+}
+
 impl PartialEq<CData> for &str {
 	fn eq(&self, other: &CData) -> bool {
 		return self == &other.0.as_str()
@@ -735,6 +741,14 @@ impl AsRef<str> for CDataStr {
 impl AsRef<[u8]> for CDataStr {
 	fn as_ref(&self) -> &[u8] {
 		self.0.as_bytes()
+	}
+}
+
+impl ToOwned for CDataStr {
+	type Owned = CData;
+
+	fn to_owned(&self) -> Self::Owned {
+		self.to_cdata()
 	}
 }
 
