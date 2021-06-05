@@ -563,7 +563,7 @@ mod tests {
 				let mut r = DecodingReader::new(&mut src);
 				match r.read() {
 					Err(e) => panic!("decoding of U+{:x} {:?} failed: {:?}", chu32, &buf[..len], e),
-					Ok(Some(v)) => (),
+					Ok(Some(_)) => (),
 					Ok(None) => panic!("decoding of U+{:x} {:?} incorrectly claims eof", chu32, &buf[..]),
 				}
 			}
