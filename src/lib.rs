@@ -233,6 +233,16 @@ impl<'x> FeedParser<'x> {
 	pub fn get_buffer_mut(&mut self) -> &mut BufferQueue<'x> {
 		self.token_source.get_mut().get_mut()
 	}
+
+	/// Release all temporary buffers
+	///
+	/// This is sensible to call when it is expected that no more data will be
+	/// processed by the parser for a while and the memory is better used
+	/// elsewhere.
+	pub fn release_temporaries(&mut self) {
+		self.token_source.get_lexer_mut().release_temporaries();
+		self.parser.release_temporaries();
+	}
 }
 
 impl EventRead for FeedParser<'_> {

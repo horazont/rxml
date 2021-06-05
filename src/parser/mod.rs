@@ -768,6 +768,17 @@ impl Parser {
 			};
 		}
 	}
+
+	/// Release all temporary buffers
+	///
+	/// This is sensible to call when it is expected that no more data will be
+	/// processed by the parser for a while and the memory is better used
+	/// elsewhere.
+	pub fn release_temporaries(&mut self) {
+		self.eventq.shrink_to_fit();
+		self.element_stack.shrink_to_fit();
+		self.namespace_stack.shrink_to_fit();
+	}
 }
 
 impl fmt::Debug for Parser {
@@ -807,6 +818,16 @@ impl<R: CodepointRead + Sized> LexerAdapter<R> {
 	/// Return a mutable reference to the codepoint source
 	pub fn get_mut(&mut self) -> &mut R {
 		&mut self.src
+	}
+
+	/// Return a reference to the lexer
+	pub fn get_lexer(&mut self) -> &Lexer {
+		&self.lexer
+	}
+
+	/// Return a mutable reference to the lexer
+	pub fn get_lexer_mut(&mut self) -> &mut Lexer {
+		&mut self.lexer
 	}
 }
 

@@ -1343,6 +1343,16 @@ impl Lexer {
 			}
 		}
 	}
+
+	/// Release all temporary buffers
+	///
+	/// This is sensible to call when it is expected that no more data will be
+	/// processed by the lexer for a while and the memory is better used
+	/// elsewhere.
+	pub fn release_temporaries(&mut self) {
+		self.scratchpad.shrink_to_fit();
+		self.swap.shrink_to_fit();
+	}
 }
 
 impl fmt::Debug for Lexer {
