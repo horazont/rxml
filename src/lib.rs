@@ -70,6 +70,8 @@ pub use bufq::BufferQueue;
 pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
 pub use context::Context;
 
+pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
 /**
 # Source for individual XML events
 
