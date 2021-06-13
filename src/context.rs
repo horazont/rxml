@@ -125,6 +125,19 @@ impl Context {
 		#[cfg(not(feature = "shared_ns"))]
 		0
 	}
+
+	/// Return the current capacity for the CData internation structure
+	///
+	/// Returns zero if built without `shared_ns`.
+	pub fn cdata_capacity(&self) -> usize {
+		#[cfg(feature = "shared_ns")]
+		{
+			let mut nss = self.lock_nss();
+			nss.capacity()
+		}
+		#[cfg(not(feature = "shared_ns"))]
+		0
+	}
 }
 
 impl fmt::Debug for Context {
@@ -135,6 +148,20 @@ impl fmt::Debug for Context {
 		{
 			let nss = self.lock_nss();
 			f.field("nss.capacity()", &nss.capacity()).field("nss.length()", &nss.len());
+		}
+		f.finish()
+	}
+}
+
+impl fmt::UpperHex for Context {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		let mut f = f.debug_set();
+		#[cfg(feature = "shared_ns")]
+		{
+			let nss = self.lock_nss();
+			for item in nss.iter() {
+				f.entry(&(RcPtr::strong_count(&item) - 1, &*item));
+			}
 		}
 		f.finish()
 	}
