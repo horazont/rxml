@@ -500,12 +500,21 @@ impl Lexer {
 		self.last_token_end = self.ctr.wrapping_sub(without);
 	}
 
+	#[inline]
+	fn prep_scratchpad(&mut self) {
+		if self.scratchpad.capacity() < self.opts.max_token_length {
+			// unless there is a bug, we should never exceed the capacity requested by max_token_length, so we go with reserve_exact
+			self.scratchpad.reserve_exact(self.opts.max_token_length - self.scratchpad.capacity())
+		}
+	}
+
 	fn read_validated<'r, 'x, R: CodepointRead, S: CharSelector>(&mut self, r: &'r mut R, selector: &'x S, limit: usize) -> Result<Endpoint> {
 		let remaining = match limit.checked_sub(self.scratchpad.len()) {
 			None => return Ok(Endpoint::Limit),
 			Some(v) => v,
 		};
 		let old_len = self.scratchpad.len();
+		self.prep_scratchpad();
 		let result = read::read_validated(
 			r,
 			selector,
@@ -701,6 +710,7 @@ impl Lexer {
 					},
 					ch => if CLASS_XML_NAMESTART.select(ch) {
 						// add the first character to the scratchpad, because read_single does not do that
+						self.prep_scratchpad();
 						self.scratchpad.push_str(utf8ch.as_str());
 						Ok(ST(
 							State::Element{
@@ -776,6 +786,7 @@ impl Lexer {
 				Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, ch as u32, false)))
 			} else {
 				// nothing special, push to scratchpad and return to initial content state
+				self.prep_scratchpad();
 				self.scratchpad.push_str(utf8ch.as_str());
 				Ok(ST(
 					State::Content(ContentState::Initial),
@@ -820,6 +831,7 @@ impl Lexer {
 		} else if ch == ']' {
 			// sequence was broken, but careful! this could just be `]]]]]]]>` sequence!
 			// those we need to treat the same, no matter whether inside or outside CDATA the previously found ] is moved to the scratchpad and we return to this state
+			self.prep_scratchpad();
 			self.scratchpad.push_str("]");
 			Ok(ST(
 				State::Content(ContentState::MaybeCDataEnd(in_cdata, nend)),
@@ -829,6 +841,7 @@ impl Lexer {
 			// sequence was broken
 			// the token string constant is utf8 (ascii even), we’re safe.
 			let encountered = unsafe { std::str::from_utf8_unchecked(&TOK_XML_CDATA_END[..nend]) };
+			self.prep_scratchpad();
 			self.scratchpad.push_str(encountered);
 			if in_cdata {
 				if CLASS_XML_NONCHAR.select(ch) {
@@ -836,6 +849,7 @@ impl Lexer {
 					Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, ch as u32, false)))
 				} else {
 					// broken sequence inside cdata section, that’s fine; just push whatever we read to the scratchpad and move on
+					// no need for prep, we pushed above already
 					self.scratchpad.push_str(utf8ch.as_str());
 					Ok(ST(
 						State::Content(ContentState::CDataSection),
@@ -861,6 +875,7 @@ impl Lexer {
 				match utf8ch.to_char() {
 					'\n' => {
 						// CRLF sequence, only insert the \n to the scratchpad.
+						self.prep_scratchpad();
 						self.scratchpad.push_str("\n");
 						// return to the content state and curse a bit
 						Ok(ST(
@@ -874,6 +889,7 @@ impl Lexer {
 					},
 					'\r' => {
 						// double CR, so this may still be followed by an LF; but the first CR gets converted to LF
+						self.prep_scratchpad();
 						self.scratchpad.push_str("\n");
 						// stay in the same state, we may still get an LF here.
 						Ok(ST(
@@ -883,6 +899,7 @@ impl Lexer {
 					},
 					ch => {
 						// we read a single CR, so we push a \n to the scratchpad and hope for the best
+						self.prep_scratchpad();
 						self.scratchpad.push_str("\n");
 						if in_cdata {
 							// only special thing in CDATA is ']'
@@ -893,6 +910,7 @@ impl Lexer {
 								))
 							} else if !CLASS_XML_NONCHAR.select(ch) {
 								// ^ but of course we still need to check for a valid char. Thanks afl.
+								// no need for prep as we pushed above already
 								self.scratchpad.push_str(utf8ch.as_str());
 								Ok(ST(
 									State::Content(ContentState::CDataSection),
@@ -991,6 +1009,7 @@ impl Lexer {
 			},
 			ch if CLASS_XML_NAMESTART.select(ch) => {
 				// write the char to scratchpad because it’ll be needed.
+				self.prep_scratchpad();
 				self.scratchpad.push_str(utf8ch.as_str());
 				Ok(ElementState::Name)
 			},
@@ -1025,6 +1044,7 @@ impl Lexer {
 				))
 			},
 			'\t' | '\n' => {
+				self.prep_scratchpad();
 				self.scratchpad.push_str(" ");
 				Ok(ST(
 					State::Element{
@@ -1069,6 +1089,7 @@ impl Lexer {
 					if !CLASS_XML_NAMESTART.select(ch) {
 						Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_NAME, ch, None)))
 					} else {
+						self.prep_scratchpad();
 						self.scratchpad.push_str(utf8ch.as_str());
 						// continue in the same state; the branch below will be taken next and read_validated will take care of it if we’re done already
 						Ok(ST(
@@ -1149,6 +1170,7 @@ impl Lexer {
 				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_ATTVAL)?;
 				if utf8ch.to_char() == '\r' {
 					// push the space, continue with CRLF
+					self.prep_scratchpad();
 					self.scratchpad.push_str(" ");
 					Ok(ST(
 						State::Element{
