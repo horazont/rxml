@@ -25,10 +25,13 @@ times.
 */
 
 use std::ops::Deref;
+use std::fmt;
+use std::convert::TryFrom;
 use std::borrow::{Borrow, ToOwned, Cow};
 use crate::selectors;
 use crate::selectors::{CharSelector, CodepointRanges};
 use crate::error::{NWFError, WFError, ERRCTX_UNKNOWN};
+use smartstring::alias::String as SmartString;
 
 static CDATA_ANTI_SELECTOR: CodepointRanges = CodepointRanges(selectors::INVALID_XML_CDATA_RANGES);
 
@@ -101,7 +104,7 @@ fn validate_cdata(s: &str) -> Result<(), WFError> {
 /// [5]  Name          ::= NameStartChar (NameChar)*
 /// ```
 #[derive(Hash, PartialEq, Debug, Clone)]
-pub struct Name(String);
+pub struct Name(SmartString);
 
 impl Name {
 	/// Wrap a given [`String`] in a [`Name`].
@@ -109,8 +112,20 @@ impl Name {
 	/// This function enforces that the given string conforms to the `Name`
 	/// production of XML 1.0. If those conditions are not met, an error is
 	/// returned.
-	pub fn from_string(s: String) -> Result<Name, WFError> {
-		validate_name(s.as_str())?;
+	pub fn from_string<T: Into<String>>(s: T) -> Result<Name, WFError> {
+		let s = s.into();
+		validate_name(&s)?;
+		Ok(Name(s.into()))
+	}
+
+	/// Wrap a given [`smartstring::SmartString`] in a [`Name`].
+	///
+	/// This function enforces that the given string conforms to the `Name`
+	/// production of XML 1.0. If those conditions are not met, an error is
+	/// returned.
+	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Name, WFError> {
+		let s = s.into();
+		validate_name(&s)?;
 		Ok(Name(s))
 	}
 
@@ -122,7 +137,7 @@ impl Name {
 	pub fn from_str<T: AsRef<str>>(s: T) -> Result<Name, WFError> {
 		let s = s.as_ref();
 		validate_name(s)?;
-		Ok(Name(s.to_string()))
+		Ok(Name(s.into()))
 	}
 
 	/// Split the name at a colon, if it exists.
@@ -137,7 +152,7 @@ impl Name {
 	pub fn split_name(self) -> Result<(Option<NCName>, NCName), NWFError> {
 		let mut name = self.0;
 		let colon_pos = match name.find(':') {
-			None => return Ok((None, unsafe { NCName::from_string_unchecked(name) })),
+			None => return Ok((None, unsafe { NCName::from_smartstring_unchecked(name) })),
 			Some(pos) => pos,
 		};
 		if colon_pos == 0 || colon_pos == name.len() - 1 {
@@ -164,20 +179,32 @@ impl Name {
 		debug_assert!(prefix.len() > 0);
 		debug_assert!(localname.len() > 0);
 		Ok((
-			Some(unsafe { NCName::from_string_unchecked(prefix) }),
-			unsafe { NCName::from_string_unchecked(localname) },
+			Some(unsafe { NCName::from_smartstring_unchecked(prefix) }),
+			unsafe { NCName::from_smartstring_unchecked(localname) },
 		))
 	}
 
 	/// Consume the Name and return the internal String
 	pub fn as_string(self) -> String {
-		self.0
+		self.0.into()
 	}
 
 	/// Construct a Name without enforcing anything
 	#[doc(hidden)]
-	pub unsafe fn from_string_unchecked(s: String) -> Name {
-		Name(s)
+	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> Name {
+		Name(s.as_ref().into())
+	}
+
+	/// Construct a Name without enforcing anything
+	#[doc(hidden)]
+	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> Name {
+		Name(s.into().into())
+	}
+
+	/// Construct a Name without enforcing anything
+	#[doc(hidden)]
+	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> Name {
+		Name(s.into())
 	}
 }
 
@@ -185,38 +212,62 @@ impl Eq for Name {}
 
 impl PartialEq<Name> for &str {
 	fn eq(&self, other: &Name) -> bool {
-		return self == &other.0.as_str()
-	}
-}
-
-impl PartialEq<String> for Name {
-	fn eq(&self, other: &String) -> bool {
-		return self.0 == *other
+		return self == &other.0
 	}
 }
 
 impl PartialEq<&str> for Name {
 	fn eq(&self, other: &&str) -> bool {
-		return self.0.as_str() == *other
+		return &self.0 == *other
+	}
+}
+
+impl PartialEq<Name> for str {
+	fn eq(&self, other: &Name) -> bool {
+		return self == other.0
 	}
 }
 
 impl PartialEq<str> for Name {
 	fn eq(&self, other: &str) -> bool {
-		return self.0.as_str() == other
+		return self.0 == other
+	}
+}
+
+impl PartialEq<Name> for &NameStr {
+	fn eq(&self, other: &Name) -> bool {
+		return self.0 == other.0
+	}
+}
+
+impl PartialEq<&NameStr> for Name {
+	fn eq(&self, other: &&NameStr) -> bool {
+		return &self.0 == &other.0
+	}
+}
+
+impl PartialEq<Name> for NameStr {
+	fn eq(&self, other: &Name) -> bool {
+		return self.0 == other.0
+	}
+}
+
+impl PartialEq<NameStr> for Name {
+	fn eq(&self, other: &NameStr) -> bool {
+		return self.0 == other.0
 	}
 }
 
 impl Deref for Name {
-	type Target = String;
+	type Target = SmartString;
 
-	fn deref(&self) -> &String {
+	fn deref(&self) -> &SmartString {
 		&self.0
 	}
 }
 
-impl AsRef<String> for Name {
-	fn as_ref(&self) -> &String {
+impl AsRef<SmartString> for Name {
+	fn as_ref(&self) -> &SmartString {
 		&self.0
 	}
 }
@@ -227,14 +278,14 @@ impl AsRef<NameStr> for Name {
 	}
 }
 
-impl Borrow<String> for Name {
-	fn borrow(&self) -> &String {
+impl AsRef<str> for Name {
+	fn as_ref(&self) -> &str {
 		&self.0
 	}
 }
 
-impl Borrow<str> for Name {
-	fn borrow(&self) -> &str {
+impl Borrow<SmartString> for Name {
+	fn borrow(&self) -> &SmartString {
 		&self.0
 	}
 }
@@ -245,9 +296,69 @@ impl Borrow<NameStr> for Name {
 	}
 }
 
+impl Borrow<str> for Name {
+	fn borrow(&self) -> &str {
+		&self.0
+	}
+}
+
 impl From<Name> for String {
 	fn from(other: Name) -> String {
+		other.0.into()
+	}
+}
+
+impl From<Name> for SmartString {
+	fn from(other: Name) -> SmartString {
 		other.0
+	}
+}
+
+impl<'x> From<Name> for Cow<'x, NameStr> {
+	fn from(other: Name) -> Cow<'x, NameStr> {
+		Cow::Owned(other)
+	}
+}
+
+impl<'x> From<Cow<'x, NameStr>> for Name {
+	fn from(other: Cow<'x, NameStr>) -> Name {
+		other.into_owned()
+	}
+}
+
+impl From<NCName> for Name {
+	fn from(other: NCName) -> Name {
+		Name(other.0)
+	}
+}
+
+impl TryFrom<SmartString> for Name  {
+	type Error = WFError;
+
+	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
+		Name::from_smartstring(other)
+	}
+}
+
+impl TryFrom<String> for Name  {
+	type Error = WFError;
+
+	fn try_from(other: String) -> Result<Self, Self::Error> {
+		Name::from_string(other)
+	}
+}
+
+impl TryFrom<&str> for Name  {
+	type Error = WFError;
+
+	fn try_from(other: &str) -> Result<Self, Self::Error> {
+		Name::from_str(other)
+	}
+}
+
+impl fmt::Display for Name {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		f.write_str(&self.0 as &str)
 	}
 }
 
@@ -288,11 +399,41 @@ impl NameStr {
 
 impl Eq for NameStr {}
 
+impl PartialEq<NameStr> for &str {
+	fn eq(&self, other: &NameStr) -> bool {
+		return *self == &other.0
+	}
+}
+
+impl PartialEq<&str> for NameStr {
+	fn eq(&self, other: &&str) -> bool {
+		return &self.0 == *other
+	}
+}
+
+impl PartialEq<NameStr> for str {
+	fn eq(&self, other: &NameStr) -> bool {
+		return self == &other.0
+	}
+}
+
+impl PartialEq<str> for NameStr {
+	fn eq(&self, other: &str) -> bool {
+		return &self.0 == other
+	}
+}
+
 impl Deref for NameStr {
 	type Target = str;
 
 	fn deref(&self) -> &str {
 		&self.0
+	}
+}
+
+impl AsRef<NameStr> for NameStr {
+	fn as_ref(&self) -> &Self {
+		&self
 	}
 }
 
@@ -305,6 +446,38 @@ impl AsRef<str> for NameStr {
 impl AsRef<[u8]> for NameStr {
 	fn as_ref(&self) -> &[u8] {
 		self.0.as_bytes()
+	}
+}
+
+impl ToOwned for NameStr {
+	type Owned = Name;
+
+	fn to_owned(&self) -> Self::Owned {
+		self.into()
+	}
+}
+
+impl From<&NameStr> for String {
+	fn from(other: &NameStr) -> String {
+		other.0.to_string()
+	}
+}
+
+impl From<&NameStr> for SmartString {
+	fn from(other: &NameStr) -> SmartString {
+		other.0.into()
+	}
+}
+
+impl From<&NameStr> for Name {
+	fn from(other: &NameStr) -> Name {
+		unsafe { Name::from_str_unchecked(&other.0) }
+	}
+}
+
+impl fmt::Display for NameStr {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		f.write_str(&self.0)
 	}
 }
 
@@ -326,7 +499,7 @@ impl AsRef<[u8]> for NameStr {
 /// [4] NCName ::= Name - (Char* ':' Char*)  /* An XML Name, minus the ":" */
 /// ```
 #[derive(Hash, PartialEq, Debug, Clone)]
-pub struct NCName(String);
+pub struct NCName(SmartString);
 
 impl NCName {
 	/// Wrap a given [`String`] in a [`NCName`].
@@ -334,8 +507,20 @@ impl NCName {
 	/// This function enforces that the given string conforms to the `NCName`
 	/// production of Namespaces in XML 1.0. If those conditions are not met,
 	/// an error is returned.
-	pub fn from_string(s: String) -> Result<NCName, WFError> {
-		validate_ncname(s.as_str())?;
+	pub fn from_string<T: Into<String>>(s: T) -> Result<NCName, WFError> {
+		let s = s.into();
+		validate_ncname(&s)?;
+		Ok(NCName(s.into()))
+	}
+
+	/// Wrap a given [`smartstring::SmartString`] in a [`NCName`].
+	///
+	/// This function enforces that the given string conforms to the `NCName`
+	/// production of Namespaces in XML 1.0. If those conditions are not met,
+	/// an error is returned.
+	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<NCName, WFError> {
+		let s = s.into();
+		validate_ncname(&s)?;
 		Ok(NCName(s))
 	}
 
@@ -347,7 +532,7 @@ impl NCName {
 	pub fn from_str<T: AsRef<str>>(s: T) -> Result<NCName, WFError> {
 		let s = s.as_ref();
 		validate_ncname(s)?;
-		Ok(NCName(s.to_string()))
+		Ok(NCName(s.into()))
 	}
 
 	/// Compose two [`NCName`] objects to one [`Name`], separating them with
@@ -367,7 +552,7 @@ impl NCName {
 	/// assert_eq!(prefix.add_suffix(&localname), "xmlns:stream");
 	/// ```
 	pub fn add_suffix(self, suffix: &NCName) -> Name {
-		let mut s = self.0;
+		let mut s: String = self.0.into();
 		s.reserve(suffix.len() + 1);
 		s.push_str(":");
 		s.push_str(suffix.as_str());
@@ -375,18 +560,30 @@ impl NCName {
 	}
 
 	pub fn as_name(self) -> Name {
-		unsafe { Name::from_string_unchecked(self.0) }
+		unsafe { Name::from_smartstring_unchecked(self.0) }
 	}
 
 	/// Consume the NCName and return the internal String
 	pub fn as_string(self) -> String {
-		self.0
+		self.0.into()
 	}
 
 	/// Construct an NCName without enforcing anything
 	#[doc(hidden)]
-	pub unsafe fn from_string_unchecked(s: String) -> NCName {
-		NCName(s)
+	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> NCName {
+		NCName(s.as_ref().into())
+	}
+
+	/// Construct an NCName without enforcing anything
+	#[doc(hidden)]
+	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> NCName {
+		NCName(s.into().into())
+	}
+
+	/// Construct an NCName without enforcing anything
+	#[doc(hidden)]
+	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> NCName {
+		NCName(s.into())
 	}
 }
 
@@ -394,38 +591,62 @@ impl Eq for NCName {}
 
 impl PartialEq<NCName> for &str {
 	fn eq(&self, other: &NCName) -> bool {
-		return self == &other.0.as_str()
-	}
-}
-
-impl PartialEq<String> for NCName {
-	fn eq(&self, other: &String) -> bool {
-		return self.0 == *other
+		return self == &other.0
 	}
 }
 
 impl PartialEq<&str> for NCName {
 	fn eq(&self, other: &&str) -> bool {
-		return self.0.as_str() == *other
+		return self.0 == *other
+	}
+}
+
+impl PartialEq<NCName> for str {
+	fn eq(&self, other: &NCName) -> bool {
+		return self == &other.0
 	}
 }
 
 impl PartialEq<str> for NCName {
 	fn eq(&self, other: &str) -> bool {
-		return self.0.as_str() == other
+		return self.0 == *other
+	}
+}
+
+impl PartialEq<NCName> for &NCNameStr {
+	fn eq(&self, other: &NCName) -> bool {
+		return self.0 == other.0
+	}
+}
+
+impl PartialEq<&NCNameStr> for NCName {
+	fn eq(&self, other: &&NCNameStr) -> bool {
+		return self.0 == other.0
+	}
+}
+
+impl PartialEq<NCName> for NCNameStr {
+	fn eq(&self, other: &NCName) -> bool {
+		return self.0 == other.0
+	}
+}
+
+impl PartialEq<NCNameStr> for NCName {
+	fn eq(&self, other: &NCNameStr) -> bool {
+		return self.0 == other.0
 	}
 }
 
 impl Deref for NCName {
-	type Target = String;
+	type Target = SmartString;
 
-	fn deref(&self) -> &String {
+	fn deref(&self) -> &SmartString {
 		&self.0
 	}
 }
 
-impl AsRef<String> for NCName {
-	fn as_ref(&self) -> &String {
+impl AsRef<SmartString> for NCName {
+	fn as_ref(&self) -> &SmartString {
 		&self.0
 	}
 }
@@ -436,14 +657,14 @@ impl AsRef<NCNameStr> for NCName {
 	}
 }
 
-impl Borrow<String> for NCName {
-	fn borrow(&self) -> &String {
+impl AsRef<str> for NCName {
+	fn as_ref(&self) -> &str {
 		&self.0
 	}
 }
 
-impl Borrow<str> for NCName {
-	fn borrow(&self) -> &str {
+impl Borrow<SmartString> for NCName {
+	fn borrow(&self) -> &SmartString {
 		&self.0
 	}
 }
@@ -454,15 +675,63 @@ impl Borrow<NCNameStr> for NCName {
 	}
 }
 
-impl From<NCName> for Name {
-	fn from(other: NCName) -> Name {
-		Name(other.0)
+impl Borrow<str> for NCName {
+	fn borrow(&self) -> &str {
+		&self.0
 	}
 }
 
 impl From<NCName> for String {
 	fn from(other: NCName) -> String {
+		other.0.into()
+	}
+}
+
+impl From<NCName> for SmartString {
+	fn from(other: NCName) -> SmartString {
 		other.0
+	}
+}
+
+impl<'x> From<NCName> for Cow<'x, NCNameStr> {
+	fn from(other: NCName) -> Cow<'x, NCNameStr> {
+		Cow::Owned(other)
+	}
+}
+
+impl<'x> From<Cow<'x, NCNameStr>> for NCName {
+	fn from(other: Cow<'x, NCNameStr>) -> NCName {
+		other.into_owned()
+	}
+}
+
+impl TryFrom<SmartString> for NCName {
+	type Error = WFError;
+
+	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
+		NCName::from_smartstring(other)
+	}
+}
+
+impl TryFrom<String> for NCName {
+	type Error = WFError;
+
+	fn try_from(other: String) -> Result<Self, Self::Error> {
+		NCName::from_string(other)
+	}
+}
+
+impl TryFrom<&str> for NCName  {
+	type Error = WFError;
+
+	fn try_from(other: &str) -> Result<Self, Self::Error> {
+		NCName::from_str(other)
+	}
+}
+
+impl fmt::Display for NCName {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		f.write_str(&self.0 as &str)
 	}
 }
 
@@ -503,11 +772,41 @@ impl NCNameStr {
 
 impl Eq for NCNameStr {}
 
+impl PartialEq<NCNameStr> for &str {
+	fn eq(&self, other: &NCNameStr) -> bool {
+		return *self == &other.0
+	}
+}
+
+impl PartialEq<&str> for NCNameStr {
+	fn eq(&self, other: &&str) -> bool {
+		return &self.0 == *other
+	}
+}
+
+impl PartialEq<NCNameStr> for str {
+	fn eq(&self, other: &NCNameStr) -> bool {
+		return self == &other.0
+	}
+}
+
+impl PartialEq<str> for NCNameStr {
+	fn eq(&self, other: &str) -> bool {
+		return &self.0 == other
+	}
+}
+
 impl Deref for NCNameStr {
 	type Target = str;
 
 	fn deref(&self) -> &str {
 		&self.0
+	}
+}
+
+impl AsRef<NCNameStr> for NCNameStr {
+	fn as_ref(&self) -> &Self {
+		&self
 	}
 }
 
@@ -520,6 +819,38 @@ impl AsRef<str> for NCNameStr {
 impl AsRef<[u8]> for NCNameStr {
 	fn as_ref(&self) -> &[u8] {
 		self.0.as_bytes()
+	}
+}
+
+impl ToOwned for NCNameStr {
+	type Owned = NCName;
+
+	fn to_owned(&self) -> Self::Owned {
+		unsafe { NCName::from_str_unchecked(&self.0) }
+	}
+}
+
+impl From<&NCNameStr> for String {
+	fn from(other: &NCNameStr) -> String {
+		other.0.into()
+	}
+}
+
+impl From<&NCNameStr> for SmartString {
+	fn from(other: &NCNameStr) -> SmartString {
+		other.0.into()
+	}
+}
+
+impl From<&NCNameStr> for NCName {
+	fn from(other: &NCNameStr) -> NCName {
+		unsafe { NCName::from_str_unchecked(&other.0) }
+	}
+}
+
+impl fmt::Display for NCNameStr {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		f.write_str(&self.0)
 	}
 }
 
@@ -556,9 +887,21 @@ impl CData {
 	/// This function enforces that the chars in the string conform to `Char`
 	/// as defined in XML 1.0. If those conditions are not met, an error is
 	/// returned.
-	pub fn from_string(s: String) -> Result<CData, WFError> {
-		validate_cdata(s.as_str())?;
+	pub fn from_string<T: Into<String>>(s: T) -> Result<CData, WFError> {
+		let s = s.into();
+		validate_cdata(&s)?;
 		Ok(CData(s))
+	}
+
+	/// Wrap a given [`smartstring::SmartString`] in a [`CData`].
+	///
+	/// This function enforces that the chars in the string conform to `Char`
+	/// as defined in XML 1.0. If those conditions are not met, an error is
+	/// returned.
+	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<CData, WFError> {
+		let s = s.into();
+		validate_cdata(&s)?;
+		Ok(CData(s.into()))
 	}
 
 	/// Copy a given [`str`]-like into a new [`NCName`].
@@ -583,58 +926,70 @@ impl CData {
 
 	/// Construct a CData without checking anything.
 	#[doc(hidden)]
-	pub unsafe fn from_string_unchecked(s: String) -> CData {
-		CData(s)
+	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> CData {
+		CData(s.as_ref().into())
+	}
+
+	/// Construct a CData without checking anything.
+	#[doc(hidden)]
+	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> CData {
+		CData(s.into().into())
+	}
+
+	/// Construct a CData without checking anything.
+	#[doc(hidden)]
+	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> CData {
+		CData(s.into())
 	}
 }
 
 impl Eq for CData {}
 
-impl<'a> From<CData> for Cow<'a, CDataStr> {
-	fn from(s: CData) -> Cow<'a, CDataStr> {
-		Cow::Owned(s)
-	}
-}
-
 impl PartialEq<CData> for &str {
 	fn eq(&self, other: &CData) -> bool {
-		return self == &other.0.as_str()
-	}
-}
-
-impl PartialEq<String> for CData {
-	fn eq(&self, other: &String) -> bool {
-		return self.0 == *other
-	}
-}
-
-impl PartialEq<CData> for String {
-	fn eq(&self, other: &CData) -> bool {
-		return *self == other.0
+		return self == &other.0
 	}
 }
 
 impl PartialEq<&str> for CData {
 	fn eq(&self, other: &&str) -> bool {
-		return self.0.as_str() == *other
+		return self.0 == *other
+	}
+}
+
+impl PartialEq<CData> for str {
+	fn eq(&self, other: &CData) -> bool {
+		return self == &other.0
 	}
 }
 
 impl PartialEq<str> for CData {
 	fn eq(&self, other: &str) -> bool {
-		return self.0.as_str() == other
+		return self.0 == other
+	}
+}
+
+impl PartialEq<CData> for &CDataStr {
+	fn eq(&self, other: &CData) -> bool {
+		return &self.0 == &other.0
 	}
 }
 
 impl PartialEq<&CDataStr> for CData {
 	fn eq(&self, other: &&CDataStr) -> bool {
-		return self.0.as_str() == &other.0
+		return self.0 == &other.0
+	}
+}
+
+impl PartialEq<CData> for CDataStr {
+	fn eq(&self, other: &CData) -> bool {
+		return &self.0 == &other.0
 	}
 }
 
 impl PartialEq<CDataStr> for CData {
 	fn eq(&self, other: &CDataStr) -> bool {
-		return self.0.as_str() == &other.0
+		return self.0 == other.0
 	}
 }
 
@@ -658,14 +1013,14 @@ impl AsRef<CDataStr> for CData {
 	}
 }
 
-impl Borrow<String> for CData {
-	fn borrow(&self) -> &String {
+impl AsRef<str> for CData {
+	fn as_ref(&self) -> &str {
 		&self.0
 	}
 }
 
-impl Borrow<str> for CData {
-	fn borrow(&self) -> &str {
+impl Borrow<String> for CData {
+	fn borrow(&self) -> &String {
 		&self.0
 	}
 }
@@ -676,15 +1031,69 @@ impl Borrow<CDataStr> for CData {
 	}
 }
 
-impl From<CData> for Name {
-	fn from(other: CData) -> Name {
-		Name(other.0)
+impl Borrow<str> for CData {
+	fn borrow(&self) -> &str {
+		&self.0
 	}
 }
 
 impl From<CData> for String {
 	fn from(other: CData) -> String {
 		other.0
+	}
+}
+
+impl From<CData> for SmartString {
+	fn from(other: CData) -> SmartString {
+		other.0.into()
+	}
+}
+
+impl<'x> From<CData> for Cow<'x, CDataStr> {
+	fn from(other: CData) -> Cow<'x, CDataStr> {
+		Cow::Owned(other)
+	}
+}
+
+impl<'x> From<Cow<'x, CDataStr>> for CData {
+	fn from(other: Cow<'x, CDataStr>) -> CData {
+		other.into_owned()
+	}
+}
+
+impl From<CData> for Name {
+	fn from(other: CData) -> Name {
+		Name(other.0.into())
+	}
+}
+
+impl TryFrom<SmartString> for CData {
+	type Error = WFError;
+
+	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
+		CData::from_smartstring(other)
+	}
+}
+
+impl TryFrom<String> for CData {
+	type Error = WFError;
+
+	fn try_from(other: String) -> Result<Self, Self::Error> {
+		CData::from_string(other)
+	}
+}
+
+impl TryFrom<&str> for CData  {
+	type Error = WFError;
+
+	fn try_from(other: &str) -> Result<Self, Self::Error> {
+		CData::from_str(other)
+	}
+}
+
+impl fmt::Display for CData {
+	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+		f.write_str(&self.0)
 	}
 }
 
@@ -707,7 +1116,7 @@ impl CDataStr {
 	/// as defined in XML 1.0. If those conditions are not met, an error is
 	/// returned.
 	pub fn from_str<'x>(s: &'x str) -> Result<&'x CDataStr, WFError> {
-		validate_name(s)?;
+		validate_cdata(s)?;
 		Ok(unsafe { std::mem::transmute(s) })
 	}
 
@@ -724,11 +1133,41 @@ impl CDataStr {
 
 impl Eq for CDataStr {}
 
+impl PartialEq<CDataStr> for &str {
+	fn eq(&self, other: &CDataStr) -> bool {
+		return *self == &other.0
+	}
+}
+
+impl PartialEq<&str> for CDataStr {
+	fn eq(&self, other: &&str) -> bool {
+		return &self.0 == *other
+	}
+}
+
+impl PartialEq<CDataStr> for str {
+	fn eq(&self, other: &CDataStr) -> bool {
+		return self == &other.0
+	}
+}
+
+impl PartialEq<str> for CDataStr {
+	fn eq(&self, other: &str) -> bool {
+		return &self.0 == other
+	}
+}
+
 impl Deref for CDataStr {
 	type Target = str;
 
 	fn deref(&self) -> &str {
 		&self.0
+	}
+}
+
+impl AsRef<CDataStr> for CDataStr {
+	fn as_ref(&self) -> &Self {
+		&self
 	}
 }
 
@@ -752,15 +1191,21 @@ impl ToOwned for CDataStr {
 	}
 }
 
-impl PartialEq<str> for CDataStr {
-	fn eq(&self, other: &str) -> bool {
-		&self.0 == other
+impl From<&CDataStr> for String {
+	fn from(other: &CDataStr) -> String {
+		other.0.into()
 	}
 }
 
-impl PartialEq<CDataStr> for str {
-	fn eq(&self, other: &CDataStr) -> bool {
-		self == &other.0
+impl From<&CDataStr> for SmartString {
+	fn from(other: &CDataStr) -> SmartString {
+		other.0.into()
+	}
+}
+
+impl From<&CDataStr> for CData {
+	fn from(other: &CDataStr) -> CData {
+		unsafe { CData::from_str_unchecked(other) }
 	}
 }
 
@@ -773,5 +1218,10 @@ mod tests {
 		let nm = Name::from_str("foo:-bar").unwrap();
 		let result = nm.split_name();
 		assert!(matches!(result.err().unwrap(), NWFError::InvalidLocalName(_)));
+	}
+
+	#[test]
+	fn cdatastr_allows_slashes() {
+		CDataStr::from_str("http://www.w3.org/XML/1998/namespace").unwrap();
 	}
 }

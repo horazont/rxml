@@ -15,6 +15,7 @@ exclude = ["/fuzz", "/util", "/target"]
 
 [dependencies]
 weak-table = { version = "0.3", optional = true }
+smartstring = { version = "0.2" }
 
 [features]
 mt = []
