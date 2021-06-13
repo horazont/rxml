@@ -579,34 +579,36 @@ impl Lexer {
 		}
 	}
 
-	fn flush_scratchpad(&mut self) -> String {
-		let result = self.scratchpad.split_off(0);
-		debug_assert!(self.scratchpad.len() == 0);
+	fn flush_scratchpad<U, T: FnOnce(&str) -> U>(&mut self, conv: T) -> U {
+		let result = conv(&self.scratchpad);
+		self.scratchpad.clear();
 		result
 	}
 
 	fn flush_scratchpad_as_name(&mut self) -> Name {
-		let result = self.flush_scratchpad();
-		#[cfg(debug_assertions)]
-		{
-			return Name::from_string(result).unwrap();
-		}
-		#[cfg(not(debug_assertions))]
-		unsafe {
-			return Name::from_string_unchecked(result);
-		}
+		self.flush_scratchpad(|s| {
+			#[cfg(debug_assertions)]
+			{
+				Name::from_str(s).unwrap()
+			}
+			#[cfg(not(debug_assertions))]
+			unsafe {
+				Name::from_str_unchecked(s)
+			}
+		})
 	}
 
 	fn flush_scratchpad_as_cdata(&mut self) -> CData {
-		let result = self.flush_scratchpad();
-		#[cfg(debug_assertions)]
-		{
-			return CData::from_string(result).unwrap();
-		}
-		#[cfg(not(debug_assertions))]
-		unsafe {
-			return CData::from_string_unchecked(result);
-		}
+		self.flush_scratchpad(|s| {
+			#[cfg(debug_assertions)]
+			{
+				CData::from_str(s).unwrap()
+			}
+			#[cfg(not(debug_assertions))]
+			unsafe {
+				CData::from_str_unchecked(s)
+			}
+		})
 	}
 
 	fn maybe_flush_scratchpad_as_text(&mut self, without: usize) -> Option<Token> {
