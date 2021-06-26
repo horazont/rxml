@@ -113,8 +113,8 @@ impl<'x> BufferQueue<'x> {
 	/// Drop all buffered contents immediately
 	///
 	/// This will effectively reset the length to 0 and cause all future reads
-	/// to return either WouldBlock (if [`push_eof`] has not been called yet)
-	/// or eof.
+	/// to return either WouldBlock (if [`BufferQueue::push_eof`] has not been
+	/// called yet) or eof.
 	pub fn clear(&mut self) {
 		self.q.clear();
 		self.len = 0;
