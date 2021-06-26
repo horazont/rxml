@@ -756,6 +756,8 @@ impl Parser {
 				State::Document(substate) => self.parse_document(substate, r),
 				State::End => match self.read_token(r)? {
 					None => Ok(State::Eof),
+					// whitespace after the root element is explicitly allowed
+					Some(Token::Text(_, s)) if s.as_bytes().iter().all(|&c| c == b' ' || c == b'\t' || c == b'\n' || c == b'\r') => Ok(State::End),
 					Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 						ERRCTX_DOCEND,
 						tok.name(),
@@ -850,6 +852,7 @@ mod tests {
 	use super::*;
 	use std::io;
 	use crate::lexer::TokenMetrics;
+	use std::convert::TryInto;
 
 	const TEST_NS: &'static str = "urn:uuid:4e1c8b65-ae37-49f8-a250-c27d52827da9";
 	const TEST_NS2: &'static str = "urn:uuid:678ba034-6200-4ecd-803f-bbcbfa225236";
@@ -1519,5 +1522,63 @@ mod tests {
 		];
 		let err = parse_err(toks).unwrap();
 		assert!(matches!(err, Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(_))));
+	}
+
+	#[test]
+	fn parser_reject_element_after_root_element() {
+		let (evs, r) = parse(&[
+			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::ElementHeadStart(DM, Name::from_str("garbage").unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::ElementFootStart(DM, Name::from_str("garbage").unwrap()),
+			Token::ElementHFEnd(DM),
+		]);
+		let mut iter = evs.iter();
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(iter.next().is_none());
+		match r {
+			Err(Error::NotWellFormed(WFError::UnexpectedToken(_, _, _))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn parser_reject_text_after_root_element() {
+		let (evs, r) = parse(&[
+			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::Text(DM, "foo".try_into().unwrap()),
+		]);
+		let mut iter = evs.iter();
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(iter.next().is_none());
+		match r {
+			Err(Error::NotWellFormed(WFError::UnexpectedToken(_, _, _))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn parser_allow_whitespace_after_root_element() {
+		let (evs, r) = parse(&[
+			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::Text(DM, " \t\r\n".try_into().unwrap()),
+			Token::Text(DM, "\n\r\t ".try_into().unwrap()),
+		]);
+		let mut iter = evs.iter();
+		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
+		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(iter.next().is_none());
+		r.unwrap();
 	}
 }
