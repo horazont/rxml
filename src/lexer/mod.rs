@@ -378,7 +378,7 @@ impl LexerOptions {
 	/// The defaults are implementation-defined and should not be relied upon.
 	pub fn defaults() -> LexerOptions {
 		LexerOptions{
-			max_token_length: 65535,
+			max_token_length: 8192,
 		}
 	}
 
