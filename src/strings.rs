@@ -940,6 +940,13 @@ impl fmt::Display for NCNameStr {
 /// This is a Unicode scalar value, minus ASCII control characters except
 /// Tab (`\x09`), CR (`\x0d`) and LF (`\x0a`), the BOM (`\u{fffe}`) and
 /// whatever `\u{ffff}` is.
+///
+/// # Escaping
+///
+/// [`CData`] objects do not contain references or CDATA sections as those are
+/// expanded by the lexer. This implies that `CData` objects are not safe to
+/// just verbatimly copy into an XML document; additional escaping may be
+/// necessary.
 #[derive(Hash, PartialEq, Debug, Clone)]
 pub struct CData(String);
 
