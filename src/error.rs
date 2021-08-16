@@ -79,6 +79,8 @@ pub enum WFError {
 	ElementMismatch,
 }
 
+impl error::Error for WFError {}
+
 impl ErrorWithContext for WFError {
 	fn with_context(self, ctx: &'static str) -> WFError {
 		match self {
@@ -167,6 +169,8 @@ pub enum NWFError {
 	/// Declared namespace URI is empty
 	EmptyNamespaceUri,
 }
+
+impl error::Error for NWFError {}
 
 impl ErrorWithContext for NWFError {
 	fn with_context(self, ctx: &'static str) -> NWFError {
