@@ -190,19 +190,31 @@ impl Name {
 	}
 
 	/// Construct a Name without enforcing anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid Name.
 	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> Name {
 		Name(s.as_ref().into())
 	}
 
 	/// Construct a Name without enforcing anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid Name.
 	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> Name {
 		Name(s.into().into())
 	}
 
 	/// Construct a Name without enforcing anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid Name.
 	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> Name {
 		Name(s.into())
 	}
@@ -391,7 +403,11 @@ impl NameStr {
 	}
 
 	/// Construct a NameStr without enforcing anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid Name.
 	pub unsafe fn from_str_unchecked<'x>(s: &'x str) -> &'x NameStr {
 		std::mem::transmute(s)
 	}
@@ -569,19 +585,31 @@ impl NCName {
 	}
 
 	/// Construct an NCName without enforcing anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid NCName.
 	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> NCName {
 		NCName(s.as_ref().into())
 	}
 
 	/// Construct an NCName without enforcing anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid NCName.
 	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> NCName {
 		NCName(s.into().into())
 	}
 
 	/// Construct an NCName without enforcing anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid NCName.
 	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> NCName {
 		NCName(s.into())
 	}
@@ -764,7 +792,11 @@ impl NCNameStr {
 	}
 
 	/// Construct a NCNameStr without checking anything
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// a valid NCName.
 	pub unsafe fn from_str_unchecked<'x>(s: &'x str) -> &'x NCNameStr {
 		std::mem::transmute(s)
 	}
@@ -925,19 +957,31 @@ impl CData {
 	}
 
 	/// Construct a CData without checking anything.
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// valid CData.
 	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> CData {
 		CData(s.as_ref().into())
 	}
 
 	/// Construct a CData without checking anything.
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// valid CData.
 	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> CData {
 		CData(s.into().into())
 	}
 
 	/// Construct a CData without checking anything.
-	#[doc(hidden)]
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// valid CData.
 	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> CData {
 		CData(s.into())
 	}
@@ -1125,7 +1169,12 @@ impl CDataStr {
 		unsafe { CData::from_string_unchecked(self.0.to_string()) }
 	}
 
-	#[doc(hidden)]
+	/// Construct a CDataStr without checking anything
+	///
+	/// # Safety
+	///
+	/// The caller is responsible for ensuring that the passed data is in fact
+	/// valid CData.
 	pub unsafe fn from_str_unchecked<'x>(s: &'x str) -> &'x CDataStr {
 		std::mem::transmute(s)
 	}
