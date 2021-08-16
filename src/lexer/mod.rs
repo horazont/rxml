@@ -56,7 +56,7 @@ impl TokenMetrics {
 	}
 
 	// for use in parser unit tests
-	#[allow(dead_code)]
+    #[cfg(test)]
 	pub(crate) const fn new(start: usize, end: usize) -> TokenMetrics {
 		TokenMetrics{start: start, end: end}
 	}
