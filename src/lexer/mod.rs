@@ -2,8 +2,6 @@
 # XML 1.0 Lexer
 */
 // needed for trait bounds
-#[allow(unused_imports)]
-use std::io;
 use std::fmt;
 
 mod read;
@@ -1395,6 +1393,7 @@ pub trait Sink {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::io;
 	use std::fmt;
 	use std::error;
 	use crate::lexer::read::DecodingReader;
