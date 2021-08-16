@@ -22,11 +22,31 @@ times.
 
   Note that [`CData`] strings do not contain references or CDATA sections;
   those are expanded by the lexer.
+
+## Construction
+
+In general, values are constructed using the [`std::convert::TryInto`]
+mechanism, from other string types. Supported source types are:
+
+* [`String`] (copies for [`Name`] and [`NCName`], moves for [`CData`])
+* [`smartstring::alias::String`] (copies for [`CData`], moves for [`Name`] and [`NCName])
+* [`str`] (copies for all types except the slice types)
+
+In addition, the following conversions can be done without extra checking and
+are possible through `.into()`:
+
+* [`NCName`] to [`Name`]
+* [`NCName`] to [`CData`]
+* [`Name`] to [`CData`]
+
+(and likewise for the corresponding Str types)
+
+The inverse directions are only available through `try_into`.
 */
 
 use std::ops::Deref;
 use std::fmt;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::borrow::{Borrow, ToOwned, Cow};
 use crate::selectors;
 use crate::selectors::{CharSelector, CodepointRanges};
@@ -112,10 +132,9 @@ impl Name {
 	/// This function enforces that the given string conforms to the `Name`
 	/// production of XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_string<T: Into<String>>(s: T) -> Result<Name, WFError> {
-		let s = s.into();
-		validate_name(&s)?;
-		Ok(Name(s.into()))
+		s.into().try_into()
 	}
 
 	/// Wrap a given [`smartstring::SmartString`] in a [`Name`].
@@ -123,10 +142,9 @@ impl Name {
 	/// This function enforces that the given string conforms to the `Name`
 	/// production of XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Name, WFError> {
-		let s = s.into();
-		validate_name(&s)?;
-		Ok(Name(s))
+		s.into().try_into()
 	}
 
 	/// Copy a given [`str`]-like into a new [`Name`].
@@ -134,10 +152,9 @@ impl Name {
 	/// This function enforces that the given string conforms to the `Name`
 	/// production of XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_str<T: AsRef<str>>(s: T) -> Result<Name, WFError> {
-		let s = s.as_ref();
-		validate_name(s)?;
-		Ok(Name(s.into()))
+		s.as_ref().try_into()
 	}
 
 	/// Split the name at a colon, if it exists.
@@ -348,7 +365,8 @@ impl TryFrom<SmartString> for Name  {
 	type Error = WFError;
 
 	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
-		Name::from_smartstring(other)
+		validate_name(&other)?;
+		Ok(Name(other))
 	}
 }
 
@@ -356,7 +374,8 @@ impl TryFrom<String> for Name  {
 	type Error = WFError;
 
 	fn try_from(other: String) -> Result<Self, Self::Error> {
-		Name::from_string(other)
+		validate_name(&other)?;
+		Ok(Name(other.into()))
 	}
 }
 
@@ -364,7 +383,8 @@ impl TryFrom<&str> for Name  {
 	type Error = WFError;
 
 	fn try_from(other: &str) -> Result<Self, Self::Error> {
-		Name::from_str(other)
+		validate_name(other)?;
+		Ok(Name(other.into()))
 	}
 }
 
@@ -392,9 +412,9 @@ impl NameStr {
 	/// This function enforces that the given string conforms to the `Name`
 	/// production of XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_str<'x>(s: &'x str) -> Result<&'x NameStr, WFError> {
-		validate_name(s)?;
-		Ok(unsafe { std::mem::transmute(s) })
+		s.try_into()
 	}
 
 	/// Copy the NameStr into a new Name.
@@ -488,6 +508,15 @@ impl From<&NameStr> for SmartString {
 impl From<&NameStr> for Name {
 	fn from(other: &NameStr) -> Name {
 		unsafe { Name::from_str_unchecked(&other.0) }
+	}
+}
+
+impl<'x> TryFrom<&'x str> for &'x NameStr {
+	type Error = WFError;
+
+	fn try_from(other: &'x str) -> Result<Self, Self::Error> {
+		validate_name(other)?;
+		Ok(unsafe { std::mem::transmute(other) })
 	}
 }
 
@@ -781,6 +810,7 @@ impl NCNameStr {
 	/// This function enforces that the given string conforms to the `NCName`
 	/// production of Namespaces in XML 1.0. If those conditions are not met,
 	/// an error is returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_str<'x>(s: &'x str) -> Result<&'x NCNameStr, WFError> {
 		validate_name(s)?;
 		Ok(unsafe { std::mem::transmute(s) })
@@ -919,10 +949,9 @@ impl CData {
 	/// This function enforces that the chars in the string conform to `Char`
 	/// as defined in XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_string<T: Into<String>>(s: T) -> Result<CData, WFError> {
-		let s = s.into();
-		validate_cdata(&s)?;
-		Ok(CData(s))
+		s.into().try_into()
 	}
 
 	/// Wrap a given [`smartstring::SmartString`] in a [`CData`].
@@ -930,10 +959,9 @@ impl CData {
 	/// This function enforces that the chars in the string conform to `Char`
 	/// as defined in XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<CData, WFError> {
-		let s = s.into();
-		validate_cdata(&s)?;
-		Ok(CData(s.into()))
+		s.into().try_into()
 	}
 
 	/// Copy a given [`str`]-like into a new [`NCName`].
@@ -941,10 +969,9 @@ impl CData {
 	/// This function enforces that the chars in the string conform to `Char`
 	/// as defined in XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_str<T: AsRef<str>>(s: T) -> Result<CData, WFError> {
-		let s = s.as_ref();
-		validate_cdata(s)?;
-		Ok(CData(s.to_string()))
+		s.as_ref().try_into()
 	}
 
 	pub fn as_cdata_str(&self) -> &CDataStr {
@@ -1115,7 +1142,8 @@ impl TryFrom<SmartString> for CData {
 	type Error = WFError;
 
 	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
-		CData::from_smartstring(other)
+		validate_cdata(&other)?;
+		Ok(CData(other.into()))
 	}
 }
 
@@ -1123,7 +1151,8 @@ impl TryFrom<String> for CData {
 	type Error = WFError;
 
 	fn try_from(other: String) -> Result<Self, Self::Error> {
-		CData::from_string(other)
+		validate_cdata(&other)?;
+		Ok(CData(other))
 	}
 }
 
@@ -1131,7 +1160,8 @@ impl TryFrom<&str> for CData  {
 	type Error = WFError;
 
 	fn try_from(other: &str) -> Result<Self, Self::Error> {
-		CData::from_str(other)
+		validate_cdata(other)?;
+		Ok(CData(other.to_string()))
 	}
 }
 
@@ -1159,9 +1189,9 @@ impl CDataStr {
 	/// This function enforces that the chars in the string conform to `Char`
 	/// as defined in XML 1.0. If those conditions are not met, an error is
 	/// returned.
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 	pub fn from_str<'x>(s: &'x str) -> Result<&'x CDataStr, WFError> {
-		validate_cdata(s)?;
-		Ok(unsafe { std::mem::transmute(s) })
+		s.try_into()
 	}
 
 	/// Copy the CDataStr into a new CData
@@ -1258,19 +1288,28 @@ impl From<&CDataStr> for CData {
 	}
 }
 
+impl<'x> TryFrom<&'x str> for &'x CDataStr {
+	type Error = WFError;
+
+	fn try_from(other: &'x str) -> Result<Self, Self::Error> {
+		validate_cdata(other)?;
+		Ok(unsafe { std::mem::transmute(other) })
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
 
 	#[test]
 	fn split_name_rejects_localname_with_non_namestart_first_char() {
-		let nm = Name::from_str("foo:-bar").unwrap();
+		let nm: Name = "foo:-bar".try_into().unwrap();
 		let result = nm.split_name();
 		assert!(matches!(result.err().unwrap(), NWFError::InvalidLocalName(_)));
 	}
 
 	#[test]
 	fn cdatastr_allows_slashes() {
-		CDataStr::from_str("http://www.w3.org/XML/1998/namespace").unwrap();
+		let _: &CDataStr = "http://www.w3.org/XML/1998/namespace".try_into().unwrap();
 	}
 }

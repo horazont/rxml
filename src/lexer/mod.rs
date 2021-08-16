@@ -2,6 +2,7 @@
 # XML 1.0 Lexer
 */
 // needed for trait bounds
+use std::convert::TryInto;
 use std::fmt;
 
 mod read;
@@ -596,7 +597,7 @@ impl Lexer {
 		self.flush_scratchpad(|s| {
 			#[cfg(debug_assertions)]
 			{
-				Name::from_str(s).unwrap()
+				s.try_into().unwrap()
 			}
 			#[cfg(not(debug_assertions))]
 			unsafe {
@@ -609,7 +610,7 @@ impl Lexer {
 		self.flush_scratchpad(|s| {
 			#[cfg(debug_assertions)]
 			{
-				CData::from_str(s).unwrap()
+				s.try_into().unwrap()
 			}
 			#[cfg(not(debug_assertions))]
 			unsafe {
@@ -1536,7 +1537,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[1], Token::Name(TokenMetrics{start: 6, end: 13}, Name::from_str("version").unwrap()));
+		assert_eq!(sink.dest[1], Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
 	}
 
 	#[test]
@@ -1556,7 +1557,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, CData::from_str("1.0").unwrap()));
+		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
 	}
 
 	#[test]
@@ -1566,7 +1567,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, CData::from_str("1.0").unwrap()));
+		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
 	}
 
 	#[test]
@@ -1588,12 +1589,12 @@ mod tests {
 
 		assert!(result.is_ok());
 		assert_eq!(sink.dest[0], Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(sink.dest[1], Token::Name(TokenMetrics{start: 6, end: 13}, Name::from_str("version").unwrap()));
+		assert_eq!(sink.dest[1], Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
 		assert_eq!(sink.dest[2], Token::Eq(TokenMetrics{start: 13, end: 14}));
-		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, CData::from_str("1.0").unwrap()));
-		assert_eq!(sink.dest[4], Token::Name(TokenMetrics{start: 20, end: 28}, Name::from_str("encoding").unwrap()));
+		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
+		assert_eq!(sink.dest[4], Token::Name(TokenMetrics{start: 20, end: 28}, "encoding".try_into().unwrap()));
 		assert_eq!(sink.dest[5], Token::Eq(TokenMetrics{start: 28, end: 29}));
-		assert_eq!(sink.dest[6], Token::AttributeValue(TokenMetrics{start: 29, end: 36}, CData::from_str("utf-8").unwrap()));
+		assert_eq!(sink.dest[6], Token::AttributeValue(TokenMetrics{start: 29, end: 36}, "utf-8".try_into().unwrap()));
 		assert_eq!(sink.dest[7], Token::XMLDeclEnd(TokenMetrics{start: 36, end: 38}));
 	}
 
@@ -1604,7 +1605,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, Name::from_str("element").unwrap()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
 	}
 
 	#[test]
@@ -1614,7 +1615,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, Name::from_str("element").unwrap()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
 		assert_eq!(sink.dest[1], Token::ElementHeadClose(TokenMetrics{start: 8, end: 10}));
 	}
 
@@ -1625,7 +1626,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, Name::from_str("element").unwrap()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
 		assert_eq!(sink.dest[1], Token::ElementHFEnd(TokenMetrics{start: 8, end: 9}));
 	}
 
@@ -1636,9 +1637,9 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, Name::from_str("element").unwrap()));
+		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
 		assert_eq!(sink.dest[1], Token::ElementHFEnd(TokenMetrics{start: 8, end: 9}));
-		assert_eq!(sink.dest[2], Token::ElementFootStart(TokenMetrics{start: 9, end: 18}, Name::from_str("element").unwrap()));
+		assert_eq!(sink.dest[2], Token::ElementFootStart(TokenMetrics{start: 9, end: 18}, "element".try_into().unwrap()));
 		assert_eq!(sink.dest[3], Token::ElementHFEnd(TokenMetrics{start: 18, end: 19}));
 	}
 
@@ -1651,18 +1652,18 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "element"));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 9, end: 10}, Name::from_str("x").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 9, end: 10}, "x".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 11, end: 16}, CData::from_str("foo").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 17, end: 18}, Name::from_str("y").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 11, end: 16}, "foo".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 17, end: 18}, "y".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 19, end: 24}, CData::from_str("bar").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 25, end: 30}, Name::from_str("xmlns").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 19, end: 24}, "bar".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 25, end: 30}, "xmlns".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 31, end: 36}, CData::from_str("baz").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 37, end: 46}, Name::from_str("xmlns:abc").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 31, end: 36}, "baz".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 37, end: 46}, "xmlns:abc".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 47, end: 54}, CData::from_str("fnord").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 47, end: 54}, "fnord".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 54, end: 55}));
 	}
 
@@ -1676,7 +1677,7 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 18}, CData::from_str("Hello World!").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 18}, "Hello World!".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(_, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
@@ -1691,7 +1692,7 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6})));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 11}, CData::from_str("&").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 11}, "&".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 11, end: 17}, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
@@ -1706,7 +1707,7 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6})));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 11}, CData::from_str("<").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 11}, "<".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 11, end: 17}, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
@@ -1721,7 +1722,7 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6})));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 12}, CData::from_str(">").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 12}, ">".try_into().unwrap()));
 		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 12, end: 18}, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
@@ -1793,7 +1794,7 @@ mod tests {
 		iter.next().unwrap();
 		iter.next().unwrap();
 		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 9, end: 10}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 10, end: 17}, CData::from_str("&").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 10, end: 17}, "&".try_into().unwrap()));
 	}
 
 	#[test]
@@ -1807,7 +1808,7 @@ mod tests {
 		iter.next().unwrap();
 		iter.next().unwrap();
 		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 9, end: 10}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 10, end: 71}, CData::from_str("<example foo=\"bar\" baz='fnord'/>").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 10, end: 71}, "<example foo=\"bar\" baz='fnord'/>".try_into().unwrap()));
 	}
 
 	#[test]
@@ -1820,8 +1821,8 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6}));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 50}, CData::from_str("<example foo=\"bar\" baz='fnord'/>").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 50, end: 56}, Name::from_str("root").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 50}, "<example foo=\"bar\" baz='fnord'/>".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 50, end: 56}, "root".try_into().unwrap()));
 		iter.next().unwrap();
 	}
 
@@ -1835,7 +1836,7 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6}));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 18, end: 24}, Name::from_str("root").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 18, end: 24}, "root".try_into().unwrap()));
 		iter.next().unwrap();
 	}
 
@@ -1922,10 +1923,10 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 2, end: 3}));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 3, end: 9}, CData::from_str("foo001").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 9, end: 15}, CData::from_str("foo002").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 15, end: 21}, CData::from_str("foo003").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 21, end: 24}, Name::from_str("a").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 3, end: 9}, "foo001".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 9, end: 15}, "foo002".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 15, end: 21}, "foo003".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 21, end: 24}, "a".try_into().unwrap()));
 		iter.next().unwrap();
 	}
 
@@ -2042,8 +2043,8 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 2, end: 3}));	assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 3, end: 16}, CData::from_str("]").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 16, end: 19}, Name::from_str("a").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 2, end: 3}));	assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 3, end: 16}, "]".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 16, end: 19}, "a".try_into().unwrap()));
 		iter.next().unwrap();
 	}
 
@@ -2067,9 +2068,9 @@ mod tests {
 
 		let mut iter = sink.iter();
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 6, end: 13}, Name::from_str("version").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 13, end: 14}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 14, end: 19}, CData::from_str("1.0").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd(TokenMetrics{start: 19, end: 21}));
 	}
 
@@ -2093,9 +2094,9 @@ mod tests {
 
 		let mut iter = sink.iter();
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 8, end: 15}, Name::from_str("version").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 8, end: 15}, "version".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 17, end: 18}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 20, end: 25}, CData::from_str("1.0").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 20, end: 25}, "1.0".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd(TokenMetrics{start: 27, end: 29}));
 	}
 
@@ -2212,7 +2213,7 @@ mod tests {
 		let mut iter = toks.iter();
 		iter.next().unwrap();
 		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6}));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 18, end: 24}, Name::from_str("root").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 18, end: 24}, "root".try_into().unwrap()));
 		iter.next().unwrap();
 
 		let (toks, r) = lex(&b"<root><![CDATA[]]>&amp;</root>"[..], 128);
@@ -2221,7 +2222,7 @@ mod tests {
 		let mut iter = toks.iter();
 		iter.next().unwrap();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 18, end: 23}, CData::from_str("&").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 18, end: 23}, "&".try_into().unwrap()));
 
 		let (toks, r) = lex(&b"<root><![CDATA[]]><![CDATA[]]]]>&gt;</root>"[..], 128);
 		r.unwrap();
@@ -2272,12 +2273,12 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 6, end: 13}, Name::from_str("version").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 13, end: 14}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 14, end: 19}, CData::from_str("1.0").unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 20, end: 28}, Name::from_str("encoding").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 20, end: 28}, "encoding".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 28, end: 29}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 29, end: 36}, CData::from_str("utf-8").unwrap()));
+		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 29, end: 36}, "utf-8".try_into().unwrap()));
 		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd(TokenMetrics{start: 36, end: 38}));
 		match iter.next().unwrap() {
 			Token::ElementHeadStart(tm, ..) => {

@@ -954,9 +954,9 @@ mod tests {
 	fn parser_parse_xml_declaration() {
 		let (evs, r) = parse(&[
 			Token::XMLDeclStart(TokenMetrics::new(0, 1)),
-			Token::Name(TokenMetrics::new(2, 3), Name::from_str("version").unwrap()),
+			Token::Name(TokenMetrics::new(2, 3), "version".try_into().unwrap()),
 			Token::Eq(TokenMetrics::new(3, 4)),
-			Token::AttributeValue(TokenMetrics::new(4, 5), CData::from_str("1.0").unwrap()),
+			Token::AttributeValue(TokenMetrics::new(4, 5), "1.0".try_into().unwrap()),
 			Token::XMLDeclEnd(TokenMetrics::new(6, 7)),
 		]);
 		let mut iter = evs.iter();
@@ -990,9 +990,9 @@ mod tests {
 	fn parser_recovers_from_wouldblock() {
 		let toks = &[
 			Token::XMLDeclStart(DM),
-			Token::Name(DM, Name::from_str("version").unwrap()),
+			Token::Name(DM, "version".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("1.0").unwrap()),
+			Token::AttributeValue(DM, "1.0".try_into().unwrap()),
 			Token::XMLDeclEnd(DM),
 		];
 		let mut reader = SometimesBlockingTokenSliceReader::new(toks);
@@ -1016,11 +1016,11 @@ mod tests {
 	fn parser_parse_stepwise() {
 		let toks = &[
 			Token::XMLDeclStart(DM),
-			Token::Name(DM, Name::from_str("version").unwrap()),
+			Token::Name(DM, "version".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("1.0").unwrap()),
+			Token::AttributeValue(DM, "1.0".try_into().unwrap()),
 			Token::XMLDeclEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 		];
 		let mut reader = TokenSliceReader::new(toks);
 		let mut parser = Parser::new();
@@ -1032,11 +1032,11 @@ mod tests {
 	fn parser_parse_element_after_xml_declaration() {
 		let (evs, r) = parse(&[
 			Token::XMLDeclStart(DM),
-			Token::Name(DM, Name::from_str("version").unwrap()),
+			Token::Name(DM, "version".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("1.0").unwrap()),
+			Token::AttributeValue(DM, "1.0".try_into().unwrap()),
 			Token::XMLDeclEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1047,7 +1047,7 @@ mod tests {
 	#[test]
 	fn parser_parse_element_without_decl() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1058,10 +1058,10 @@ mod tests {
 	#[test]
 	fn parser_parse_element_with_attr() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("foo").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "foo".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("bar").unwrap()),
+			Token::AttributeValue(DM, "bar".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1069,7 +1069,7 @@ mod tests {
 			Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
 				assert!(nsuri.is_none());
-				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -1079,10 +1079,10 @@ mod tests {
 	#[test]
 	fn parser_parse_element_with_xmlns() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1101,13 +1101,13 @@ mod tests {
 	#[test]
 	fn parser_parse_attribute_without_namespace_prefix() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("foo").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "foo".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("bar").unwrap()),
+			Token::AttributeValue(DM, "bar".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1115,7 +1115,7 @@ mod tests {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -1126,13 +1126,13 @@ mod tests {
 	#[test]
 	fn parser_parse_attribute_with_namespace_prefix() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:foo").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:foo".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("foo:bar").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "foo:bar".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("baz").unwrap()),
+			Token::AttributeValue(DM, "baz".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1140,7 +1140,7 @@ mod tests {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(RcPtr::new(CData::from_str(TEST_NS).unwrap())), NCName::from_str("bar").unwrap())).unwrap(), "baz");
+				assert_eq!(attrs.get(&(Some(RcPtr::new(TEST_NS.try_into().unwrap())), "bar".try_into().unwrap())).unwrap(), "baz");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -1151,10 +1151,10 @@ mod tests {
 	#[test]
 	fn parser_parse_xml_prefix_without_declaration() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xml:lang").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xml:lang".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("en").unwrap()),
+			Token::AttributeValue(DM, "en".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1162,7 +1162,7 @@ mod tests {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(RcPtr::new(CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap())), NCName::from_str("lang").unwrap())).unwrap(), "en");
+				assert_eq!(attrs.get(&(Some(RcPtr::new("http://www.w3.org/XML/1998/namespace".try_into().unwrap())), "lang".try_into().unwrap())).unwrap(), "en");
 				assert!(nsuri.is_none());
 			},
 			ev => panic!("unexpected event: {:?}", ev),
@@ -1173,13 +1173,13 @@ mod tests {
 	#[test]
 	fn parser_parse_reject_reserved_xmlns_prefix() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:xmlns").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:xmlns".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("foo:bar").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "foo:bar".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("baz").unwrap()),
+			Token::AttributeValue(DM, "baz".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)));
@@ -1189,10 +1189,10 @@ mod tests {
 	#[test]
 	fn parser_parse_allow_xml_redeclaration() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:xml").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:xml".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("http://www.w3.org/XML/1998/namespace").unwrap()),
+			Token::AttributeValue(DM, "http://www.w3.org/XML/1998/namespace".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1202,13 +1202,13 @@ mod tests {
 	#[test]
 	fn parser_parse_reject_reserved_xml_prefix_with_incorrect_value() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:xml").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:xml".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("foo:bar").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "foo:bar".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("baz").unwrap()),
+			Token::AttributeValue(DM, "baz".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)));
@@ -1218,13 +1218,13 @@ mod tests {
 	#[test]
 	fn parser_parse_nested_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("child").unwrap()),
+			Token::ElementHeadStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("child").unwrap()),
+			Token::ElementFootStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		r.unwrap();
@@ -1238,16 +1238,16 @@ mod tests {
 	#[test]
 	fn parser_parse_mixed_content() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::Text(DM, CData::from_str("Hello").unwrap()),
-			Token::ElementHeadStart(DM, Name::from_str("child").unwrap()),
+			Token::Text(DM, "Hello".try_into().unwrap()),
+			Token::ElementHeadStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::Text(DM, CData::from_str("mixed").unwrap()),
-			Token::ElementFootStart(DM, Name::from_str("child").unwrap()),
+			Token::Text(DM, "mixed".try_into().unwrap()),
+			Token::ElementFootStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::Text(DM, CData::from_str("world!").unwrap()),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::Text(DM, "world!".try_into().unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		r.unwrap();
@@ -1264,13 +1264,13 @@ mod tests {
 	#[test]
 	fn parser_reject_mismested_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("child").unwrap()),
+			Token::ElementHeadStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("nonchild").unwrap()),
+			Token::ElementFootStart(DM, "nonchild".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::ElementMismatch)));
@@ -1283,19 +1283,19 @@ mod tests {
 	#[test]
 	fn parser_parse_prefixed_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("x:root").unwrap()),
-			Token::Name(DM, Name::from_str("foo").unwrap()),
+			Token::ElementHeadStart(DM, "x:root".try_into().unwrap()),
+			Token::Name(DM, "foo".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("bar").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::AttributeValue(DM, "bar".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("child").unwrap()),
+			Token::ElementHeadStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("child").unwrap()),
+			Token::ElementFootStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:root").unwrap()),
+			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		r.unwrap();
@@ -1305,7 +1305,7 @@ mod tests {
 				assert_eq!(em.len, 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -1317,19 +1317,19 @@ mod tests {
 	#[test]
 	fn parser_parse_nested_prefixed_elements() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("x:root").unwrap()),
-			Token::Name(DM, Name::from_str("foo").unwrap()),
+			Token::ElementHeadStart(DM, "x:root".try_into().unwrap()),
+			Token::Name(DM, "foo".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("bar").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::AttributeValue(DM, "bar".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("x:child").unwrap()),
+			Token::ElementHeadStart(DM, "x:child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:child").unwrap()),
+			Token::ElementFootStart(DM, "x:child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:root").unwrap()),
+			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		r.unwrap();
@@ -1339,7 +1339,7 @@ mod tests {
 				assert_eq!(em.len, 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, NCName::from_str("foo").unwrap())).unwrap(), "bar");
+				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
 			},
 			ev => panic!("unexpected event: {:?}", ev),
 		}
@@ -1351,19 +1351,19 @@ mod tests {
 	#[test]
 	fn parser_parse_overriding_prefix_decls() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("x:root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::ElementHeadStart(DM, "x:root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("x:child").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::ElementHeadStart(DM, "x:child".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS2).unwrap()),
+			Token::AttributeValue(DM, TEST_NS2.try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:child").unwrap()),
+			Token::ElementFootStart(DM, "x:child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:root").unwrap()),
+			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		r.unwrap();
@@ -1377,19 +1377,19 @@ mod tests {
 	#[test]
 	fn parser_parse_multiple_prefixes() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("x:root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::ElementHeadStart(DM, "x:root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:y").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "xmlns:y".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS2).unwrap()),
+			Token::AttributeValue(DM, TEST_NS2.try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("y:child").unwrap()),
+			Token::ElementHeadStart(DM, "y:child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("y:child").unwrap()),
+			Token::ElementFootStart(DM, "y:child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:root").unwrap()),
+			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		r.unwrap();
@@ -1403,21 +1403,21 @@ mod tests {
 	#[test]
 	fn parser_parse_reject_duplicate_attribute_post_ns_expansion() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("x:root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::ElementHeadStart(DM, "x:root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:y").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "xmlns:y".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("x:a").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "x:a".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("foo").unwrap()),
-			Token::Name(DM, Name::from_str("y:a").unwrap()),
+			Token::AttributeValue(DM, "foo".try_into().unwrap()),
+			Token::Name(DM, "y:a".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("foo").unwrap()),
+			Token::AttributeValue(DM, "foo".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:root").unwrap()),
+			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::DuplicateAttribute)));
@@ -1427,21 +1427,21 @@ mod tests {
 	#[test]
 	fn parser_parse_repeats_error_after_first_encounter() {
 		let toks = &[
-			Token::ElementHeadStart(DM, Name::from_str("x:root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::ElementHeadStart(DM, "x:root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:y").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "xmlns:y".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
-			Token::Name(DM, Name::from_str("x:a").unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
+			Token::Name(DM, "x:a".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("foo").unwrap()),
-			Token::Name(DM, Name::from_str("y:a").unwrap()),
+			Token::AttributeValue(DM, "foo".try_into().unwrap()),
+			Token::Name(DM, "y:a".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("foo").unwrap()),
+			Token::AttributeValue(DM, "foo".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:root").unwrap()),
+			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		];
 		let mut reader = TokenSliceReader::new(toks);
@@ -1455,12 +1455,12 @@ mod tests {
 	#[test]
 	fn parser_rejects_empty_namespace_uri() {
 		let toks = &[
-			Token::ElementHeadStart(DM, Name::from_str("x:root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::ElementHeadStart(DM, "x:root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("").unwrap()),
+			Token::AttributeValue(DM, "".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("x:root").unwrap()),
+			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		];
 		let err = parse_err(toks).unwrap();
@@ -1470,12 +1470,12 @@ mod tests {
 	#[test]
 	fn parser_allows_empty_namespace_uri_for_default_namespace() {
 		let toks = &[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("").unwrap()),
+			Token::AttributeValue(DM, "".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		];
 		let (_evs, r) = parse(toks);
@@ -1485,19 +1485,19 @@ mod tests {
 	#[test]
 	fn parser_handles_reset_of_default_namespace_correctly() {
 		let toks = &[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("child").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns").unwrap()),
+			Token::ElementHeadStart(DM, "child".try_into().unwrap()),
+			Token::Name(DM, "xmlns".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str("").unwrap()),
+			Token::AttributeValue(DM, "".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("child").unwrap()),
+			Token::ElementFootStart(DM, "child".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		];
 		let (evs, r) = parse(toks);
@@ -1512,12 +1512,12 @@ mod tests {
 	#[test]
 	fn parser_rejects_undeclared_namespace_prefix_on_element() {
 		let toks = &[
-			Token::ElementHeadStart(DM, Name::from_str("y:root").unwrap()),
-			Token::Name(DM, Name::from_str("xmlns:x").unwrap()),
+			Token::ElementHeadStart(DM, "y:root".try_into().unwrap()),
+			Token::Name(DM, "xmlns:x".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, CData::from_str(TEST_NS).unwrap()),
+			Token::AttributeValue(DM, TEST_NS.try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		];
 		let err = parse_err(toks).unwrap();
@@ -1527,13 +1527,13 @@ mod tests {
 	#[test]
 	fn parser_reject_element_after_root_element() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementHeadStart(DM, Name::from_str("garbage").unwrap()),
+			Token::ElementHeadStart(DM, "garbage".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("garbage").unwrap()),
+			Token::ElementFootStart(DM, "garbage".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
 		let mut iter = evs.iter();
@@ -1549,9 +1549,9 @@ mod tests {
 	#[test]
 	fn parser_reject_text_after_root_element() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 			Token::Text(DM, "foo".try_into().unwrap()),
 		]);
@@ -1568,9 +1568,9 @@ mod tests {
 	#[test]
 	fn parser_allow_whitespace_after_root_element() {
 		let (evs, r) = parse(&[
-			Token::ElementHeadStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
-			Token::ElementFootStart(DM, Name::from_str("root").unwrap()),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 			Token::Text(DM, " \t\r\n".try_into().unwrap()),
 			Token::Text(DM, "\n\r\t ".try_into().unwrap()),
