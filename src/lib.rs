@@ -48,7 +48,7 @@ implements [`io::BufRead`].
 #[allow(unused_imports)]
 use std::io;
 
-mod error;
+pub mod error;
 pub mod lexer;
 pub mod parser;
 mod bufq;
