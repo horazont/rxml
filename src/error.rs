@@ -1,3 +1,9 @@
+/*!
+# Error types
+
+This module holds the error types returned by the various functions of this
+crate.
+*/
 use std::io;
 use std::sync::Arc;
 use std::fmt;
