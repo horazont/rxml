@@ -240,13 +240,13 @@ pub struct Parser {
 
 impl Parser {
 	/// Create a new parser
-	pub fn new() -> Parser {
+	pub fn new() -> Self {
 		Self::with_context(RcPtr::new(context::Context::new()))
 	}
 
-	pub fn with_context(ctx: RcPtr<context::Context>) -> Parser {
+	pub fn with_context(ctx: RcPtr<context::Context>) -> Self {
 		let xmlns = ctx.intern_cdata(XMLNS_XML.to_cdata());
-		Parser{
+		Self{
 			ctx: ctx,
 			state: State::Initial,
 			fixed_xml_namespace: xmlns,

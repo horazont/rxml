@@ -375,10 +375,9 @@ impl LexerOptions {
 	/// Constructs default lexer options.
 	///
 	/// The defaults are implementation-defined and should not be relied upon.
+	#[deprecated(since = "0.4.0", note = "use the Default trait implementation instead")]
 	pub fn defaults() -> LexerOptions {
-		LexerOptions{
-			max_token_length: 8192,
-		}
+		Self::default()
 	}
 
 	/// Set the [`LexerOptions::max_token_length`] value.
@@ -387,11 +386,22 @@ impl LexerOptions {
 	///
 	/// ```
 	/// use rxml::{Lexer, LexerOptions};
-	/// let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(1024));
+	/// let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(1024));
 	/// ```
 	pub fn max_token_length(mut self, v: usize) -> LexerOptions {
 		self.max_token_length = v;
 		self
+	}
+}
+
+impl Default for LexerOptions {
+	/// Constructs default lexer options.
+	///
+	/// The defaults are implementation-defined and should not be relied upon.
+	fn default() -> Self {
+		Self{
+			max_token_length: 8192,
+		}
 	}
 }
 
@@ -469,14 +479,14 @@ pub struct Lexer {
 	err: Option<Box<Error>>,
 }
 impl Lexer {
-	/// Construct a new Lexer based on [`LexerOptions::defaults()`].
-	pub fn new() -> Lexer {
-		Lexer::with_options(LexerOptions::defaults())
+	/// Construct a new Lexer based on [`LexerOptions::default()`].
+	pub fn new() -> Self {
+		Self::with_options(LexerOptions::default())
 	}
 
 	/// Construct a new Lexer with the given options.
-	pub fn with_options(opts: LexerOptions) -> Lexer {
-		Lexer {
+	pub fn with_options(opts: LexerOptions) -> Self {
+		Self {
 			state: State::Content(ContentState::Initial),
 			scratchpad: String::new(),
 			swap: String::new(),
@@ -1863,7 +1873,7 @@ mod tests {
 	fn lexer_lex_restrict_element_name_by_token_length() {
 		let src = &b"<foobar2342/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1874,7 +1884,7 @@ mod tests {
 	fn lexer_lex_restrict_attribute_name_by_token_length() {
 		let src = &b"<a foobar2342='foo'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1885,7 +1895,7 @@ mod tests {
 	fn lexer_lex_restrict_attribute_value_by_token_length() {
 		let src = &b"<a b='foobar2342'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1896,7 +1906,7 @@ mod tests {
 	fn lexer_lex_restrict_attribute_value_by_token_length_even_with_entities() {
 		let src = &b"<a b='foob&amp;r'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
@@ -1907,7 +1917,7 @@ mod tests {
 	fn lexer_lex_attribute_value_entities_do_only_count_for_expansion() {
 		let src = &b"<a b='foob&amp;'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).unwrap();
 	}
@@ -1916,7 +1926,7 @@ mod tests {
 	fn lexer_lex_token_length_causes_text_nodes_to_be_split() {
 		let src = &b"<a>foo001foo002foo003</a>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
-		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).unwrap();
 
@@ -2037,7 +2047,7 @@ mod tests {
 	#[test]
 	fn lexer_handles_closing_brackets_in_cdata_section() {
 		let mut src = &b"<a><![CDATA[]]]></a>"[..];
-		let mut lexer = Lexer::with_options(LexerOptions::defaults().max_token_length(6));
+		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 

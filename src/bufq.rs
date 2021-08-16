@@ -53,8 +53,8 @@ pub struct BufferQueue<'x> {
 
 impl<'x> BufferQueue<'x> {
 	/// Create a new, empty buffer queue.
-	pub fn new() -> BufferQueue<'x> {
-		BufferQueue{
+	pub fn new() -> Self {
+		Self{
 			q: VecDeque::new(),
 			offset: 0,
 			len: 0,
