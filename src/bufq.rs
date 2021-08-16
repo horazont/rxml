@@ -89,6 +89,7 @@ impl<'x> BufferQueue<'x> {
 	/// borrowed by the `BufferQueue`; if a buffer has been partially read,
 	/// that will be reflected by `len()` even though the memory has not been
 	/// released yet.
+	#[inline]
 	pub fn len(&self) -> usize {
 		self.len
 	}
@@ -98,6 +99,7 @@ impl<'x> BufferQueue<'x> {
 	/// After an end-of-file marker has been pushed, it is not possible to
 	/// push further buffers. Once the [`BufferQueue`] is then depleted, it
 	/// will signal EOF to the caller instead of `WouldBlock`.
+	#[inline]
 	pub fn push_eof(&mut self) {
 		self.eof = true;
 	}
@@ -106,6 +108,7 @@ impl<'x> BufferQueue<'x> {
 	/// already.
 	///
 	/// [`BufferQueue::push()`] will panic if this function returns true.
+	#[inline]
 	pub fn eof_pushed(&self) -> bool {
 		self.eof
 	}
@@ -115,6 +118,7 @@ impl<'x> BufferQueue<'x> {
 	/// This will effectively reset the length to 0 and cause all future reads
 	/// to return either WouldBlock (if [`BufferQueue::push_eof`] has not been
 	/// called yet) or eof.
+	#[inline]
 	pub fn clear(&mut self) {
 		self.q.clear();
 		self.len = 0;
@@ -146,10 +150,8 @@ impl io::Read for BufferQueue<'_> {
 			};
 			debug_assert!(self.offset < front.len());
 			let effective_len = front.len() - self.offset;
-			let to_read = std::cmp::min(dst.len(), effective_len);
-			for (src, dst) in front[self.offset..(to_read+self.offset)].iter().zip(dst.iter_mut()) {
-				*dst = *src;
-			};
+			let to_read = dst.len().min(effective_len);
+			dst[..to_read].copy_from_slice(&front[self.offset..(to_read+self.offset)]);
 			self.offset += to_read;
 			(to_read, front.len() - self.offset)
 		};
