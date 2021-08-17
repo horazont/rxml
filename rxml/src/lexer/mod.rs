@@ -6,12 +6,14 @@ use std::convert::TryInto;
 use std::fmt;
 
 mod read;
+mod ranges;
 
-use crate::selectors::*;
+use rxml_validation::selectors::*;
 use read::{Endpoint};
 use crate::error::{Error, Result, WFError};
 use crate::error::*;
 use crate::strings::*;
+use ranges::*;
 
 pub use read::{Utf8Char, CodepointRead, DecodingReader};
 

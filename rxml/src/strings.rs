@@ -48,55 +48,11 @@ use std::ops::Deref;
 use std::fmt;
 use std::convert::{TryFrom, TryInto};
 use std::borrow::{Borrow, ToOwned, Cow};
-use crate::selectors;
-use crate::selectors::{CharSelector, CodepointRanges};
 use crate::error::{NWFError, WFError, ERRCTX_UNKNOWN};
 use smartstring::alias::String as SmartString;
-
-static CDATA_ANTI_SELECTOR: CodepointRanges = CodepointRanges(selectors::INVALID_XML_CDATA_RANGES);
-
-fn validate_name(s: &str) -> Result<(), WFError> {
-	let mut chars = s.chars();
-	match chars.next() {
-		// must have at least one char
-		None => return Err(WFError::InvalidSyntax("Name must have at least one Char")),
-		Some(c) => if !selectors::CLASS_XML_NAMESTART.select(c) {
-			return Err(WFError::UnexpectedChar(ERRCTX_UNKNOWN, c, None))
-		}
-	}
-	for ch in chars {
-		if !selectors::CLASS_XML_NAME.select(ch) {
-			return Err(WFError::UnexpectedChar(ERRCTX_UNKNOWN, ch, None))
-		}
-	}
-	Ok(())
-}
-
-fn validate_ncname(s: &str) -> Result<(), WFError> {
-	let mut chars = s.chars();
-	match chars.next() {
-		// must have at least one char
-		None => return Err(WFError::InvalidSyntax("Name must have at least one Char")),
-		Some(c) => if !selectors::CLASS_XML_NAMESTART.select(c) || c == ':' {
-			return Err(WFError::UnexpectedChar(ERRCTX_UNKNOWN, c, None))
-		}
-	}
-	for ch in chars {
-		if !selectors::CLASS_XML_NAME.select(ch) || ch == ':' {
-			return Err(WFError::UnexpectedChar(ERRCTX_UNKNOWN, ch, None))
-		}
-	}
-	Ok(())
-}
-
-fn validate_cdata(s: &str) -> Result<(), WFError> {
-	for ch in s.chars() {
-		if CDATA_ANTI_SELECTOR.select(ch) {
-			return Err(WFError::UnexpectedChar(ERRCTX_UNKNOWN, ch, None))
-		}
-	}
-	Ok(())
-}
+use rxml_validation::selectors;
+use rxml_validation::selectors::CharSelector;
+pub use rxml_validation::{validate_name, validate_ncname, validate_cdata};
 
 /// String which conforms to the Name production of XML 1.0.
 ///

@@ -1,2 +1,6 @@
 [workspace]
-members = ["rxml"]
+members = [
+  "rxml",
+  "rxml_proc",
+  "rxml_validation",
+]

@@ -11,6 +11,8 @@ use std::error;
 use std::ops::Deref;
 use std::result::Result as StdResult;
 
+use rxml_validation::{Error as ValidationError};
+
 pub const ERRCTX_UNKNOWN: &'static str = "in unknown context";
 pub const ERRCTX_TEXT: &'static str = "in text node";
 pub const ERRCTX_ATTVAL: &'static str = "in attribute value";
@@ -137,6 +139,15 @@ impl fmt::Display for WFError {
 			WFError::UnexpectedToken(ctx, tok, _) => write!(f, "unexpected {} token {}", tok, ctx),
 			WFError::DuplicateAttribute => f.write_str("duplicate attribute"),
 			WFError::ElementMismatch => f.write_str("start and end tag do not match"),
+		}
+	}
+}
+
+impl From<ValidationError> for WFError {
+	fn from(other: ValidationError) -> Self {
+		match other {
+			ValidationError::EmptyName => Self::InvalidSyntax("Name must have at least one Char"),
+			ValidationError::InvalidChar(ch) => Self::UnexpectedChar(ERRCTX_UNKNOWN, ch, None),
 		}
 	}
 }

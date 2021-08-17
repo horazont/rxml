@@ -53,7 +53,6 @@ pub mod lexer;
 pub mod parser;
 mod bufq;
 pub mod strings;
-mod selectors;
 mod context;
 
 #[cfg(test)]

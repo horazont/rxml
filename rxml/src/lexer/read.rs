@@ -1,6 +1,6 @@
 use std::io;
 use crate::error::{Result, Error};
-use crate::selectors::CharSelector;
+use rxml_validation::selectors::CharSelector;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Utf8Char{
@@ -308,7 +308,7 @@ pub fn skip_matching<'r, 's, R: CodepointRead, S: CharSelector>(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::selectors::AllChars;
+	use rxml_validation::selectors::AllChars;
 	use crate::bufq;
 
 	#[test]
