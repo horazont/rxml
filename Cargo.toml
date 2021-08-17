@@ -1,22 +1,2 @@
-[package]
-name = "rxml"
-version = "0.4.0-alpha.0"
-authors = ["Jonas Schäfer <jonas@zombofant.net>"]
-license = "MIT"
-edition = "2018"
-description = "Minimalistic, restricted XML 1.0 parser which does not include dangerous XML features."
-readme = true
-repository = "https://github.com/horazont/rxml"
-keywords = ["xml"]
-categories = ["parsing"]
-exclude = ["/fuzz", "/util", "/target"]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-weak-table = { version = "0.3", optional = true }
-smartstring = { version = "0.2" }
-
-[features]
-mt = []
-shared_ns = ["weak-table"]
+[workspace]
+members = ["rxml"]
