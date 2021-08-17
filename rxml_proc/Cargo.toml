@@ -1,0 +1,17 @@
+[package]
+name = "rxml_proc"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+syn = { version = "^1" }
+rxml_validation = { path = "../rxml_validation" }
+quote = { version = "^1" }
+
+[lib]
+proc-macro = true
+
+[dev-dependencies]
+rxml = { path = "../rxml" }

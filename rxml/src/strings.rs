@@ -25,7 +25,13 @@ times.
 
 ## Construction
 
-In general, values are constructed using the [`std::convert::TryInto`]
+To construct [`str`]-like references at compile time, you can use the macros
+from the [`rxml_proc`](https://docs.rs/rxml_proc) crate. It offers
+`xml_cdata!`, `xml_name!` and `xml_ncname!` macros which convert a string
+literal into `&CDataStr`, `&NameStr` and `&NCNameStr` (respectively) with
+validation at compile time.
+
+In general, owned values are constructed using the [`std::convert::TryInto`]
 mechanism, from other string types. Supported source types are:
 
 * [`String`] (copies for [`Name`] and [`NCName`], moves for [`CData`])
@@ -57,7 +63,9 @@ pub use rxml_validation::{validate_name, validate_ncname, validate_cdata};
 /// String which conforms to the Name production of XML 1.0.
 ///
 /// [`Name`] corresponds to a (restricted) [`String`]. For a [`str`]-like type
-/// with the same restrictions, see [`NameStr`].
+/// with the same restrictions, see [`NameStr`]. `&NameStr` can be created
+/// from a string literal at compile time using the `xml_name` macro from
+/// [`rxml_proc`](https://docs.rs/rxml_proc).
 ///
 /// Since [`Name`] derefs to [`String`], all (non-mutable) methods from
 /// [`String`] are available.
@@ -356,6 +364,9 @@ impl fmt::Display for Name {
 /// type with the same restrictions as well as the formal definition of those
 /// restrictions, see [`Name`].
 ///
+/// `&NameStr` can be created from a string literal at compile time using the
+/// `xml_name` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
+///
 /// Since [`NameStr`] derefs to [`str`], all (non-mutable) methods from
 /// [`str`] are available.
 #[derive(Hash, PartialEq)]
@@ -368,7 +379,7 @@ impl NameStr {
 	/// This function enforces that the given string conforms to the `Name`
 	/// production of XML 1.0. If those conditions are not met, an error is
 	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation or xml_name! macro instead")]
 	pub fn from_str<'x>(s: &'x str) -> Result<&'x NameStr, WFError> {
 		s.try_into()
 	}
@@ -485,7 +496,9 @@ impl fmt::Display for NameStr {
 /// String which conforms to the NCName production of Namespaces in XML 1.0.
 ///
 /// [`NCName`] corresponds to a (restricted) [`String`]. For a [`str`]-like
-/// type with the same restrictions, see [`NCNameStr`].
+/// type with the same restrictions, see [`NCNameStr`]. `&NCNameStr` can be
+/// created from a string literal at compile time using the `xml_ncname` macro
+/// from [`rxml_proc`](https://docs.rs/rxml_proc).
 ///
 /// Since [`NCName`] derefs to [`String`], all (non-mutable) methods from
 /// [`String`] are available.
@@ -754,6 +767,9 @@ impl fmt::Display for NCName {
 /// type with the same restrictions as well as the formal definition of those
 /// restrictions, see [`NCName`].
 ///
+/// `&NCNameStr` can be created from a string literal at compile time using
+/// the `xml_ncname` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
+///
 /// Since [`NCNameStr`] derefs to [`str`], all (non-mutable) methods from
 /// [`str`] are available.
 #[derive(Hash, PartialEq)]
@@ -766,7 +782,7 @@ impl NCNameStr {
 	/// This function enforces that the given string conforms to the `NCName`
 	/// production of Namespaces in XML 1.0. If those conditions are not met,
 	/// an error is returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation or xml_ncname! macro instead")]
 	pub fn from_str<'x>(s: &'x str) -> Result<&'x NCNameStr, WFError> {
 		validate_name(s)?;
 		Ok(unsafe { std::mem::transmute(s) })
@@ -875,7 +891,9 @@ impl fmt::Display for NCNameStr {
 /// String which consists only of XML 1.0 Chars.
 ///
 /// [`CData`] corresponds to a (restricted) [`String`]. For a [`str`]-like
-/// type with the same restrictions, see [`CDataStr`].
+/// type with the same restrictions, see [`CDataStr`]. `&CDataStr` can be
+/// created from a string literal at compile time using the `xml_cdata` macro
+/// from [`rxml_proc`](https://docs.rs/rxml_proc).
 ///
 /// Since [`CData`] derefs to [`String`], all (non-mutable) methods from
 /// [`String`] are available.
@@ -1140,6 +1158,9 @@ impl fmt::Display for CData {
 /// type with the same restrictions as well as the formal definition of those
 /// restrictions, see [`CData`].
 ///
+/// `&CDataStr` can be created from a string literal at compile time using the
+/// `xml_cdata` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
+///
 /// Since [`CDataStr`] derefs to [`str`], all (non-mutable) methods from
 /// [`str`] are available.
 #[derive(Hash, PartialEq)]
@@ -1152,7 +1173,7 @@ impl CDataStr {
 	/// This function enforces that the chars in the string conform to `Char`
 	/// as defined in XML 1.0. If those conditions are not met, an error is
 	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation  or xml_cdata! macro instead")]
 	pub fn from_str<'x>(s: &'x str) -> Result<&'x CDataStr, WFError> {
 		s.try_into()
 	}

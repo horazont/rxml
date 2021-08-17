@@ -10,7 +10,7 @@ use std::fmt;
 
 pub mod selectors;
 
-use selectors::{CharSelector, CodepointRanges};
+use selectors::CharSelector;
 
 /**
 Error condition from validating an XML string.
