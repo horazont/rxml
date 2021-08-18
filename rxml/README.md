@@ -36,3 +36,7 @@ let result = fp.read_all_eof(|ev| {
 // true indicates eof
 assert_eq!(result.unwrap(), true);
 ```
+
+## Related crates
+
+- [`rxml_proc`](https://crates.io/crates/rxml_proc) offers macros for compile-time conversion of strings to strongly-typed XML-specific str subtypes.
