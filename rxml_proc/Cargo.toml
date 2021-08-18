@@ -1,6 +1,6 @@
 [package]
 name = "rxml_proc"
-version = "0.4.0"
+version = "0.5.0-alpha.0"
 authors = ["Jonas Schäfer <jonas@zombofant.net>"]
 license = "MIT"
 edition = "2018"
@@ -12,7 +12,7 @@ readme = true
 
 [dependencies]
 syn = { version = "^1" }
-rxml_validation = { path = "../rxml_validation", version = "0.4.0" }
+rxml_validation = { path = "../rxml_validation", version = "0.5.0-alpha.0" }
 quote = { version = "^1" }
 
 [lib]
