@@ -1585,4 +1585,20 @@ mod tests {
 		assert!(iter.next().is_none());
 		r.unwrap();
 	}
+
+	#[test]
+	fn parser_does_not_panic_on_too_many_closing_elements() {
+		let err = parse_err(&[
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
+			Token::ElementHFEnd(DM),
+			Token::ElementFootStart(DM, "root".try_into().unwrap()),
+			Token::ElementHFEnd(DM),
+		]);
+		match err {
+			Some(Error::NotWellFormed(WFError::UnexpectedToken(..))) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
 }
