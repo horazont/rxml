@@ -17,7 +17,16 @@ exclude = ["/fuzz", "/util", "/target"]
 weak-table = { version = "0.3", optional = true }
 smartstring = { version = "0.2" }
 rxml_validation = { path = "../rxml_validation", version = "0.5.0-alpha.0" }
+tokio = { version = "^1", features = ["io-util"], optional = true }
+bytes = { version = "^1", optional = true }
+async-trait = { version = "^0.1", optional = true }
 
 [features]
 mt = []
 shared_ns = ["weak-table"]
+default = ["async"]
+async = ["tokio", "bytes", "async-trait", "mt"]
+
+[dev-dependencies]
+tokio = { version = "^1", features = ["rt", "macros"] }
+tokio-test = { version = "^0.4" }

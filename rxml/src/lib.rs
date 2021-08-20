@@ -44,6 +44,13 @@ in the application and process the resulting [`Event`]s as they happen.
 If the parser should block while waiting for more data to arrive, a
 [`PullParser`] can be used instead. The `PullParser` requires a source which
 implements [`io::BufRead`].
+
+### Usage with Tokio
+
+Tokio is supported with the `async` feature. It offers the [`AsyncParser`]
+and the [`AsyncEventRead`] trait, which work similar to the `PullParser`.
+Instead of blocking, however, the async parser will yield control to other
+tasks.
 */
 #[allow(unused_imports)]
 use std::io;
@@ -68,6 +75,14 @@ pub use parser::{QName, Parser, Event, LexerAdapter, XMLVersion, XMLNS_XML};
 pub use bufq::BufferQueue;
 pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
 pub use context::Context;
+
+
+#[cfg(feature = "async")]
+use {
+	tokio::io::{AsyncRead, AsyncReadExt},
+	bytes::{BytesMut, BufMut},
+	async_trait::async_trait,
+};
 
 pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
@@ -326,5 +341,159 @@ impl<T: io::Read + Sized> EventRead for PullParser<T> {
 	/// further data from the source).
 	fn read(&mut self) -> Result<Option<Event>> {
 		self.parser.parse(&mut self.token_source)
+	}
+}
+
+/**
+# Asynchronous source for individual XML events
+
+This trait is implemented by the different parser frontends. It is analogous
+to the [`tokio::io::AsyncRead`] trait, but for [`Event`]s instead of bytes.
+*/
+#[cfg(feature = "async")]
+#[async_trait]
+pub trait AsyncEventRead {
+	/// Read a single event from the parser.
+	///
+	/// If the EOF has been reached with a valid document, `None` is returned.
+	///
+	/// I/O errors may be retried, all other errors are fatal (and will be
+	/// returned again by the parser on the next invocation without reading
+	/// further data from the source).
+	///
+	/// Equivalent to:
+	///
+	/// ```ignore
+	/// async fn read(&mut self) -> Result<Option<Event>>;
+	/// ```
+	async fn read(&mut self) -> Result<Option<Event>>;
+
+	/// Read all events which can be produced from the data source (at this
+	/// point in time).
+	///
+	/// The given `cb` is invoked for each event.
+	///
+	/// I/O errors may be retried, all other errors are fatal (and will be
+	/// returned again by the parser on the next invocation without reading
+	/// further data from the source).
+	///
+	/// Equivalent to:
+	///
+	/// ```ignore
+	/// 	async fn read_all<F>(&mut self, mut cb: F) -> Result<()>
+	///			where F: FnMut(Event) -> () + Send
+	/// ```
+	async fn read_all<F>(&mut self, mut cb: F) -> Result<()>
+		where F: FnMut(Event) -> () + Send
+	{
+		loop {
+			match self.read().await? {
+				None => return Ok(()),
+				Some(ev) => cb(ev),
+			}
+		}
+	}
+
+	/// Read all events which can be produced from the data source (at this
+	/// point in time).
+	///
+	/// The given `cb` is invoked for each event.
+	///
+	/// If the data source indicates that it needs to block to read further
+	/// data, `false` is returned. If the EOF is reached successfully, `true`
+	/// is returned.
+	///
+	/// I/O errors may be retried, all other errors are fatal (and will be
+	/// returned again by the parser on the next invocation without reading
+	/// further data from the source).
+	///
+	/// Equivalent to:
+	///
+	/// ```ignore
+	/// 	async fn read_all_eof<F>(&mut self, cb: F) -> Result<bool>
+	///			where F: FnMut(Event) -> () + Send
+	/// ```
+	async fn read_all_eof<F>(&mut self, cb: F) -> Result<bool>
+		where F: FnMut(Event) -> () + Send
+	{
+		as_eof_flag(self.read_all(cb).await)
+	}
+}
+
+#[cfg(feature = "async")]
+/**
+# Asynchronous parsing
+
+The [`AsyncParser`] allows parsing XML documents from a [`tokio::io::AsyncRead`], asynchronously. It operates similarly as the [`PullParser`] does, but instead of blocking the task, it will yield control to other tasks if the backend is not able to supply data immediately.
+
+Interaction with a `AsyncParser` should happen exclusively via the [`AsyncEventRead`] trait.
+
+## Example
+
+The example is a bit pointless because it does not really demonstrate the asynchronicity.
+
+```
+use rxml::{AsyncParser, Error, Event, XMLVersion, AsyncEventRead};
+use tokio::io::AsyncRead;
+# tokio_test::block_on(async {
+let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
+// this converts the doc into an tokio::io::AsyncRead
+let mut pp = AsyncParser::new(&mut doc);
+// we expect the first event to be the XML declaration
+let ev = pp.read().await;
+assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0)));
+# })
+*/
+pub struct AsyncParser<T: AsyncRead + Unpin> {
+	reader: T,
+	inner: FeedParser<'static>,
+}
+
+#[cfg(feature = "async")]
+impl<T: AsyncRead + Unpin + Send> AsyncParser<T> {
+	pub fn new(r: T) -> Self {
+		Self{
+			reader: r,
+			inner: FeedParser::new(),
+		}
+	}
+}
+
+#[cfg(feature = "async")]
+#[async_trait]
+impl<T: AsyncRead + Unpin + Send> AsyncEventRead for AsyncParser<T> {
+	async fn read(&mut self) -> Result<Option<Event>> {
+		loop {
+			if self.inner.get_buffer_mut().eof_pushed() {
+				break;
+			}
+
+			if self.inner.buffered() > 0 {
+				// if anything is buffered, we should read that
+				let ev = self.inner.read()?;
+				if ev.is_some() {
+					return Ok(ev)
+				}
+			}
+			debug_assert!(self.inner.buffered() == 0);
+			// input either had no data or the data was not sufficient for an event; read more data
+			// TODO: use some magic around Box<> and unsafe{} to re-use the same buffer instead of allocating a new one
+			// TODO: make this configurable
+			static BUFFER_SIZE: usize = 8192;
+			let mut buf = BytesMut::with_capacity(BUFFER_SIZE).limit(BUFFER_SIZE);
+			let len = self.reader.read_buf(&mut buf).await?;
+			if len == 0 {
+				self.inner.feed_eof();
+				break;
+			}
+
+			let mut buf = buf.into_inner();
+			buf.resize(len, 0);
+			let buf = buf.freeze();
+			// TODO: avoid this nasty copy
+			self.inner.feed(buf.to_vec());
+		}
+		// reached EOF
+		self.inner.read()
 	}
 }
