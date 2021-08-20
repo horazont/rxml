@@ -15,7 +15,7 @@ use crate::error::*;
 use crate::strings::*;
 use ranges::*;
 
-pub use read::{Utf8Char, CodepointRead, DecodingReader};
+pub use read::{Utf8Char, Utf8Decoder, CodepointRead, DecodingReader};
 
 /// Carry information about where in the stream the token was observed
 ///

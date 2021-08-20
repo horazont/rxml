@@ -98,22 +98,7 @@ pub trait CodepointRead {
 	}
 }
 
-/**
-# Streaming UTF-8 decoder
-
-Decode UTF-8 from a [`std::io::Read`] and emit individual [`Utf8Char`]s.
-
-**Note:** While the [`DecodingReader`] can work with any [`std::io::Read`], it
-is highly recommended to **use a reader with an internal buffer** (such as
-[`std::io::BufReader`]), as the decoder reads the source byte-by-byte.
-
-To read codepoints from the reader, use [`DecodingReader::read()`].
-
-It is possible to resume a reader which has previously failed with an error,
-but not recommended or guaranteed.
-*/
-pub struct DecodingReader<T: io::Read + Sized> {
-	backend: T,
+pub struct Utf8Decoder {
 	buf: [u8; 4],
 	buflen: usize,
 	accum: u32,
@@ -121,11 +106,10 @@ pub struct DecodingReader<T: io::Read + Sized> {
 	seqlen: u8,
 }
 
-impl<T: io::Read + Sized> DecodingReader<T> {
+impl Utf8Decoder {
 	/// Create a new decoding reader
-	pub fn new(r: T) -> Self {
+	pub fn new() -> Self {
 		Self{
-			backend: r,
 			buf: [0; 4],
 			buflen: 0,
 			seqlen: 0,
@@ -134,21 +118,12 @@ impl<T: io::Read + Sized> DecodingReader<T> {
 		}
 	}
 
-	/// Consume the reader and return the backing Read
-	///
-	/// **Warning:** The [`DecodingReader`] buffers a small amount of data
-	/// (up to four bytes) while decoding UTF-8 sequences. That data is lost
-	/// when using this function.
-	pub fn into_inner(self) -> T {
-		self.backend
-	}
-
-	fn reset(&mut self) {
+	pub fn reset(&mut self) {
 		self.seqlen = 0;
 		self.buflen = 0;
 	}
 
-	fn feed(&mut self, c: u8) -> Result<Option<Utf8Char>> {
+	pub fn feed(&mut self, c: u8) -> Result<Option<Utf8Char>> {
 		debug_assert!(self.buflen < 4);
 		if self.seqlen == 0 {
 			// new char, analyze starter
@@ -206,6 +181,53 @@ impl<T: io::Read + Sized> DecodingReader<T> {
 		}
 	}
 
+	pub fn feed_eof(&mut self) -> Result<()> {
+		if self.seqlen > 0 {
+			// in the middle of a sequence
+			return Err(Error::io(io::Error::new(io::ErrorKind::UnexpectedEof, "eof in utf-8 sequence")));
+		}
+		// eof
+		return Ok(())
+	}
+}
+
+/**
+# Streaming UTF-8 decoder
+
+Decode UTF-8 from a [`std::io::Read`] and emit individual [`Utf8Char`]s.
+
+**Note:** While the [`DecodingReader`] can work with any [`std::io::Read`], it
+is highly recommended to **use a reader with an internal buffer** (such as
+[`std::io::BufReader`]), as the decoder reads the source byte-by-byte.
+
+To read codepoints from the reader, use [`DecodingReader::read()`].
+
+It is possible to resume a reader which has previously failed with an error,
+but not recommended or guaranteed.
+*/
+pub struct DecodingReader<T: io::Read + Sized> {
+	backend: T,
+	dec: Utf8Decoder,
+}
+
+impl<T: io::Read + Sized> DecodingReader<T> {
+	/// Create a new decoding reader
+	pub fn new(r: T) -> Self {
+		Self{
+			backend: r,
+			dec: Utf8Decoder::new(),
+		}
+	}
+
+	/// Consume the reader and return the backing Read
+	///
+	/// **Warning:** The [`DecodingReader`] buffers a small amount of data
+	/// (up to four bytes) while decoding UTF-8 sequences. That data is lost
+	/// when using this function.
+	pub fn into_inner(self) -> T {
+		self.backend
+	}
+
 	/// Get a reference to the backing Read.
 	pub fn get_ref(&self) -> &T {
 		&self.backend
@@ -241,14 +263,9 @@ impl<T: io::Read + Sized> CodepointRead for DecodingReader<T> {
 		let mut buf = [0u8; 1];
 		loop {
 			if self.backend.read(&mut buf[..])? == 0 {
-				if self.seqlen > 0 {
-					// in the middle of a sequence
-					return Err(Error::io(io::Error::new(io::ErrorKind::UnexpectedEof, "eof in utf-8 sequence")));
-				}
-				// eof
-				return Ok(None)
+				return self.dec.feed_eof().and_then(|_| { Ok(None) })
 			}
-			match self.feed(buf[0])? {
+			match self.dec.feed(buf[0])? {
 				Some(utf8ch) => return Ok(Some(utf8ch)),
 				None => (),
 			}
