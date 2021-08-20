@@ -373,11 +373,15 @@ impl Parser {
 	/// This may fail for various reasons, such as duplicate attributes or
 	/// references to undeclared namespace prefixes.
 	fn finalize_element(&mut self) -> Result<()> {
-		let ElementScratchpad{ prefix, localname, mut attributes, default_namespace_decl, namespace_decls, attrprefix: _, attrlocalname: _ } = {
-			let mut tmp: Option<ElementScratchpad> = None;
-			std::mem::swap(&mut tmp, &mut self.element_scratchpad);
-			tmp.unwrap()
-		};
+		let ElementScratchpad{
+			prefix,
+			localname,
+			mut attributes,
+			default_namespace_decl,
+			namespace_decls,
+			attrprefix: _,
+			attrlocalname: _
+		} = self.element_scratchpad.take().unwrap();
 		self.namespace_stack.push((default_namespace_decl, namespace_decls));
 		let (assembled_name, nsuri, localname) = match prefix {
 			None => (localname.clone().as_name(), self.lookup_namespace(None), localname),
