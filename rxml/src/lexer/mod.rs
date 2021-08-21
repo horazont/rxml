@@ -2,7 +2,6 @@
 # XML 1.0 Lexer
 */
 // needed for trait bounds
-use std::convert::TryInto;
 use std::fmt;
 
 mod read;
@@ -1409,6 +1408,7 @@ mod tests {
 	use std::io;
 	use std::fmt;
 	use std::error;
+	use std::convert::TryInto;
 	use crate::lexer::read::DecodingReader;
 	use crate::bufq::BufferQueue;
 
