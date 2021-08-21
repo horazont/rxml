@@ -2,16 +2,19 @@
 # XML 1.0 Lexer
 */
 // needed for trait bounds
+use std::convert::TryInto;
 use std::fmt;
+use std::io;
 
 mod read;
 mod ranges;
 
 use rxml_validation::selectors::*;
-use read::{Endpoint};
-use crate::error::{Error, Result, WFError};
-use crate::error::*;
+use rxml_validation::{Error as ValidationError};
+use read::{Endbyte};
+use crate::error::{WFError, ErrorWithContext, Result as CrateResult};
 use crate::strings::*;
+use crate::errctx::*;
 use ranges::*;
 
 pub use read::{Utf8Char, Utf8Decoder, CodepointRead, DecodingReader};
@@ -233,7 +236,7 @@ enum ElementState {
 	Close,
 	/// Delimiter, Alphabet and whether we just read a CR, because of the mess
 	/// which is CRLF -> LF normalization.
-	AttributeValue(char, CodepointRanges, bool),
+	AttributeValue(u8, &'static [ByteRange], bool),
 	/// Encountered ?
 	MaybeXMLDeclEnd,
 	/// Encountered /
@@ -281,7 +284,7 @@ enum ContentState {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RefReturnState {
-	AttributeValue(ElementKind, char, CodepointRanges),
+	AttributeValue(ElementKind, u8, &'static [ByteRange]),
 	Text,
 }
 
@@ -366,9 +369,9 @@ pub struct LexerOptions {
 	///
 	/// If token data exceeds this limit, it depends on the token type whether
 	/// a partial token is emitted or the lexing fails with
-	/// [`Error::RestrictedXml`]: Text tokens are split and emitted in parts
-	/// (and lexing continues), all other tokens exceeding this limit will
-	/// cause an error.
+	/// [`Error::RestrictedXml`](crate::Error::RestrictedXml): Text tokens are
+	/// split and emitted in parts (and lexing continues), all other tokens
+	/// exceeding this limit will cause an error.
 	pub max_token_length: usize,
 }
 
@@ -406,20 +409,19 @@ impl Default for LexerOptions {
 	}
 }
 
-fn resolve_named_entity(name: &str, into: &mut String) -> Result<()> {
+fn resolve_named_entity(name: &[u8]) -> Result<u8> {
 	// amp, lt, gt, apos, quot
 	match name {
-		"amp" => into.push_str("&"),
-		"lt" => into.push_str("<"),
-		"gt" => into.push_str(">"),
-		"apos" => into.push_str("'"),
-		"quot" => into.push_str("\""),
-		_ => return Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
-	};
-	Ok(())
+		b"amp" => Ok(b'&'),
+		b"lt" => Ok(b'<'),
+		b"gt" => Ok(b'>'),
+		b"apos" => Ok(b'\''),
+		b"quot" => Ok(b'"'),
+		_ => Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
+	}
 }
 
-fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut String) -> Result<()> {
+fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut Vec<u8>) -> Result<()> {
 	let radix = match radix {
 		CharRefRadix::Decimal => 10,
 		CharRefRadix::Hexadecimal => 16,
@@ -430,8 +432,10 @@ fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut String) -> Re
 		Some(ch) => ch,
 		None => return Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_UNKNOWN, codepoint, true))),
 	};
-	if contained_in_ranges(ch, VALID_XML_CDATA_RANGES) {
-		into.push(ch);
+	if !CLASS_XML_NONCHAR.select(ch) {
+		let mut buf = [0u8; 4];
+		let s = ch.encode_utf8(&mut buf[..]);
+		into.extend_from_slice(s.as_bytes());
 		Ok(())
 	} else {
 		Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_UNKNOWN, codepoint, true)))
@@ -458,6 +462,62 @@ impl ST {
 }
 
 
+#[derive(Debug, Clone, PartialEq, Copy)]
+enum Error {
+	EndOfBuffer,
+	NotWellFormed(WFError),
+	InvalidUtf8Byte(u8),
+	RestrictedXml(&'static str),
+}
+
+impl Error {
+	fn wfeof(ctx: &'static str) -> Error {
+		Error::NotWellFormed(WFError::InvalidEof(ctx))
+	}
+
+	fn utf8err(src: &[u8], e: &std::str::Utf8Error) -> Error {
+		Error::InvalidUtf8Byte(src[e.valid_up_to()])
+	}
+}
+
+impl ErrorWithContext for Error {
+	fn with_context(self, ctx: &'static str) -> Self {
+		match self {
+			Self::EndOfBuffer => Self::EndOfBuffer,
+			Self::NotWellFormed(e) => Self::NotWellFormed(e.with_context(ctx)),
+			Self::InvalidUtf8Byte(b) => Self::InvalidUtf8Byte(b),
+			Self::RestrictedXml(what) => Self::RestrictedXml(what),
+		}
+	}
+}
+
+impl From<WFError> for Error {
+	fn from(other: WFError) -> Self {
+		Self::NotWellFormed(other)
+	}
+}
+
+impl From<ValidationError> for Error {
+	fn from(other: ValidationError) -> Self {
+		let e: WFError = other.into();
+		e.into()
+	}
+}
+
+impl From<Error> for crate::Error {
+	fn from(other: Error) -> Self {
+		match other {
+			Error::EndOfBuffer => io::Error::new(io::ErrorKind::WouldBlock, "end of current buffer reached").into(),
+			Error::NotWellFormed(e) => Self::NotWellFormed(e),
+			Error::RestrictedXml(what) => Self::RestrictedXml(what),
+			Error::InvalidUtf8Byte(b) => Self::InvalidUtf8Byte(b),
+		}
+	}
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+
 /**
 # Restricted XML 1.0 lexer
 
@@ -467,18 +527,20 @@ see [`rxml`](`crate`).
 */
 pub struct Lexer {
 	state: State,
-	scratchpad: String,
-	swap: String,
+	scratchpad: Vec<u8>,
+	swap: Vec<u8>,
 	ctr: usize,
 	last_token_end: usize,
 	opts: LexerOptions,
 	/// keep the scratchpad and state for debugging
 	#[cfg(debug_assertions)]
-	prev_state: (String, State),
+	prev_state: (Vec<u8>, State),
 	#[cfg(debug_assertions)]
-	last_single_read: Option<Utf8Char>,
-	err: Option<Box<Error>>,
+	last_single_read: Option<u8>,
+	err: Option<Error>,
+	has_eof: bool,
 }
+
 impl Lexer {
 	/// Construct a new Lexer based on [`LexerOptions::default()`].
 	pub fn new() -> Self {
@@ -489,16 +551,28 @@ impl Lexer {
 	pub fn with_options(opts: LexerOptions) -> Self {
 		Self {
 			state: State::Content(ContentState::Initial),
-			scratchpad: String::new(),
-			swap: String::new(),
+			scratchpad: Vec::new(),
+			swap: Vec::new(),
 			ctr: 0,
 			last_token_end: 0,
 			opts: opts,
 			#[cfg(debug_assertions)]
-			prev_state: (String::new(), State::Content(ContentState::Initial)),
+			prev_state: (Vec::new(), State::Content(ContentState::Initial)),
 			#[cfg(debug_assertions)]
 			last_single_read: None,
 			err: None,
+			has_eof: false,
+		}
+	}
+
+	fn demote_eof(&self, ep: Endbyte) -> Result<Endbyte> {
+		match ep {
+			Endbyte::Eof => if self.has_eof {
+				Ok(Endbyte::Eof)
+			} else {
+				Err(Error::EndOfBuffer)
+			},
+			other => Ok(other),
 		}
 	}
 
@@ -518,53 +592,61 @@ impl Lexer {
 		}
 	}
 
-	fn read_validated<'r, 'x, R: CodepointRead, S: CharSelector>(&mut self, r: &'r mut R, selector: &'x S, limit: usize) -> Result<Endpoint> {
+	fn read_validated<B: ByteSelect>(&mut self, r: &mut &[u8], selector: &B, limit: usize) -> Result<Endbyte> {
 		let remaining = match limit.checked_sub(self.scratchpad.len()) {
-			None => return Ok(Endpoint::Limit),
+			None => return Ok(Endbyte::Limit),
 			Some(v) => v,
 		};
 		let old_len = self.scratchpad.len();
 		self.prep_scratchpad();
-		let result = read::read_validated(
+		let ep = read::read_validated_bytes(
 			r,
 			selector,
 			remaining,
 			&mut self.scratchpad,
 		);
 		self.ctr = self.ctr.wrapping_add(self.scratchpad.len() - old_len);
-		match result {
-			Ok(Endpoint::Delimiter(ch)) => self.ctr = self.ctr.wrapping_add(ch.len()),
+		match ep {
+			Endbyte::Delimiter(_) => self.ctr = self.ctr.wrapping_add(1),
 			_ => (),
 		}
-		result
+		self.demote_eof(ep)
 	}
 
 	#[inline]
-	fn read_single<'r, R: CodepointRead>(&mut self, r: &'r mut R) -> Result<Option<Utf8Char>> {
-		let last_read = r.read()?;
+	fn read_single(&mut self, r: &mut &[u8]) -> Result<Option<u8>> {
+		let last_read = match r.split_first() {
+			Some((v, tail)) => {
+				self.ctr = self.ctr.wrapping_add(1);
+				*r = tail;
+				Some(*v)
+			},
+			None => if self.has_eof {
+				None
+			} else {
+				return Err(Error::EndOfBuffer)
+			},
+		};
 		#[cfg(debug_assertions)]
 		{
 			self.last_single_read = last_read;
-		}
-		if let Some(ch) = last_read {
-			self.ctr += ch.len();
 		}
 		Ok(last_read)
 	}
 
 	#[inline]
-	fn skip_matching<'r, 's, R: CodepointRead, S: CharSelector>(
+	fn skip_matching<B: ByteSelect>(
 		&mut self,
-		r: &'r mut R,
-		selector: &'s S,
-		) -> (usize, Result<Endpoint>)
+		r: &mut &[u8],
+		selector: &B,
+		) -> (usize, Result<Endbyte>)
 	{
-		let (nread, result) = read::skip_matching(r, selector);
+		let (nread, ep) = read::skip_matching_bytes(r, selector);
 		self.ctr = self.ctr.wrapping_add(nread);
-		match result {
+		match self.demote_eof(ep) {
 			Ok(ep) => {
-				if let Endpoint::Delimiter(ch) = ep {
-					self.ctr = self.ctr.wrapping_add(ch.len())
+				if let Endbyte::Delimiter(_) = ep {
+					self.ctr = self.ctr.wrapping_add(1)
 				};
 				(nread, Ok(ep))
 			},
@@ -582,8 +664,8 @@ impl Lexer {
 		Ok(())
 	}
 
-	fn read_swap(&mut self) -> String {
-		let mut tmp = String::new();
+	fn read_swap(&mut self) -> Vec<u8> {
+		let mut tmp = Vec::new();
 		std::mem::swap(&mut tmp, &mut self.swap);
 		tmp
 	}
@@ -598,52 +680,69 @@ impl Lexer {
 		}
 	}
 
-	fn flush_scratchpad<U, T: FnOnce(&str) -> U>(&mut self, conv: T) -> U {
+	fn flush_scratchpad<U, T: FnOnce(&[u8]) -> Result<U>>(&mut self, conv: T) -> Result<U> {
 		let result = conv(&self.scratchpad);
 		self.scratchpad.clear();
 		result
 	}
 
-	fn flush_scratchpad_as_name(&mut self) -> Name {
-		self.flush_scratchpad(|s| {
-			#[cfg(debug_assertions)]
-			{
-				s.try_into().unwrap()
-			}
-			#[cfg(not(debug_assertions))]
-			unsafe {
-				Name::from_str_unchecked(s)
-			}
+	fn flush_scratchpad_as_name(&mut self) -> Result<Name> {
+		self.flush_scratchpad(|bytes| -> Result<Name> {
+			let s = match std::str::from_utf8(bytes) {
+				Ok(s) => Ok(s),
+				Err(e) => Err(Error::utf8err(bytes, &e)),
+			}?;
+			Ok(s.try_into()?)
 		})
 	}
 
-	fn flush_scratchpad_as_cdata(&mut self) -> CData {
-		self.flush_scratchpad(|s| {
-			#[cfg(debug_assertions)]
-			{
-				s.try_into().unwrap()
-			}
-			#[cfg(not(debug_assertions))]
-			unsafe {
-				CData::from_str_unchecked(s)
-			}
+	fn flush_scratchpad_as_complete_cdata(&mut self) -> Result<CData> {
+		self.flush_scratchpad(|bytes| -> Result<CData> {
+			let s = match std::str::from_utf8(bytes) {
+				Ok(s) => Ok(s),
+				Err(e) => Err(Error::utf8err(bytes, &e)),
+			}?;
+			Ok(s.try_into()?)
 		})
 	}
 
-	fn maybe_flush_scratchpad_as_text(&mut self, without: usize) -> Option<Token> {
+	fn flush_scratchpad_as_partial_cdata(&mut self) -> Result<CData> {
+		let s = match std::str::from_utf8(&self.scratchpad[..]) {
+			Ok(s) => s,
+			Err(e) => {
+				// TODO: this will need refinement...
+				let valid_up_to = e.valid_up_to();
+				if valid_up_to == 0 {
+					// this means that we actually and truly have a broken utf-8 sequence.
+					// return an error.
+					return Err(Error::InvalidUtf8Byte(self.scratchpad[0]))
+				} else {
+					// okay, we can return the stuff up to here and then let the next call deal with it
+					unsafe { std::str::from_utf8_unchecked(&self.scratchpad[..valid_up_to]) }
+				}
+			},
+		};
+		let result = s.try_into()?;
+		let to_drop = s.len();
+		drop(s);
+		self.scratchpad.drain(..to_drop);
+		Ok(result)
+	}
+
+	fn maybe_flush_scratchpad_as_text(&mut self, without: usize) -> Result<Option<Token>> {
 		if self.scratchpad.len() == 0 {
 			self.eat_whitespace_metrics(without);
-			None
+			Ok(None)
 		} else {
-			Some(Token::Text(self.metrics(without), self.flush_scratchpad_as_cdata()))
+			Ok(Some(Token::Text(self.metrics(without), self.flush_scratchpad_as_complete_cdata()?)))
 		}
 	}
 
-	fn flush_limited_scratchpad_as_text(&mut self) -> Option<Token> {
+	fn flush_limited_scratchpad_as_text(&mut self) -> Result<Option<Token>> {
 		if self.scratchpad.len() >= self.opts.max_token_length {
-			Some(Token::Text(self.metrics(0), self.flush_scratchpad_as_cdata()))
+			Ok(Some(Token::Text(self.metrics(0), self.flush_scratchpad_as_partial_cdata()?)))
 		} else {
-			None
+			Ok(None)
 		}
 	}
 
@@ -654,21 +753,21 @@ impl Lexer {
 	///
 	/// THIS DOES NOT MEAN THAT THE CHAR IS VALID! IT MAY STILL BE A NUL
 	/// BYTE OR SOMESUCH!
-	fn lex_posttext_char(&mut self, utf8ch: Utf8Char) -> Result<Option<ST>> {
-		match utf8ch.to_char() {
-			'<' => Ok(Some(ST(
-				State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), self.maybe_flush_scratchpad_as_text(1),  // 1 == len("<")
+	fn lex_posttext_char(&mut self, b: u8) -> Result<Option<ST>> {
+		match b {
+			b'<' => Ok(Some(ST(
+				State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), self.maybe_flush_scratchpad_as_text(1)?,  // 1 == len("<")
 			))),
 			// begin of forbidden CDATA section end sequence (see XML 1.0 § 2.4 [14])
-			']' => Ok(Some(ST(
+			b']' => Ok(Some(ST(
 				State::Content(ContentState::MaybeCDataEnd(false, 1)),
 				// no flush here to avoid needless reallocations on false alarm
 				None,
 			))),
-			'&' => {
+			b'&' => {
 				// We need to be careful here! First, we *have* to swap the scratchpad because that is part of the contract with the Reference state.
 				// Second, we have to do this *after* we "maybe" flush the scratchpad as text -- otherwise, we would flush the empty text and then clobber the entity lookup.
-				let tok = self.maybe_flush_scratchpad_as_text(1);  // 1 == len("&")
+				let tok = self.maybe_flush_scratchpad_as_text(1)?;  // 1 == len("&")
 				self.swap_scratchpad()?;
 				Ok(Some(ST(
 					State::Reference{
@@ -679,7 +778,7 @@ impl Lexer {
 					tok,
 				)))
 			},
-			'\r' => {
+			b'\r' => {
 				// CRLF needs to be folded to LF, and standalone LF needs, too
 				Ok(Some(ST(
 					State::Content(ContentState::MaybeCRLF(false)),
@@ -690,25 +789,25 @@ impl Lexer {
 		}
 	}
 
-	fn lex_maybe_element<'r, R: CodepointRead>(&mut self, state: MaybeElementState, r: &'r mut R) -> Result<ST> {
+	fn lex_maybe_element(&mut self, state: MaybeElementState, r: &mut &[u8]) -> Result<ST> {
 		match state {
 			MaybeElementState::Initial => match self.read_single(r)? {
-				Some(utf8ch) => match utf8ch.to_char() {
-					'?' => {
+				Some(byte) => match byte {
+					b'?' => {
 						self.drop_scratchpad()?;
 						Ok(ST(
 							State::Content(ContentState::MaybeElement(MaybeElementState::XMLDeclStart(2))),
 							None,
 						))
 					},
-					'!' => {
+					b'!' => {
 						self.drop_scratchpad()?;
 						Ok(ST(
 							State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(2))),
 							None,
 						))
 					}
-					'/' => {
+					b'/' => {
 						self.drop_scratchpad()?;
 						Ok(ST(
 							State::Element{
@@ -718,10 +817,10 @@ impl Lexer {
 							None,
 						))
 					},
-					ch => if CLASS_XML_NAMESTART.select(ch) {
+					byte => if CLASS_XML_NAMESTART_BYTE.select(byte) {
 						// add the first character to the scratchpad, because read_single does not do that
 						self.prep_scratchpad();
-						self.scratchpad.push_str(utf8ch.as_str());
+						self.scratchpad.push(byte);
 						Ok(ST(
 							State::Element{
 								kind: ElementKind::Header,
@@ -731,7 +830,7 @@ impl Lexer {
 						))
 					} else {
 						self.drop_scratchpad()?;
-						Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_NAMESTART, ch, None)))
+						Err(Error::NotWellFormed(WFError::UnexpectedByte(ERRCTX_NAMESTART, byte, None)))
 					},
 				},
 				None => Err(Error::wfeof(ERRCTX_ELEMENT)),
@@ -739,7 +838,7 @@ impl Lexer {
 			MaybeElementState::XMLDeclStart(i) => {
 				debug_assert!(i < TOK_XML_DECL_START.len());
 				// note: exploiting that xml decl only consists of ASCII here
-				let b = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION_START)?.to_char() as u8;
+				let b = handle_eof(self.read_single(r)?, ERRCTX_CDATA_SECTION_START)?;
 				if b != TOK_XML_DECL_START[i] {
 					return Err(Error::RestrictedXml("processing instructions"));
 				}
@@ -763,7 +862,7 @@ impl Lexer {
 			},
 			MaybeElementState::CDataSectionStart(i) => {
 				debug_assert!(i < TOK_XML_CDATA_START.len());
-				let b = handle_eof(self.read_single(r)?, ERRCTX_XML_DECL_START)?.to_char() as u8;
+				let b = handle_eof(self.read_single(r)?, ERRCTX_XML_DECL_START)?;
 				if i == 1 && b == b'-' {
 					return Err(Error::RestrictedXml("comments"));
 				} else if b != TOK_XML_CDATA_START[i] {
@@ -774,7 +873,7 @@ impl Lexer {
 					self.drop_scratchpad()?;
 					Ok(ST(
 						State::Content(ContentState::CDataSection),
-						self.maybe_flush_scratchpad_as_text(TOK_XML_CDATA_START.len()),
+						self.maybe_flush_scratchpad_as_text(TOK_XML_CDATA_START.len())?,
 					))
 				} else {
 					Ok(ST(
@@ -785,19 +884,18 @@ impl Lexer {
 		}
 	}
 
-	fn lex_resume_text(&mut self, utf8ch: Utf8Char) -> Result<ST> {
-		let ch = utf8ch.to_char();
-		match self.lex_posttext_char(utf8ch)? {
+	fn lex_resume_text(&mut self, b: u8) -> Result<ST> {
+		match self.lex_posttext_char(b)? {
 			// special delimiter char -> state transition
 			Some(st) => Ok(st),
-			// no special char -> check if it is valid text and proceed accordingly
-			None => if CLASS_XML_NONCHAR.select(ch) {
+			// no special char -> check if it is possibly valid text and proceed accordingly
+			None => if CLASS_XML_MAY_NONCHAR_BYTE.select(b) {
 				// non-Char, error
-				Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, ch as u32, false)))
+				Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, b as u32, false)))
 			} else {
 				// nothing special, push to scratchpad and return to initial content state
 				self.prep_scratchpad();
-				self.scratchpad.push_str(utf8ch.as_str());
+				self.scratchpad.push(b);
 				Ok(ST(
 					State::Content(ContentState::Initial),
 					None,
@@ -806,17 +904,16 @@ impl Lexer {
 		}
 	}
 
-	fn lex_maybe_cdata_end<'r, R: CodepointRead>(&mut self, in_cdata: bool, nend: usize, r: &'r mut R) -> Result<ST> {
+	fn lex_maybe_cdata_end(&mut self, in_cdata: bool, nend: usize, r: &mut &[u8]) -> Result<ST> {
 		debug_assert!(nend < TOK_XML_CDATA_END.len());
 		let ctx = if in_cdata {
 			ERRCTX_CDATA_SECTION
 		} else {
 			ERRCTX_TEXT
 		};
-		let utf8ch = handle_eof(self.read_single(r)?, ctx)?;
-		let expected = TOK_XML_CDATA_END[nend] as char;
-		let ch = utf8ch.to_char();
-		if ch == expected {
+		let b = handle_eof(self.read_single(r)?, ctx)?;
+		let expected = TOK_XML_CDATA_END[nend];
+		if b == expected {
 			// sequence continues
 			match nend {
 				1 => Ok(ST(
@@ -833,60 +930,58 @@ impl Lexer {
 					// and we must not subtract this char, because it is part of the CDATA section
 					Ok(ST(
 						State::Content(ContentState::Initial),
-						self.maybe_flush_scratchpad_as_text(0),
+						self.maybe_flush_scratchpad_as_text(0)?,
 					))
 				},
 				_ => panic!("unreachable state: cdata nend = {:?}", nend),
 			}
-		} else if ch == ']' {
+		} else if b == b']' {
 			// sequence was broken, but careful! this could just be `]]]]]]]>` sequence!
 			// those we need to treat the same, no matter whether inside or outside CDATA the previously found ] is moved to the scratchpad and we return to this state
 			self.prep_scratchpad();
-			self.scratchpad.push_str("]");
+			self.scratchpad.push(b']');
 			Ok(ST(
 				State::Content(ContentState::MaybeCDataEnd(in_cdata, nend)),
-				self.flush_limited_scratchpad_as_text(),
+				self.flush_limited_scratchpad_as_text()?,
 			))
 		} else {
 			// sequence was broken
-			// the token string constant is utf8 (ascii even), we’re safe.
-			let encountered = unsafe { std::str::from_utf8_unchecked(&TOK_XML_CDATA_END[..nend]) };
 			self.prep_scratchpad();
-			self.scratchpad.push_str(encountered);
+			self.scratchpad.extend_from_slice(&TOK_XML_CDATA_END[..nend]);
 			if in_cdata {
-				if CLASS_XML_NONCHAR.select(ch) {
+				if CLASS_XML_MAY_NONCHAR_BYTE.select(b) {
 					// that’s a sneaky one!
-					Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, ch as u32, false)))
+					Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, b as u32, false)))
 				} else {
 					// broken sequence inside cdata section, that’s fine; just push whatever we read to the scratchpad and move on
 					// no need for prep, we pushed above already
-					self.scratchpad.push_str(utf8ch.as_str());
+					self.scratchpad.push(b);
 					Ok(ST(
 						State::Content(ContentState::CDataSection),
 						// enforce token size limits here, too
-						self.flush_limited_scratchpad_as_text(),
+						self.flush_limited_scratchpad_as_text()?,
 					))
 				}
 			} else {
 				// broken sequence outside cdata section, need to analyze the next char carefully to handle entities and such
-				self.lex_resume_text(utf8ch)
+				self.lex_resume_text(b)
 			}
 		}
 	}
 
-	fn lex_content<'r, R: CodepointRead>(&mut self, state: ContentState, r: &'r mut R) -> Result<ST>
+	fn lex_content(&mut self, state: ContentState, r: &mut &[u8]) -> Result<ST>
 	{
 		match state {
 			ContentState::MaybeElement(substate) => self.lex_maybe_element(substate, r),
 			ContentState::MaybeCDataEnd(in_cdata, nend) => self.lex_maybe_cdata_end(in_cdata, nend, r),
 
 			ContentState::MaybeCRLF(in_cdata) => {
-				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_TEXT)?;
-				match utf8ch.to_char() {
-					'\n' => {
+				let b = handle_eof(self.read_single(r)?, ERRCTX_TEXT)?;
+				match b {
+					b'\n' => {
 						// CRLF sequence, only insert the \n to the scratchpad.
 						self.prep_scratchpad();
-						self.scratchpad.push_str("\n");
+						self.scratchpad.push(b'\n');
 						// return to the content state and curse a bit
 						Ok(ST(
 							if in_cdata {
@@ -897,40 +992,40 @@ impl Lexer {
 							None,
 						))
 					},
-					'\r' => {
+					b'\r' => {
 						// double CR, so this may still be followed by an LF; but the first CR gets converted to LF
 						self.prep_scratchpad();
-						self.scratchpad.push_str("\n");
+						self.scratchpad.push(b'\n');
 						// stay in the same state, we may still get an LF here.
 						Ok(ST(
 							State::Content(ContentState::MaybeCRLF(in_cdata)),
 							None,
 						))
 					},
-					ch => {
+					b => {
 						// we read a single CR, so we push a \n to the scratchpad and hope for the best
 						self.prep_scratchpad();
-						self.scratchpad.push_str("\n");
+						self.scratchpad.push(b'\n');
 						if in_cdata {
 							// only special thing in CDATA is ']'
-							if ch == ']' {
+							if b == b']' {
 								Ok(ST(
 									State::Content(ContentState::MaybeCDataEnd(true, 1)),
 									None,
 								))
-							} else if !CLASS_XML_NONCHAR.select(ch) {
+							} else if !CLASS_XML_MAY_NONCHAR_BYTE.select(b) {
 								// ^ but of course we still need to check for a valid char. Thanks afl.
 								// no need for prep as we pushed above already
-								self.scratchpad.push_str(utf8ch.as_str());
+								self.scratchpad.push(b);
 								Ok(ST(
 									State::Content(ContentState::CDataSection),
 									None,
 								))
-							} else{
-								Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, ch as u32, false)))
+							} else {
+								Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, b as u32, false)))
 							}
 						} else {
-							self.lex_resume_text(utf8ch)
+							self.lex_resume_text(b)
 						}
 					},
 				}
@@ -938,58 +1033,58 @@ impl Lexer {
 
 			// read until next `<` or `&`, which are the only things which
 			// can break us out of this state.
-			ContentState::Initial => match self.read_validated(r, &CodepointRanges(VALID_XML_CDATA_RANGES_TEXT_DELIMITED), self.opts.max_token_length)? {
-				Endpoint::Eof => {
+			ContentState::Initial => match self.read_validated(r, &CLASS_XML_TEXT_DELIMITED_BYTE, self.opts.max_token_length)? {
+				Endbyte::Eof => {
 					Ok(ST(
 						State::Eof,
-						self.maybe_flush_scratchpad_as_text(0),
+						self.maybe_flush_scratchpad_as_text(0)?,
 					))
 				},
-				Endpoint::Limit => {
+				Endbyte::Limit => {
 					Ok(ST(
 						State::Content(ContentState::Initial),
-						self.maybe_flush_scratchpad_as_text(0),
+						self.maybe_flush_scratchpad_as_text(0)?,
 					))
 				},
-				Endpoint::Delimiter(ch) => match self.lex_posttext_char(ch)? {
+				Endbyte::Delimiter(b) => match self.lex_posttext_char(b)? {
 					Some(st) => Ok(st),
 					// not a "special" char but not text either -> error
-					None => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, ch.to_char() as u32, false))),
+					None => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, b as u32, false))),
 				},
 			},
-			ContentState::CDataSection => match self.read_validated(r, &CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED, self.opts.max_token_length)? {
-				Endpoint::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
-				Endpoint::Limit => Ok(ST(
+			ContentState::CDataSection => match self.read_validated(r, &CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE, self.opts.max_token_length)? {
+				Endbyte::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
+				Endbyte::Limit => Ok(ST(
 					State::Content(ContentState::CDataSection),
-					self.maybe_flush_scratchpad_as_text(0),
+					self.maybe_flush_scratchpad_as_text(0)?,
 				)),
 				// -> transition into the "first delimiter found" state
-				Endpoint::Delimiter(utf8ch) => match utf8ch.to_char() {
-					']' => Ok(ST(
+				Endbyte::Delimiter(b) => match b {
+					b']' => Ok(ST(
 						State::Content(ContentState::MaybeCDataEnd(true, 1)),
 						None,
 					)),
-					'\r' => Ok(ST(
+					b'\r' => Ok(ST(
 						State::Content(ContentState::MaybeCRLF(true)),
 						None,
 					)),
-					other => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, other as u32, false)))
+					_ => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, b as u32, false)))
 				}
 			},
-			ContentState::Whitespace => match self.skip_matching(r, &CLASS_XML_SPACES) {
-				(_, Ok(Endpoint::Eof)) | (_, Ok(Endpoint::Limit)) => {
+			ContentState::Whitespace => match self.skip_matching(r, &CLASS_XML_SPACE_BYTE) {
+				(_, Ok(Endbyte::Eof)) | (_, Ok(Endbyte::Limit)) => {
 					Ok(ST(
 						State::Eof,
 						None,
 					))
 				},
-				(_, Ok(Endpoint::Delimiter(ch))) => match ch.to_char() {
-					'<' => Ok(ST(
+				(_, Ok(Endbyte::Delimiter(b))) => match b {
+					b'<' => Ok(ST(
 						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
 					)),
-					other => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					_ => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 						ERRCTX_XML_DECL_END,
-						other,
+						b,
 						Some(&["Spaces", "<"]),
 					))),
 				},
@@ -998,46 +1093,46 @@ impl Lexer {
 		}
 	}
 
-	fn lex_element_postblank(&mut self, kind: ElementKind, utf8ch: Utf8Char) -> Result<ElementState> {
-		match utf8ch.to_char() {
-			' ' | '\t' | '\r' | '\n' => Ok(ElementState::Blank),
-			'"' => Ok(ElementState::AttributeValue('"', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED), false)),
-			'\'' => Ok(ElementState::AttributeValue('\'', CodepointRanges(VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED), false)),
-			'=' => Ok(ElementState::Eq),
-			'>' => match kind {
+	fn lex_element_postblank(&mut self, kind: ElementKind, b: u8) -> Result<ElementState> {
+		match b {
+			b' ' | b'\t' | b'\r' | b'\n' => Ok(ElementState::Blank),
+			b'"' => Ok(ElementState::AttributeValue(b'"', &CLASS_XML_CDATA_ATT_QUOT_DELIMITED_BYTE, false)),
+			b'\'' => Ok(ElementState::AttributeValue(b'\'', &CLASS_XML_CDATA_ATT_APOS_DELIMITED_BYTE, false)),
+			b'=' => Ok(ElementState::Eq),
+			b'>' => match kind {
 				ElementKind::Footer | ElementKind::Header => Ok(ElementState::Close),
 				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_XML_DECL, '>', Some(&["?"])))),
 			}
-			'?' => match kind {
+			b'?' => match kind {
 				ElementKind::XMLDecl => Ok(ElementState::MaybeXMLDeclEnd),
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ELEMENT, '?', None))),
 			},
-			'/' => match kind {
+			b'/' => match kind {
 				ElementKind::Header => Ok(ElementState::MaybeHeadClose),
 				ElementKind::Footer => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ELEMENT_FOOT, '/', None))),
 				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_XML_DECL, '/', None))),
 			},
-			ch if CLASS_XML_NAMESTART.select(ch) => {
+			b if CLASS_XML_NAMESTART_BYTE.select(b) => {
 				// write the char to scratchpad because it’ll be needed.
 				self.prep_scratchpad();
-				self.scratchpad.push_str(utf8ch.as_str());
+				self.scratchpad.push(b);
 				Ok(ElementState::Name)
 			},
-			ch => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+			_ => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 				match kind {
 					ElementKind::XMLDecl => ERRCTX_XML_DECL,
 					_ => ERRCTX_ELEMENT,
 				},
-				ch,
+				b,
 				Some(&["whitespace", "\"", "'", "=", ">", "?", "/", "start of name"]),
 			))),
 		}
 	}
 
-	fn lex_attval_next(&mut self, delim: char, selector: CodepointRanges, utf8ch: Utf8Char, element_kind: ElementKind) -> Result<ST> {
-		match utf8ch.to_char() {
-			'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ATTVAL, '<', None))),
-			'&' => {
+	fn lex_attval_next(&mut self, delim: u8, selector: &'static [ByteRange], b: u8, element_kind: ElementKind) -> Result<ST> {
+		match b {
+			b'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ATTVAL, '<', None))),
+			b'&' => {
 				// must swap scratchpad here to avoid clobbering the
 				// attribute value during entity read
 				self.swap_scratchpad()?;
@@ -1053,9 +1148,9 @@ impl Lexer {
 					}, None
 				))
 			},
-			'\t' | '\n' => {
+			b'\t' | b'\n' => {
 				self.prep_scratchpad();
-				self.scratchpad.push_str(" ");
+				self.scratchpad.push(b' ');
 				Ok(ST(
 					State::Element{
 						kind: element_kind,
@@ -1064,7 +1159,7 @@ impl Lexer {
 					None,
 				))
 			},
-			'\r' => {
+			b'\r' => {
 				Ok(ST(
 					State::Element{
 						kind: element_kind,
@@ -1079,7 +1174,7 @@ impl Lexer {
 					// require whitespace after attribute as the grammar demands
 					state: ElementState::SpaceRequired,
 				},
-				Some(Token::AttributeValue(self.metrics(0), self.flush_scratchpad_as_cdata())),
+				Some(Token::AttributeValue(self.metrics(0), self.flush_scratchpad_as_complete_cdata()?)),
 			)),
 			other => Err(Error::NotWellFormed(WFError::InvalidChar(
 				ERRCTX_ATTVAL,
@@ -1089,18 +1184,17 @@ impl Lexer {
 		}
 	}
 
-	fn lex_element<'r, R: CodepointRead>(&mut self, kind: ElementKind, state: ElementState, r: &'r mut R) -> Result<ST> {
+	fn lex_element(&mut self, kind: ElementKind, state: ElementState, r: &mut &[u8]) -> Result<ST> {
 		match state {
 			ElementState::Start | ElementState::Name => {
 				if self.scratchpad.len() == 0 {
 					// we are reading the first char; the first one is special because it must match CLASS_XML_NAMESTART, and not just CLASS_XML_NAME
-					let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_NAME)?;
-					let ch = utf8ch.to_char();
-					if !CLASS_XML_NAMESTART.select(ch) {
-						Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_NAME, ch, None)))
+					let b = handle_eof(self.read_single(r)?, ERRCTX_NAME)?;
+					if !CLASS_XML_NAMESTART_BYTE.select(b) {
+						Err(Error::NotWellFormed(WFError::UnexpectedByte(ERRCTX_NAME, b, None)))
 					} else {
 						self.prep_scratchpad();
-						self.scratchpad.push_str(utf8ch.as_str());
+						self.scratchpad.push(b);
 						// continue in the same state; the branch below will be taken next and read_validated will take care of it if we’re done already
 						Ok(ST(
 							State::Element{
@@ -1111,13 +1205,13 @@ impl Lexer {
 						))
 					}
 				} else {
-					match self.read_validated(r, &CLASS_XML_NAME, self.opts.max_token_length)? {
-						Endpoint::Eof => Err(Error::wfeof(ERRCTX_NAME)),
-						Endpoint::Limit => Err(Self::token_length_error()),
-						Endpoint::Delimiter(ch) => {
+					match self.read_validated(r, &CLASS_XML_NAME_BYTE, self.opts.max_token_length)? {
+						Endbyte::Eof => Err(Error::wfeof(ERRCTX_NAME)),
+						Endbyte::Limit => Err(Self::token_length_error()),
+						Endbyte::Delimiter(ch) => {
 							let next_state = self.lex_element_postblank(kind, ch)?;
-							let name = self.flush_scratchpad_as_name();
-							let metrics = self.metrics(ch.len());
+							let name = self.flush_scratchpad_as_name()?;
+							let metrics = self.metrics(1);
 							Ok(ST(
 								State::Element{
 									kind: kind,
@@ -1137,9 +1231,9 @@ impl Lexer {
 					}
 				}
 			},
-			ElementState::SpaceRequired | ElementState::Blank => match self.skip_matching(r, &CLASS_XML_SPACES) {
-				(_, Ok(Endpoint::Eof)) | (_, Ok(Endpoint::Limit)) => Err(Error::wfeof(ERRCTX_ELEMENT)),
-				(nmatching, Err(Error::IO(_))) if nmatching > 0 && state == ElementState::SpaceRequired => {
+			ElementState::SpaceRequired | ElementState::Blank => match self.skip_matching(r, &CLASS_XML_SPACE_BYTE) {
+				(_, Ok(Endbyte::Eof)) | (_, Ok(Endbyte::Limit)) => Err(Error::wfeof(ERRCTX_ELEMENT)),
+				(nmatching, Err(Error::EndOfBuffer)) if nmatching > 0 && state == ElementState::SpaceRequired => {
 					// we have to treat IO errors here specially and implicitly retry them (because we swallow this one). that is in line with the contract which says that IO errors are retriable
 					// this is because we need to transition from SpaceRequired to Blank after reading even only a single char. otherwise, we are not resilient against chunking.
 					Ok(ST(
@@ -1150,9 +1244,9 @@ impl Lexer {
 						None,
 					))
 				},
-				(nmatching, Ok(Endpoint::Delimiter(ch))) => {
-					self.eat_whitespace_metrics(ch.len());
-					let next_state = self.lex_element_postblank(kind, ch)?;
+				(nmatching, Ok(Endbyte::Delimiter(b))) => {
+					self.eat_whitespace_metrics(1);
+					let next_state = self.lex_element_postblank(kind, b)?;
 					if next_state == ElementState::Name && state == ElementState::SpaceRequired && nmatching == 0 {
 						Err(Error::NotWellFormed(WFError::InvalidSyntax(
 							"space required before attribute names",
@@ -1171,17 +1265,17 @@ impl Lexer {
 			},
 			// XML 1.0 §2.3 [10] AttValue
 			ElementState::AttributeValue(delim, selector, false) => match self.read_validated(r, &selector, self.opts.max_token_length)? {
-				Endpoint::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
-				Endpoint::Limit => Err(Self::token_length_error()),
-				Endpoint::Delimiter(utf8ch) => self.lex_attval_next(delim, selector, utf8ch, kind),
+				Endbyte::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
+				Endbyte::Limit => Err(Self::token_length_error()),
+				Endbyte::Delimiter(utf8ch) => self.lex_attval_next(delim, selector, utf8ch, kind),
 			},
 			// CRLF normalization for attributes; cannot reuse the element mechanism here because we have to carry around the delimiter and stuff
 			ElementState::AttributeValue(delim, selector, true) => {
-				let utf8ch = handle_eof(self.read_single(r)?, ERRCTX_ATTVAL)?;
-				if utf8ch.to_char() == '\r' {
+				let b = handle_eof(self.read_single(r)?, ERRCTX_ATTVAL)?;
+				if b == b'\r' {
 					// push the space, continue with CRLF
 					self.prep_scratchpad();
-					self.scratchpad.push_str(" ");
+					self.scratchpad.push(b' ');
 					Ok(ST(
 						State::Element{
 							kind: kind,
@@ -1191,35 +1285,35 @@ impl Lexer {
 					))
 				} else {
 					// not another CR, so we can move on to the default handling
-					self.lex_attval_next(delim, selector, utf8ch, kind)
+					self.lex_attval_next(delim, selector, b, kind)
 				}
 			},
 			ElementState::MaybeXMLDeclEnd => match self.read_single(r)? {
-				Some(ch) if ch.to_char() == '>' => {
+				Some(b) if b == b'>' => {
 					self.drop_scratchpad()?;
 					Ok(ST(
 						State::Content(ContentState::Whitespace),
 						Some(Token::XMLDeclEnd(self.metrics(0))),
 					))
 				},
-				Some(ch) => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				Some(b) => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 					ERRCTX_XML_DECL_END,
-					ch.to_char(),
+					b,
 					Some(&[">"]),
 				))),
 				None => Err(Error::wfeof(ERRCTX_XML_DECL_END)),
 			},
 			ElementState::MaybeHeadClose => match self.read_single(r)? {
-				Some(ch) if ch.to_char() == '>' => {
+				Some(b) if b == b'>' => {
 					self.drop_scratchpad()?;
 					Ok(ST(
 						State::Content(ContentState::Initial),
 						Some(Token::ElementHeadClose(self.metrics(0))),
 					))
 				},
-				Some(ch) => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				Some(b) => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 					ERRCTX_ELEMENT_CLOSE,
-					ch.to_char(),
+					b,
 					Some(&[">"]),
 				))),
 				None => Err(Error::wfeof(ERRCTX_ELEMENT_CLOSE)),
@@ -1243,19 +1337,19 @@ impl Lexer {
 		}
 	}
 
-	fn lex_reference<'r, R: CodepointRead>(&mut self, ctx: &'static str, ret: RefReturnState, kind: RefKind, r: &'r mut R) -> Result<ST> {
+	fn lex_reference(&mut self, ctx: &'static str, ret: RefReturnState, kind: RefKind, r: &mut &[u8]) -> Result<ST> {
 		let result = match kind {
-			RefKind::Entity => self.read_validated(r, &CLASS_XML_NAME, MAX_REFERENCE_LENGTH)?,
-			RefKind::Char(CharRefRadix::Decimal) => self.read_validated(r, &CLASS_XML_DECIMAL_DIGITS, MAX_REFERENCE_LENGTH)?,
-			RefKind::Char(CharRefRadix::Hexadecimal) => self.read_validated(r, &CLASS_XML_HEXADECIMAL_DIGITS, MAX_REFERENCE_LENGTH)?,
+			RefKind::Entity => self.read_validated(r, &CLASS_XML_NAME_BYTE, MAX_REFERENCE_LENGTH)?,
+			RefKind::Char(CharRefRadix::Decimal) => self.read_validated(r, &CLASS_XML_DECIMAL_DIGIT_BYTE, MAX_REFERENCE_LENGTH)?,
+			RefKind::Char(CharRefRadix::Hexadecimal) => self.read_validated(r, &CLASS_XML_HEXADECIMAL_DIGIT_BYTE, MAX_REFERENCE_LENGTH)?,
 		};
 		let result = match result {
-			Endpoint::Eof => return Err(Error::wfeof(ERRCTX_REF)),
-			Endpoint::Limit => return Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
-			Endpoint::Delimiter(utf8ch) => match utf8ch.to_char() {
-				'#' => {
+			Endbyte::Eof => return Err(Error::wfeof(ERRCTX_REF)),
+			Endbyte::Limit => return Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
+			Endbyte::Delimiter(b) => match b {
+				b'#' => {
 					if self.scratchpad.len() > 0 {
-						Err('#')
+						Err(b'#')
 					} else {
 						match kind {
 							RefKind::Entity => {
@@ -1268,13 +1362,13 @@ impl Lexer {
 									None,
 								))
 							},
-							_ => Err('#'),
+							_ => Err(b'#'),
 						}
 					}
 				},
-				'x' => {
+				b'x' => {
 					if self.scratchpad.len() > 0 {
-						Err('x')
+						Err(b'x')
 					} else {
 						match kind {
 							RefKind::Char(CharRefRadix::Decimal) => {
@@ -1287,11 +1381,11 @@ impl Lexer {
 									None,
 								))
 							},
-							_ => Err('x'),
+							_ => Err(b'x'),
 						}
 					}
 				},
-				';' => {
+				b';' => {
 					if self.scratchpad.len() == 0 {
 						return Err(Error::NotWellFormed(WFError::InvalidSyntax("empty reference")));
 					}
@@ -1300,8 +1394,16 @@ impl Lexer {
 					// the entity reference is now in the swap (which we have to clear now, too)
 					let entity = self.read_swap();
 					match kind {
-						RefKind::Entity => Ok(add_context(resolve_named_entity(entity.as_str(), &mut self.scratchpad), ctx)?),
-						RefKind::Char(radix) => Ok(add_context(resolve_char_reference(entity.as_str(), radix, &mut self.scratchpad), ctx)?),
+						RefKind::Entity => {
+							let b = add_context(resolve_named_entity(&entity[..]), ctx)?;
+							self.scratchpad.push(b);
+							Ok(())
+						},
+						RefKind::Char(radix) => {
+							// this is safe because the bytes allowed by the digit byte ranges are all plain ascii
+							let entity = unsafe { std::str::from_utf8_unchecked(&entity[..]) };
+							Ok(add_context(resolve_char_reference(entity, radix, &mut self.scratchpad), ctx)?)
+						},
 					}
 				}
 				c => Err(c),
@@ -1309,28 +1411,18 @@ impl Lexer {
 		};
 		match result {
 			Ok(_) => Ok(ST(ret.to_state(), None)),
-			Err(ch) => return Err(Error::NotWellFormed(WFError::UnexpectedChar(
+			Err(b) => return Err(Error::NotWellFormed(WFError::UnexpectedByte(
 				ERRCTX_REF,
-				ch,
+				b,
 				Some(&[";"]),
 			))),
 		}
 	}
 
-	/// Lex codepoints from the reader until either an error occurs, a valid
-	/// token is produced or a valid end-of-file situation is encountered.
-	///
-	/// If an [`Error::IO`] is encountered, that error is just returned
-	/// directly and it is valid to call `lex()` again. However, if an error
-	/// which is not [`Error::IO`] is encountered, the Lexer is poisoned and
-	/// all future calls to `lex()` will return a clone of the same error.
-	///
-	/// **Note**: While it is possible to swap the reader between calls, that
-	/// is highly not recommended as the lexer state may depend on lookaheads.
-	pub fn lex<'r, R: CodepointRead>(&mut self, r: &'r mut R) -> Result<Option<Token>>
+	fn lex_bytes_raw(&mut self, r: &mut &[u8]) -> Result<Option<Token>>
 	{
-		if let Some(e) = self.err.as_ref() {
-			return Err((**e).clone())
+		if let Some(e) = self.err {
+			return Err(e)
 		}
 
 		loop {
@@ -1341,15 +1433,14 @@ impl Lexer {
 				State::Eof => return Ok(None),
 			};
 			let st = match stresult {
-				Err(Error::IO(ioerr)) => {
+				Err(Error::EndOfBuffer) => {
 					// we do not cache I/O errors
-					return Err(Error::IO(ioerr));
+					return Err(Error::EndOfBuffer);
 				},
 				Err(other) => {
 					// we cache all other errors because we don't want to read / emit invalid data
-					let err = other.clone();
-					self.err = Some(Box::new(other));
-					return Err(err);
+					self.err = Some(other);
+					return Err(other);
 				},
 				Ok(st) => st,
 			};
@@ -1375,6 +1466,81 @@ impl Lexer {
 				}
 			}
 		}
+	}
+
+	/// Lex bytes from the buffer, advancing the slice for any byte consumed,
+	/// until either an error occurs, a valid token is produced or the buffer
+	/// is at its end.
+	///
+	/// **Note:** The lexer keeps some internal state which may cause a token
+	/// to be emitted even for an empty buffer! That means that even if your
+	/// backend currently has no more data available, you should call
+	/// `lex_bytes` with a corresponding empty buffer and eof flag until you
+	/// receive a non-token result.
+	///
+	/// # End-of-file handling
+	///
+	/// The `Lexer` can be used to process a streamed document. For this, it
+	/// needs to know whether the end of the buffer passed to this function
+	/// marks the end of the document or not. The caller signals this using
+	/// the `at_eof` flag.
+	///
+	/// If `at_eof` is false, the end of buffer is treated as a temporary
+	/// situation and a [`std::io::ErrorKind::WouldBlock`] I/O error is
+	/// returned when it is reached. Otherwise, the end of buffer is treated
+	/// as the end of file.
+	///
+	/// # Return value
+	///
+	/// Returns `None` if a valid end of file is reached, a token if a valid
+	/// token is encountered or an error otherwise.
+	#[inline]
+	pub fn lex_bytes(&mut self, r: &mut &[u8], at_eof: bool) -> CrateResult<Option<Token>> {
+		self.has_eof = at_eof;
+		Ok(self.lex_bytes_raw(r)?)
+	}
+
+	/// Lex bytes from the reader until either an error occurs, a valid
+	/// token is produced or a valid end-of-file situation is encountered.
+	///
+	/// This requires a [`std::io::BufRead`] for performance reasons. This
+	/// function will issue exactly one call to the `fill_buf()` method of the
+	/// reader.
+	///
+	/// # End-of-file handling
+	///
+	/// If `fill_buf()` returns an empty buffer, it is treated as the end of
+	/// file. At end of file, either the return value `None` is produced or an
+	/// error (usually a
+	/// [`Error::NotWellFormed`][crate::Error::NotWellFormed]).
+	///
+	/// # I/O error handling
+	///
+	/// Any I/O error is passed back to the caller, without invoking the lexer
+	/// internally. This allows any I/O error to be retried (though the
+	/// success of that will obviously depend on the Read struct). The I/O
+	/// error is wrapped in [`Error::IO`](crate::Error::IO).
+	///
+	/// # Return value
+	///
+	/// Returns `None` if a valid end of file is reached, a token if a valid
+	/// token is encountered or an error otherwise.
+	pub fn lex<R: io::BufRead + ?Sized>(&mut self, r: &mut R) -> CrateResult<Option<Token>> {
+		let (mut buf, eof): (&[u8], bool) = match r.fill_buf() {
+			Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+				// if we have a wouldblock, we need to pretend we had an empty buffer, but without the eof flag
+				// worst case it'll be converted to a wouldblock again
+				// this matters in some cases where the internal state already allows to emit a token. most prominently, this happens on element closures: the closing byte (b'>') has been read already which is encoded in the internal state and a corresponding token will be emitted even without more data available.
+				(&[], false)
+			},
+			Err(e) => return Err(e.into()),
+			Ok(b) => (b, b.len() == 0),
+		};
+		let orig_len = buf.len();
+		let result = self.lex_bytes(&mut buf, eof);
+		let new_len = buf.len();
+		r.consume(orig_len - new_len);
+		Ok(result?)
 	}
 
 	/// Release all temporary buffers
@@ -1408,36 +1574,31 @@ mod tests {
 	use std::io;
 	use std::fmt;
 	use std::error;
-	use std::convert::TryInto;
-	use crate::lexer::read::DecodingReader;
 	use crate::bufq::BufferQueue;
+	use crate::error::{Error as CrateError};
 
 	/// Stream tokens to the sink until the end of stream is reached.
-	fn stream_to_sink<'r, 's, 'l, R: CodepointRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> Result<()> {
+	fn stream_to_sink<'r, 's, 'l, R: io::BufRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> CrateResult<()> {
 		loop {
 			match l.lex(r) {
 				Ok(Some(tok)) => s.token(tok),
 				Ok(None) => break,
+				Err(CrateError::IO(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+					if let Ok(buf) = r.fill_buf() {
+						if buf.len() > 0 {
+							continue
+						}
+					}
+					return Err(CrateError::IO(e))
+				},
 				Err(e) => return Err(e),
 			}
 		}
 		Ok(())
 	}
 
-	fn stream_to_sink_from_bytes<'r, 's, 'l, R: io::BufRead + ?Sized, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> Result<()> {
-		let mut r = DecodingReader::new(r);
-		loop {
-			match l.lex(&mut r) {
-				Ok(Some(tok)) => {
-					s.token(tok);
-				},
-				Ok(None) => {
-					break;
-				},
-				Err(e) => return Err(e),
-			}
-		}
-		Ok(())
+	fn stream_to_sink_from_bytes<'r, 's, 'l, R: io::BufRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> CrateResult<()> {
+		stream_to_sink(l, r, s)
 	}
 
 	struct VecSink {
@@ -1480,43 +1641,41 @@ mod tests {
 		}
 	}
 
-	fn lex(data: &[u8], token_limit: usize) -> (Vec<Token>, Result<()>) {
+	fn lex(data: &[u8], token_limit: usize) -> (Vec<Token>, CrateResult<()>) {
 		let mut buff = io::BufReader::new(data);
-		let mut src = DecodingReader::new(&mut buff);
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
-		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
+		let result = stream_to_sink(&mut lexer, &mut buff, &mut sink);
 		(sink.dest, result)
 	}
 
-	fn lex_chunked(data: &[&[u8]], token_limit: usize) -> (Vec<Token>, Result<()>) {
+	fn lex_chunked(data: &[&[u8]], token_limit: usize) -> (Vec<Token>, CrateResult<()>) {
 		let mut buff = BufferQueue::new();
-		let mut src = DecodingReader::new(&mut buff);
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
 		for chunk in data.iter() {
-			src.get_mut().push(*chunk);
-			match stream_to_sink(&mut lexer, &mut src, &mut sink) {
-				Ok(()) => panic!("unexpected end of tokens"),Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
+			buff.push(*chunk);
+			match stream_to_sink(&mut lexer, &mut buff, &mut sink) {
+				Ok(()) => panic!("unexpected end of tokens"),
+				Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
 				Err(e) => return (sink.dest, Err(e)),
 			}
 		}
-		src.get_mut().push_eof();
-		let result = stream_to_sink(&mut lexer, &mut src, &mut sink);
+		buff.push_eof();
+		let result = stream_to_sink(&mut lexer, &mut buff, &mut sink);
 		(sink.dest, result)
 	}
 
-	fn lex_err(data: &[u8], token_limit: usize) -> Option<Error> {
+	fn lex_err(data: &[u8], token_limit: usize) -> Option<CrateError> {
 		let (_, r) = lex(data, token_limit);
 		r.err()
 	}
 
-	fn run_fuzz_test(data: &[u8], token_limit: usize) -> Result<Vec<Token>> {
+	fn run_fuzz_test(data: &[u8], token_limit: usize) -> CrateResult<Vec<Token>> {
 		let mut buff = io::BufReader::new(data);
-		let mut src = DecodingReader::new(&mut buff);
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
-		stream_to_sink(&mut lexer, &mut src, &mut sink)?;
+		stream_to_sink(&mut lexer, &mut buff, &mut sink)?;
 		Ok(sink.dest)
 	}
 
@@ -1536,7 +1695,7 @@ mod tests {
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
 		let err = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
-		assert!(!matches!(err, Error::NotWellFormed(WFError::InvalidEof(..))));
+		assert!(!matches!(err, CrateError::NotWellFormed(WFError::InvalidEof(..))));
 
 		assert_eq!(sink.dest[0], Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
 		assert_eq!(sink.dest.len(), 1);
@@ -1792,7 +1951,7 @@ mod tests {
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink);
-		assert!(matches!(result, Err(Error::NotWellFormed(_))));
+		assert!(matches!(result, Err(CrateError::NotWellFormed(_))));
 	}
 
 	#[test]
@@ -1879,7 +2038,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
-		assert!(matches!(result, Err(Error::RestrictedXml(_))));
+		assert!(matches!(result, Err(CrateError::RestrictedXml(_))));
 	}
 
 	#[test]
@@ -1890,7 +2049,7 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
-		assert!(matches!(result, Err(Error::RestrictedXml(_))));
+		assert!(matches!(result, Err(CrateError::RestrictedXml(_))));
 	}
 
 	#[test]
@@ -1901,18 +2060,20 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
 
-		assert!(matches!(result, Err(Error::RestrictedXml(_))));
+		assert!(matches!(result, Err(CrateError::RestrictedXml(_))));
 	}
 
 	#[test]
 	fn lexer_lex_restrict_attribute_value_by_token_length_even_with_entities() {
-		let src = &b"<a b='foob&amp;r'/>"[..];
+		let src = &b"<a b='foob&amp;rx'/>"[..];
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::with_options(LexerOptions::default().max_token_length(6));
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink);
-
-		assert!(matches!(result, Err(Error::RestrictedXml(_))));
+		match result {
+			Err(CrateError::RestrictedXml(_)) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
 	}
 
 	#[test]
@@ -1965,69 +2126,93 @@ mod tests {
 	}
 
 	#[test]
-	fn lexer_rejects_invalid_names() {
+	fn lexer_rejects_invalid_namestarts() {
 		let err = lex_err(b"<123/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+		match err {
+			CrateError::NotWellFormed(WFError::UnexpectedByte(..)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
 
 		let err = lex_err(b"<'foo/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+		match err {
+			CrateError::NotWellFormed(WFError::UnexpectedByte(..)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
 
 		let err = lex_err(b"<.bar/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+		match err {
+			CrateError::NotWellFormed(WFError::UnexpectedByte(..)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_rejects_invalid_names() {
+		let err = lex_err(b"<foo#/>", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::UnexpectedByte(..)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+
+		let err = lex_err(b"<f\\a/>", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::UnexpectedByte(..)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
 	}
 
 	#[test]
 	fn lexer_rejects_undeclared_or_invalid_references() {
 		let err = lex_err(b"&123;", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UndeclaredEntity)));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::UndeclaredEntity)));
 
 		let err = lex_err(b"&foobar;", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UndeclaredEntity)));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::UndeclaredEntity)));
 
 		let err = lex_err(b"&?;", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(..))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'?', _))));
 	}
 
 	#[test]
 	fn lexer_rejects_non_scalar_char_refs() {
 		let err = lex_err(b"&#x110000;", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_via_refs_in_text() {
 		let err = lex_err(b"&#x00;", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
 
 		let err = lex_err(b"&#x1f;", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_via_refs_in_attrs() {
 		let err = lex_err(b"<a foo='&#x00;'/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
 
 		let err = lex_err(b"<a foo='&#x1f;'/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_verbatim_in_text() {
 		let err = lex_err(b"\x00", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
 
 		let err = lex_err(b"\x1f", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_verbatim_in_attrs() {
 		let err = lex_err(b"<a foo='\x00'/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
 
 		let err = lex_err(b"<a foo='\x1f'/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
 	}
 
 	#[test]
@@ -2063,14 +2248,14 @@ mod tests {
 	#[test]
 	fn lexer_recovers_from_wouldblock() {
 		let seq = &b"<?xml version='1.0'?>"[..];
-		let mut r = DecodingReader::new(BufferQueue::new());
+		let mut r = BufferQueue::new();
 		let mut lexer = Lexer::new();
 		let mut sink: Vec<Token> = Vec::new();
 		for chunk in seq.chunks(5) {
-			r.get_mut().push(std::borrow::Cow::from(chunk));
+			r.push(std::borrow::Cow::from(chunk));
 			loop {
 				match lexer.lex(&mut r) {
-					Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
+					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
 					Err(other) => panic!("unexpected error: {:?}", other),
 					Ok(None) => panic!("unexpected eof signal: {:?}", lexer),
 					Ok(Some(tok)) => sink.push(tok),
@@ -2089,14 +2274,14 @@ mod tests {
 	#[test]
 	fn lexer_recovers_from_wouldblock_within_long_whitespace_with_correct_counting() {
 		let seq = &b"<?xml   version  =  '1.0'  ?>"[..];
-		let mut r = DecodingReader::new(BufferQueue::new());
+		let mut r = BufferQueue::new();
 		let mut lexer = Lexer::new();
 		let mut sink: Vec<Token> = Vec::new();
 		for chunk in seq.chunks(5) {
-			r.get_mut().push(std::borrow::Cow::from(chunk));
+			r.push(std::borrow::Cow::from(chunk));
 			loop {
 				match lexer.lex(&mut r) {
-					Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
+					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
 					Err(other) => panic!("unexpected error: {:?}", other),
 					Ok(None) => panic!("unexpected eof signal: {:?}", lexer),
 					Ok(Some(tok)) => sink.push(tok),
@@ -2115,31 +2300,31 @@ mod tests {
 	#[test]
 	fn lexer_rejects_missing_whitespace_between_attrvalue_and_attrname() {
 		let err = lex_err(b"<a a='x'b='y'/>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
 	}
 
 	#[test]
 	fn lexer_rejects_nonchar_in_cdata_section() {
 		let err = lex_err(b"<a><![CDATA[\x00]]></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 
 		let err = lex_err(b"<a><![CDATA[]\x00]]></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 
 		let err = lex_err(b"<a><![CDATA[]]\x00]]></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 	}
 
 	#[test]
 	fn lexer_rejects_cdata_end_in_text() {
 		let err = lex_err(b"<a>]]></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
 
 		let err = lex_err(b"<a>]]]></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
 
 		let err = lex_err(b"<a>]]]]></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
 	}
 
 	#[test]
@@ -2252,24 +2437,24 @@ mod tests {
 	#[test]
 	fn lexer_rejects_nonchar_in_cdata_end_in_text() {
 		let err = lex_err(b"<a>]\x00]></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 
 		let err = lex_err(b"<a>]]\x00></a>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
 	}
 
 	#[test]
 	fn lexer_rejects_numeric_start_of_name_in_closing_tag() {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"</4foo>", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(_, '4', None))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'4', None))));
 	}
 
 	#[test]
 	fn lexer_rejects_zero_length_name_in_closing_tag() {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"</ >", 128).unwrap();
-		assert!(matches!(err, Error::NotWellFormed(WFError::UnexpectedChar(_, ' ', None))));
+		assert!(matches!(err, CrateError::NotWellFormed(WFError::UnexpectedByte(_, b' ', None))));
 	}
 
 	#[test]
@@ -2321,7 +2506,7 @@ mod tests {
 	fn lexer_rejects_nonchar_after_cr() {
 		let err = lex_err(b"<a>\r\x01</a>", 128).unwrap();
 		match err {
-			Error::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
+			CrateError::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -2331,7 +2516,7 @@ mod tests {
 		// found with afl
 		let err = lex_err(b"<a><![CDATA[\r\x01]]></a>", 128).unwrap();
 		match err {
-			Error::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
+			CrateError::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -2514,5 +2699,126 @@ mod tests {
 			128,
 		);
 		r.unwrap();
+	}
+
+	#[test]
+	fn lexer_emits_close_tag_token_even_at_end_of_buffer() {
+		let mut buf = BufferQueue::new();
+		buf.push(&b"</foo>"[..]);
+		let mut lexer = Lexer::new();
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementFootStart(_, _))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHFEnd(_))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+	}
+
+	#[test]
+	fn lexer_catches_broken_utf8_sequence_at_end_of_file() {
+		let mut buf = &b"<xyz>\xf0\x9f\x8e"[..];
+		let mut lexer = Lexer::new();
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHeadStart(_, name))) => {
+				assert_eq!(name, "xyz");
+			},
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHFEnd(_))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Err(CrateError::InvalidUtf8Byte(_)) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+	}
+
+	#[test]
+	fn lexer_catches_incorrect_utf8_at_end_of_file() {
+		let mut buf = &b"<xyz>\xf0\x9f\x8e\xff"[..];
+		let mut lexer = Lexer::new();
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHeadStart(_, name))) => {
+				assert_eq!(name, "xyz");
+			},
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHFEnd(_))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Err(CrateError::InvalidUtf8Byte(_)) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+	}
+
+	#[test]
+	fn lexer_handles_chunked_utf8_fed_bytewise() {
+		let src = "<xyz>fööbär🎉</xyz>".as_bytes();
+		let mut buf = io::BufReader::with_capacity(1, src);
+		let mut lexer = Lexer::new();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHeadStart(_, name))) => {
+				assert_eq!(name, "xyz");
+			},
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHFEnd(_))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::Text(_, text))) => {
+				assert_eq!(text, "fööbär🎉");
+			},
+			other => panic!("unexpected result: {:?}", other),
+		};
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		lexer.lex(&mut buf).err().unwrap();
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementFootStart(_, name))) => {
+				assert_eq!(name, "xyz");
+			},
+			other => panic!("unexpected result: {:?}", other),
+		};
+		match lexer.lex(&mut buf) {
+			Ok(Some(Token::ElementHFEnd(_))) => (),
+			other => panic!("unexpected result: {:?}", other),
+		};
 	}
 }

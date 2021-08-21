@@ -2,6 +2,7 @@
 # XML 1.0 Parser
 */
 use std::fmt;
+use std::io;
 #[cfg(feature = "mt")]
 use std::sync::Arc;
 #[cfg(not(feature = "mt"))]
@@ -10,7 +11,7 @@ use std::result::Result as StdResult;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use crate::lexer::{Token, Lexer, CodepointRead, TokenMetrics};
+use crate::lexer::{Token, Lexer, TokenMetrics};
 use crate::error::*;
 use crate::strings::*;
 use crate::context;
@@ -803,14 +804,14 @@ impl fmt::Debug for Parser {
 	}
 }
 
-/// Wrapper around [`Lexer`](crate::Lexer) and
-/// [`CodepointRead`](crate::lexer::CodepointRead) to provide a [`TokenRead`].
-pub struct LexerAdapter<R: CodepointRead + Sized> {
+/// Wrapper around [`Lexer`](crate::Lexer) and [`std::io::BufRead`] to provide
+/// a [`TokenRead`].
+pub struct LexerAdapter<R: io::BufRead> {
 	lexer: Lexer,
 	src: R,
 }
 
-impl<R: CodepointRead + Sized> LexerAdapter<R> {
+impl<R: io::BufRead> LexerAdapter<R> {
 	/// Wraps a lexer and a codepoint source
 	pub fn new(lexer: Lexer, src: R) -> Self {
 		Self{
@@ -845,7 +846,7 @@ impl<R: CodepointRead + Sized> LexerAdapter<R> {
 	}
 }
 
-impl<R: CodepointRead + Sized> TokenRead for LexerAdapter<R> {
+impl<R: io::BufRead> TokenRead for LexerAdapter<R> {
 	fn read(&mut self) -> Result<Option<Token>> {
 		self.lexer.lex(&mut self.src)
 	}

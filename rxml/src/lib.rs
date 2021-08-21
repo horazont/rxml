@@ -61,6 +61,7 @@ pub mod parser;
 mod bufq;
 pub mod strings;
 mod context;
+mod errctx;
 
 #[cfg(test)]
 mod tests;
@@ -174,7 +175,7 @@ assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0
 ```
 */
 pub struct FeedParser<'x> {
-	token_source: LexerAdapter<DecodingReader<BufferQueue<'x>>>,
+	token_source: LexerAdapter<BufferQueue<'x>>,
 	parser: Parser,
 }
 
@@ -203,7 +204,7 @@ impl<'x> FeedParser<'x> {
 		FeedParser{
 			token_source: LexerAdapter::new(
 				Lexer::new(),
-				DecodingReader::new(BufferQueue::new()),
+				BufferQueue::new(),
 			),
 			parser: Parser::with_context(ctx),
 		}
@@ -222,7 +223,7 @@ impl<'x> FeedParser<'x> {
 	/// If [`FeedParser::feed_eof()`] has been called before.
 	pub fn feed<'a: 'x, T: Into<std::borrow::Cow<'a, [u8]>>>(&mut self, data: T)
 	{
-		self.token_source.get_mut().get_mut().push(data);
+		self.token_source.get_mut().push(data);
 	}
 
 	/// Feed the eof marker to the parser.
@@ -234,7 +235,7 @@ impl<'x> FeedParser<'x> {
 	/// After the eof marker has been fed to the parser, no further data can
 	/// be fed.
 	pub fn feed_eof(&mut self) {
-		self.token_source.get_mut().get_mut().push_eof();
+		self.token_source.get_mut().push_eof();
 	}
 
 	/// Return the amount of bytes which have not been read from the buffer
@@ -245,7 +246,7 @@ impl<'x> FeedParser<'x> {
 	/// to `feed()`) has been processed (and only if that chunk is owned by
 	/// the parser).
 	pub fn buffered(&self) -> usize {
-		self.token_source.get_ref().get_ref().len()
+		self.token_source.get_ref().len()
 	}
 
 	/// Return a reference to the internal buffer BufferQueue
@@ -253,7 +254,7 @@ impl<'x> FeedParser<'x> {
 	/// This can be used to force dropping of all memory in case of error
 	/// conditions.
 	pub fn get_buffer_mut(&mut self) -> &mut BufferQueue<'x> {
-		self.token_source.get_mut().get_mut()
+		self.token_source.get_mut()
 	}
 
 	/// Release all temporary buffers
@@ -307,12 +308,12 @@ let ev = pp.read();
 assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0)));
 ```
 */
-pub struct PullParser<T: io::Read + Sized> {
-	token_source: LexerAdapter<DecodingReader<T>>,
+pub struct PullParser<T: io::BufRead> {
 	parser: Parser,
+	token_source: LexerAdapter<T>,
 }
 
-impl<T: io::Read + Sized> PullParser<T> {
+impl<T: io::BufRead> PullParser<T> {
 	/// Create a new PullParser, wrapping the given reader.
 	///
 	/// **Note:** It is highly recommended to wrap a common reader into
@@ -322,14 +323,14 @@ impl<T: io::Read + Sized> PullParser<T> {
 		PullParser{
 			token_source: LexerAdapter::new(
 				Lexer::new(),
-				DecodingReader::new(r),
+				r,
 			),
 			parser: Parser::new(),
 		}
 	}
 }
 
-impl<T: io::Read + Sized> EventRead for PullParser<T> {
+impl<T: io::BufRead> EventRead for PullParser<T> {
 	/// Read a single event from the parser.
 	///
 	/// If the EOF has been reached with a valid document, `None` is returned.

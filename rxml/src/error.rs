@@ -13,26 +13,10 @@ use std::result::Result as StdResult;
 
 use rxml_validation::{Error as ValidationError};
 
-pub const ERRCTX_UNKNOWN: &'static str = "in unknown context";
-pub const ERRCTX_TEXT: &'static str = "in text node";
-pub const ERRCTX_ATTVAL: &'static str = "in attribute value";
-pub const ERRCTX_NAME: &'static str = "in name";
-pub const ERRCTX_ATTNAME: &'static str = "in attribute name";
-pub const ERRCTX_NAMESTART: &'static str = "at start of name";
-pub const ERRCTX_ELEMENT: &'static str = "in element";
-pub const ERRCTX_ELEMENT_FOOT: &'static str = "in element footer";
-pub const ERRCTX_ELEMENT_CLOSE: &'static str = "at element close";
-pub const ERRCTX_CDATA_SECTION: &'static str = "in CDATA section";
-pub const ERRCTX_CDATA_SECTION_START: &'static str = "at CDATA section marker";
-pub const ERRCTX_XML_DECL: &'static str = "in XML declaration";
-pub const ERRCTX_XML_DECL_START: &'static str = "at start of XML declaration";
-pub const ERRCTX_XML_DECL_END: &'static str = "at end of XML declaration";
-pub const ERRCTX_REF: &'static str = "in entity or character reference";
-pub const ERRCTX_DOCBEGIN: &'static str = "at beginning of document";
-pub const ERRCTX_DOCEND: &'static str = "at end of document";
+pub use crate::errctx::*;
 
 /// Violation of a well-formedness constraint or the XML 1.0 grammar.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum WFError {
 	/// End-of-file encountered during a construct where more data was
 	/// expected.
@@ -57,6 +41,11 @@ pub enum WFError {
 	///
 	/// The contents are implementation details.
 	UnexpectedChar(&'static str, char, Option<&'static [&'static str]>),
+
+	/// Byte which was not expected at that point in the grammar.
+	///
+	/// The contents are implementation details.
+	UnexpectedByte(&'static str, u8, Option<&'static [&'static str]>),
 
 	/// Generalized invalid syntactic construct which does not fit into any
 	/// of the other categories.
@@ -118,7 +107,24 @@ impl fmt::Display for WFError {
 					f.write_str(")")
 				}
 			},
+			WFError::UnexpectedByte(ctx, b, Some(opts)) if opts.len() > 0 => {
+				write!(f, "0x{:x} not allowed {} (expected ", *b, ctx)?;
+				if opts.len() == 1 {
+					f.write_str(opts[0])?;
+					f.write_str(")")
+				} else {
+					f.write_str("one of: ")?;
+					for (i, opt) in opts.iter().enumerate() {
+						if i > 0 {
+							f.write_str(", ")?;
+						}
+						f.write_str(*opt)?;
+					}
+					f.write_str(")")
+				}
+			},
 			WFError::UnexpectedChar(ctx, ch, _) => write!(f, "U+{:x} not allowed {}", *ch as u32, ctx),
+			WFError::UnexpectedByte(ctx, b, _) => write!(f, "0x{:x} not allowed {}", *b, ctx),
 			WFError::InvalidSyntax(msg) => write!(f, "invalid syntax: {}", msg),
 			WFError::UnexpectedToken(ctx, tok, Some(opts)) if opts.len() > 0 => {
 				write!(f, "unexpected {} token {} (expected ", tok, ctx)?;
@@ -268,10 +274,8 @@ pub enum Error {
 	/// **Note:** When an unexpected end-of-file situation is encountered during parsing or lexing, that is signalled using [`Error::NotWellFormed`] instead of a [`std::io::ErrorKind::UnexpectedEof`] error.
 	IO(IOErrorWrapper),
 
-	/// An invalid UTF-8 start byte was encountered during decoding.
-	InvalidStartByte(u8),
-	/// An invalid UTF-8 continuation byte was encountered during decoding.
-	InvalidContByte(u8),
+	/// An invalid UTF-8 byte was encountered during decoding.
+	InvalidUtf8Byte(u8),
 	/// An invalid Unicode scalar value was encountered during decoding.
 	InvalidChar(u32),
 	/// A violation of the XML 1.0 grammar or a well-formedness constraint was
@@ -337,8 +341,7 @@ impl fmt::Display for Error {
 			Error::NotWellFormed(e) => write!(f, "not-well-formed: {}", e),
 			Error::NotNamespaceWellFormed(e) => write!(f, "not namespace-well-formed: {}", e),
 			Error::RestrictedXml(msg) => write!(f, "restricted xml: {}", msg),
-			Error::InvalidStartByte(b) => write!(f, "invalid utf-8 start byte: \\x{:02x}", b),
-			Error::InvalidContByte(b) => write!(f, "invalid utf-8 continuation byte: \\x{:02x}", b),
+			Error::InvalidUtf8Byte(b) => write!(f, "invalid utf-8 byte: \\x{:02x}", b),
 			Error::InvalidChar(ch) => write!(f, "invalid char: U+{:08x}", ch),
 			Error::IO(e) => write!(f, "I/O error: {}", e),
 		}
@@ -352,8 +355,7 @@ impl error::Error for Error {
 			Error::NotNamespaceWellFormed(_) |
 				Error::NotWellFormed(_) |
 				Error::RestrictedXml(_) |
-				Error::InvalidStartByte(_) |
-				Error::InvalidContByte(_) |
+				Error::InvalidUtf8Byte(_) |
 				Error::InvalidChar(_) => None,
 		}
 	}
