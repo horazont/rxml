@@ -503,7 +503,7 @@ impl Lexer {
 		}
 	}
 
-	fn token_length_error(&self) -> Error {
+	fn token_length_error() -> Error {
 		Error::RestrictedXml("long name or reference")
 	}
 
@@ -1114,7 +1114,7 @@ impl Lexer {
 				} else {
 					match self.read_validated(r, &CLASS_XML_NAME, self.opts.max_token_length)? {
 						Endpoint::Eof => Err(Error::wfeof(ERRCTX_NAME)),
-						Endpoint::Limit => Err(self.token_length_error()),
+						Endpoint::Limit => Err(Self::token_length_error()),
 						Endpoint::Delimiter(ch) => {
 							let next_state = self.lex_element_postblank(kind, ch)?;
 							let name = self.flush_scratchpad_as_name();
@@ -1173,7 +1173,7 @@ impl Lexer {
 			// XML 1.0 §2.3 [10] AttValue
 			ElementState::AttributeValue(delim, selector, false) => match self.read_validated(r, &selector, self.opts.max_token_length)? {
 				Endpoint::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
-				Endpoint::Limit => Err(self.token_length_error()),
+				Endpoint::Limit => Err(Self::token_length_error()),
 				Endpoint::Delimiter(utf8ch) => self.lex_attval_next(delim, selector, utf8ch, kind),
 			},
 			// CRLF normalization for attributes; cannot reuse the element mechanism here because we have to carry around the delimiter and stuff
