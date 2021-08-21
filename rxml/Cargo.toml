@@ -30,3 +30,16 @@ async = ["tokio", "bytes", "async-trait", "mt"]
 [dev-dependencies]
 tokio = { version = "^1", features = ["rt", "macros"] }
 tokio-test = { version = "^0.4" }
+criterion = { version = "^0.3", features = ["html_reports"] }
+
+[[bench]]
+name = "parse"
+harness = false
+
+[[bench]]
+name = "q"
+harness = false
+
+[[bench]]
+name = "utf8dec"
+harness = false
