@@ -1505,6 +1505,10 @@ impl Lexer {
 	/// function will issue exactly one call to the `fill_buf()` method of the
 	/// reader.
 	///
+	/// **Note:** The lexer keeps some internal state which may cause a token
+	/// to be emitted even if the backing reader currently has no data
+	/// available.
+	///
 	/// # End-of-file handling
 	///
 	/// If `fill_buf()` returns an empty buffer, it is treated as the end of
@@ -1514,10 +1518,22 @@ impl Lexer {
 	///
 	/// # I/O error handling
 	///
-	/// Any I/O error is passed back to the caller, without invoking the lexer
-	/// internally. This allows any I/O error to be retried (though the
-	/// success of that will obviously depend on the Read struct). The I/O
-	/// error is wrapped in [`Error::IO`](crate::Error::IO).
+	/// Any I/O error (except for WouldBlock) is passed back to the caller,
+	/// without invoking the lexer internally. This allows any I/O error to be
+	/// retried (though the success of that will obviously depend on the Read
+	/// struct). The I/O error is wrapped in [`Error::IO`](crate::Error::IO).
+	///
+	/// If the reader returns an [`std::io::ErrorKind::WouldBlock`] error, the
+	/// lexer *is* invoked, as even an empty buffer may emit a token in some
+	/// edge cases (one important one being at the end of a closing element
+	/// tag; here, a network-transmitted message may conceivably end and it is
+	/// important for streaming parsing to emit that token even without
+	/// further data arriving).
+	///
+	/// # Blocking I/O
+	///
+	/// Please see the documentation of [`PullParser`][crate::PullParser] for
+	/// important caveats about blocking I/O.
 	///
 	/// # Return value
 	///

@@ -293,6 +293,16 @@ data available (or returns an error).
 Interaction with a `PullParser` should happen exclusively via the
 [`EventRead`] trait.
 
+## Blocking I/O
+
+If the [`PullParser`] is used with blocking I/O and a source which may block for a significant amount of time (e.g. a network socket), some events may be emitted with significant delay. This is due to an edge case where the lexer may emit a token without consuming a byte from the source.
+
+This internal state of the lexer is not observable from the outside, but it affects most importantly closing element tags. In practice, this means that the last closing element tag of a "stanza" of XML is only going to be emitted once the first byte of the next stanza has been made available through the BufRead.
+
+This only affects blocking I/O, because a non-blocking source will return [`std::io::ErrorKind::WouldBlock`] from the read call and yield control back to the parser to emit the event.
+
+In general, for networked operations, it is recommended to use the [`FeedParser`] or [`AsyncParser`] instead of the [`PullParser`].
+
 ## Example
 
 ```
