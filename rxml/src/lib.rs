@@ -80,8 +80,7 @@ pub use context::Context;
 
 #[cfg(feature = "async")]
 use {
-	tokio::io::{AsyncRead, AsyncReadExt},
-	bytes::{BytesMut, BufMut},
+	tokio::io::{AsyncBufRead, AsyncBufReadExt},
 	async_trait::async_trait,
 };
 
@@ -421,11 +420,10 @@ pub trait AsyncEventRead {
 	}
 }
 
-#[cfg(feature = "async")]
 /**
 # Asynchronous parsing
 
-The [`AsyncParser`] allows parsing XML documents from a [`tokio::io::AsyncRead`], asynchronously. It operates similarly as the [`PullParser`] does, but instead of blocking the task, it will yield control to other tasks if the backend is not able to supply data immediately.
+The [`AsyncParser`] allows parsing XML documents from a [`tokio::io::AsyncBufRead`], asynchronously. It operates similarly as the [`PullParser`] does, but instead of blocking the task, it will yield control to other tasks if the backend is not able to supply data immediately.
 
 Interaction with a `AsyncParser` should happen exclusively via the [`AsyncEventRead`] trait.
 
@@ -445,56 +443,115 @@ let ev = pp.read().await;
 assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0)));
 # })
 */
-pub struct AsyncParser<T: AsyncRead + Unpin> {
+#[cfg(feature = "async")]
+pub struct AsyncParser<T: AsyncBufRead + Unpin> {
 	reader: T,
-	inner: FeedParser<'static>,
+	lexer: Lexer,
+	parser: Parser,
+	blocked: bool,
 }
 
 #[cfg(feature = "async")]
-impl<T: AsyncRead + Unpin + Send> AsyncParser<T> {
+struct AsyncLexerAdapter<'x, 'y> {
+	lexer: &'x mut Lexer,
+	buf: &'x mut &'y [u8],
+	blocked: &'x mut bool,
+}
+
+#[cfg(feature = "async")]
+impl<'x, 'y> parser::TokenRead for AsyncLexerAdapter<'x, 'y> {
+	fn read(&mut self) -> Result<Option<lexer::Token>> {
+		match self.lexer.lex_bytes(self.buf, false) {
+			Err(Error::IO(ioerr)) => {
+				*self.blocked = true;
+				Err(Error::IO(ioerr))
+			},
+			other => {
+				*self.blocked = false;
+				other
+			},
+		}
+	}
+}
+
+#[cfg(feature = "async")]
+struct EofLexerAdapter<'x> {
+	lexer: &'x mut Lexer,
+}
+
+#[cfg(feature = "async")]
+impl<'x> parser::TokenRead for EofLexerAdapter<'x> {
+	fn read(&mut self) -> Result<Option<lexer::Token>> {
+		let mut buf: &'static [u8] = &[];
+		self.lexer.lex_bytes(&mut buf, true)
+	}
+}
+
+#[cfg(feature = "async")]
+impl<T: AsyncBufRead + Unpin + Send> AsyncParser<T> {
 	pub fn new(r: T) -> Self {
 		Self{
 			reader: r,
-			inner: FeedParser::new(),
+			lexer: Lexer::new(),
+			parser: Parser::new(),
+			blocked: true,
+		}
+	}
+
+	#[inline]
+	fn parse(lexer: &mut Lexer, parser: &mut Parser, buf: &mut &[u8], blocked: &mut bool) -> (usize, Option<Result<Option<Event>>>) {
+		let old_len = buf.len();
+		let result = parser.parse(&mut AsyncLexerAdapter{
+			lexer,
+			buf,
+			blocked,
+		});
+		let new_len = buf.len();
+		let read = old_len - new_len;
+		match result {
+			Ok(v) => return (read, Some(Ok(v))),
+			Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (read, None),
+			Err(e) => return (read, Some(Err(e))),
 		}
 	}
 }
 
 #[cfg(feature = "async")]
 #[async_trait]
-impl<T: AsyncRead + Unpin + Send> AsyncEventRead for AsyncParser<T> {
+impl<T: AsyncBufRead + Unpin + Send> AsyncEventRead for AsyncParser<T> {
 	async fn read(&mut self) -> Result<Option<Event>> {
-		loop {
-			if self.inner.get_buffer_mut().eof_pushed() {
-				break;
+		// The blocked flag is controlled by the AsyncLexerAdapter. If the lexer returns with an I/O error, we set this flag to true (i.e. re-try I/O immediately).
+		// If the lexer returns anything else (i.e. a non-I/O error or a token or eof), we set the flag to false, causing an empty-buffer-read to be performed before trying I/O on the source.
+		// `blocked` is also automatically false on parser errors because:
+		// - the parser *always* needs a token (or eof) to cause an error in the first place
+		// - to obtain a token or eof, the lexer needs to return one
+		// - if the lexer returns token or eof, blocked is set to false
+		// - on a parser error, the parser does not call the lexer, so it cannot flip the blocked bit anymore
+		// As a third case, `blocked` is also automatically false if the parser has more events to emit from the same token:
+		// - to emit an event in the first place, the parser needs a token or eof
+		// - if the parser has more events in the queue, it does not call the lexer but emits them directly
+		// - thus, the blocked bit cannot be set to true
+		// This has three effects:
+		// 1. If the lexer (or parser) causes an error, it will be re-returned immediately without any reads from the AsyncBufRead, because blocked is false (so we do a empty-buffer-read) and the parser will re-emit any fatal error.
+		// 2. If the lexer has internal state which causes it to emit another token even without reading further data, we give the parser a chance to convert that token to an event without awaiting on the source in between. This effectively avoids the caveat the PullParser has with blocking I/O (see the doc there for details, as well as the docs of Lexer::lex and Lexer::lex_bytes).
+		// 3. If the parser has events buffered, they will be emitted without further reads from the source.
+		if !self.blocked {
+			let mut empty: &[u8] = &[];
+			let (_, result) = Self::parse(&mut self.lexer, &mut self.parser, &mut empty, &mut self.blocked);
+			if let Some(result) = result {
+				return result
 			}
-
-			if self.inner.buffered() > 0 {
-				// if anything is buffered, we should read that
-				let ev = self.inner.read()?;
-				if ev.is_some() {
-					return Ok(ev)
-				}
-			}
-			debug_assert!(self.inner.buffered() == 0);
-			// input either had no data or the data was not sufficient for an event; read more data
-			// TODO: use some magic around Box<> and unsafe{} to re-use the same buffer instead of allocating a new one
-			// TODO: make this configurable
-			static BUFFER_SIZE: usize = 8192;
-			let mut buf = BytesMut::with_capacity(BUFFER_SIZE).limit(BUFFER_SIZE);
-			let len = self.reader.read_buf(&mut buf).await?;
-			if len == 0 {
-				self.inner.feed_eof();
-				break;
-			}
-
-			let mut buf = buf.into_inner();
-			buf.resize(len, 0);
-			let buf = buf.freeze();
-			// TODO: avoid this nasty copy
-			self.inner.feed(buf.to_vec());
 		}
-		// reached EOF
-		self.inner.read()
+		loop {
+			let mut buf = self.reader.fill_buf().await?;
+			if buf.len() == 0 {
+				return self.parser.parse(&mut EofLexerAdapter{lexer: &mut self.lexer});
+			}
+			let (nread, result) = Self::parse(&mut self.lexer, &mut self.parser, &mut buf, &mut self.blocked);
+			self.reader.consume(nread);
+			if let Some(result) = result {
+				return result
+			}
+		}
 	}
 }
