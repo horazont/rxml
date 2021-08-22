@@ -69,7 +69,7 @@ mod tests;
 #[doc(inline)]
 pub use error::{Error, Result};
 #[doc(inline)]
-pub use lexer::{Lexer, LexerOptions, DecodingReader};
+pub use lexer::{Lexer, LexerOptions};
 #[doc(inline)]
 pub use parser::{QName, Parser, Event, LexerAdapter, XMLVersion, XMLNS_XML};
 #[doc(inline)]

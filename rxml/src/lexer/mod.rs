@@ -17,8 +17,6 @@ use crate::strings::*;
 use crate::errctx::*;
 use ranges::*;
 
-pub use read::{Utf8Char, Utf8Decoder, CodepointRead, DecodingReader};
-
 /// Carry information about where in the stream the token was observed
 ///
 /// Tokens are not necessarily consecutive. Specifically, it is possible that
