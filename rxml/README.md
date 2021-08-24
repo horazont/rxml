@@ -21,6 +21,7 @@ allocated for security issues in releases where this text is present.
 * XML 1.0 only
 * Streamed parsing (parser emits a subset of SAX events)
 * Can be driven push- and pull-based
+* Tokio-based asynchronicity supported via the `async` feature and `AsyncParser`.
 
 ## Example
 
