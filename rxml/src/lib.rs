@@ -63,9 +63,10 @@ mod bufq;
 pub mod strings;
 mod context;
 mod errctx;
+pub mod writer;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 #[doc(inline)]
 pub use error::{Error, Result};
@@ -74,10 +75,11 @@ pub use lexer::{Lexer, LexerOptions};
 #[doc(inline)]
 pub use parser::{QName, Parser, Event, LexerAdapter, XMLVersion, XMLNS_XML};
 #[doc(inline)]
+pub use writer::{Encoder, Item};
+#[doc(inline)]
 pub use bufq::BufferQueue;
 pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
 pub use context::Context;
-
 
 #[cfg(feature = "async")]
 use {

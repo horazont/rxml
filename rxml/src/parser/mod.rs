@@ -17,8 +17,10 @@ use crate::strings::*;
 use crate::context;
 
 pub const XMLNS_XML: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
+pub const XMLNS_XMLNS: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/2000/xmlns/") };
 
-pub type QName = (Option<RcPtr<CData>>, NCName);
+pub type NamespaceName = RcPtr<CData>;
+pub type QName = (Option<NamespaceName>, NCName);
 
 /// Wrapper pointer around namespace URIs
 ///
@@ -38,7 +40,7 @@ pub type RcPtr<T> = Rc<T>;
 
 Only version 1.0 is supported.
 */
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XMLVersion {
 	/// XML Version 1.0
 	V1_0,
@@ -88,7 +90,7 @@ a bit of the XML document which has been parsed.
 Each event has [`EventMetrics`] attached which give information about the
 number of bytes from the input stream used to generate the event.
 */
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Event {
 	/// The XML declaration.
 	///
