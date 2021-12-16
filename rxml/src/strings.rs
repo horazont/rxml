@@ -35,7 +35,7 @@ In general, owned values are constructed using the [`std::convert::TryInto`]
 mechanism, from other string types. Supported source types are:
 
 * [`String`] (copies for [`Name`] and [`NCName`], moves for [`CData`])
-* [`smartstring::alias::String`] (copies for [`CData`], moves for [`Name`] and [`NCName])
+* [`smartstring::alias::String`] (copies for [`CData`], moves for [`Name`] and [`NCName`])
 * [`str`] (copies for all types except the slice types)
 
 In addition, the following conversions can be done without extra checking and
