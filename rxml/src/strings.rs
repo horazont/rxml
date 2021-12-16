@@ -51,6 +51,7 @@ The inverse directions are only available through `try_into`.
 */
 
 use std::ops::Deref;
+use std::cmp::{PartialOrd, Ordering};
 use std::fmt;
 use std::convert::{TryFrom, TryInto};
 use std::borrow::{Borrow, ToOwned, Cow};
@@ -78,7 +79,7 @@ macro_rules! rxml_custom_string_type {
 		pub struct $name:ident($string:ty) use $check:ident => $borrowed:ident;
 	) => {
 		$(#[$outer])*
-		#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+		#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord)]
 		#[repr(transparent)]
 		pub struct $name($string);
 
@@ -222,6 +223,12 @@ macro_rules! rxml_custom_string_type {
 			}
 		}
 
+		impl PartialOrd<$name> for $name {
+			fn partial_cmp(&self, other: &$name) -> Option<Ordering> {
+				self.0.partial_cmp(&other.0)
+			}
+		}
+
 		impl From<$name> for String {
 			fn from(other: $name) -> Self {
 				other.0.into()
@@ -287,7 +294,7 @@ macro_rules! rxml_custom_str_type {
 		pub struct $name:ident(str) use $check:ident => $owned:ident;
 	) => {
 		$(#[$outer])*
-		#[derive(Debug, Hash, PartialEq, Eq)]
+		#[derive(Debug, Hash, PartialEq, Eq, Ord)]
 		#[repr(transparent)]
 		pub struct $name(str);
 
@@ -331,6 +338,12 @@ macro_rules! rxml_custom_str_type {
 		impl PartialEq<$name> for str {
 			fn eq(&self, other: &$name) -> bool {
 				self == &other.0
+			}
+		}
+
+		impl PartialOrd<$name> for $name {
+			fn partial_cmp(&self, other: &$name) -> Option<Ordering> {
+				self.0.partial_cmp(&other.0)
 			}
 		}
 
