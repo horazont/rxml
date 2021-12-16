@@ -60,67 +60,380 @@ use rxml_validation::selectors;
 use rxml_validation::selectors::CharSelector;
 pub use rxml_validation::{validate_name, validate_ncname, validate_cdata};
 
-/// String which conforms to the Name production of XML 1.0.
-///
-/// [`Name`] corresponds to a (restricted) [`String`]. For a [`str`]-like type
-/// with the same restrictions, see [`NameStr`]. `&NameStr` can be created
-/// from a string literal at compile time using the `xml_name` macro from
-/// [`rxml_proc`](https://docs.rs/rxml_proc).
-///
-/// Since [`Name`] derefs to [`String`], all (non-mutable) methods from
-/// [`String`] are available.
-///
-/// # Formal definition
-///
-/// The data inside [`Name`] (and [`NameStr`]) is guaranteed to conform to
-/// the `Name` production of the below grammar, quoted from
-/// [XML 1.0 § 2.3](https://www.w3.org/TR/REC-xml/#NT-NameStartChar):
-///
-/// ```text
-/// [4]  NameStartChar ::= ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6]
-///                        | [#xD8-#xF6] | [#xF8-#x2FF] | [#x370-#x37D]
-///                        | [#x37F-#x1FFF] | [#x200C-#x200D]
-///                        | [#x2070-#x218F] | [#x2C00-#x2FEF]
-///                        | [#x3001-#xD7FF] | [#xF900-#xFDCF]
-///                        | [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
-/// [4a] NameChar      ::= NameStartChar | "-" | "." | [0-9] | #xB7
-///                        | [#x0300-#x036F] | [#x203F-#x2040]
-/// [5]  Name          ::= NameStartChar (NameChar)*
-/// ```
-#[derive(Hash, PartialEq, Debug, Clone)]
-pub struct Name(SmartString);
+macro_rules! rxml_unsafe_str_construct_doc {
+	($name:ident, $other:ident) => {
+		concat!(
+			"Construct a ", stringify!($name), " without enforcing anything\n",
+			"\n",
+			"# Safety\n",
+			"\n",
+			"The caller is responsible for ensuring that the passed ", stringify!($other), " is in fact a valid ", stringify!($name), ".\n",
+		)
+	}
+}
+
+macro_rules! rxml_custom_string_type {
+	(
+		$(#[$outer:meta])*
+		pub struct $name:ident($string:ty) use $check:ident => $borrowed:ident;
+	) => {
+		$(#[$outer])*
+		#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+		#[repr(transparent)]
+		pub struct $name($string);
+
+		impl $name {
+			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+			pub fn from_str<T: AsRef<str>>(s: T) -> Result<Self, WFError> {
+				s.as_ref().try_into()
+			}
+
+			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+			pub fn from_string<T: Into<String>>(s: T) -> Result<Self, WFError> {
+				s.into().try_into()
+			}
+
+			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+			pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Self, WFError> {
+				s.into().try_into()
+			}
+
+			pub fn as_string(self) -> String {
+				self.0.into()
+			}
+
+			pub fn as_str(&self) -> &str {
+				self.0.as_str()
+			}
+
+			#[doc = rxml_unsafe_str_construct_doc!($name, str)]
+			pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> Self {
+				Self(s.as_ref().into())
+			}
+
+			#[doc = rxml_unsafe_str_construct_doc!($name, String)]
+			pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> Self {
+				Self(s.into().into())
+			}
+
+			#[doc = rxml_unsafe_str_construct_doc!($name, SmartString)]
+			pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> Self {
+				Self(s.into().into())
+			}
+		}
+
+		impl Deref for $name {
+			type Target = $borrowed;
+
+			fn deref(&self) -> &Self::Target {
+				// SAFETY: $borrowed is assumed to use the same check; this is
+				// enforced by using the pair macro.
+				unsafe { $borrowed::from_str_unchecked(&self.0) }
+			}
+		}
+
+		impl Borrow<$string> for $name {
+			fn borrow(&self) -> &$string {
+				&self.0
+			}
+		}
+
+		impl Borrow<$borrowed> for $name {
+			fn borrow(&self) -> &$borrowed {
+				// SAFETY: $borrowed is assumed to use the same check; this is
+				// enforced by using the pair macro.
+				unsafe { $borrowed::from_str_unchecked(&self.0) }
+			}
+		}
+
+		impl Borrow<str> for $name {
+			fn borrow(&self) -> &str {
+				&self.0
+			}
+		}
+
+		impl AsRef<$string> for $name {
+			fn as_ref(&self) -> &$string {
+				&self.0
+			}
+		}
+
+		impl AsRef<$borrowed> for $name {
+			fn as_ref(&self) -> &$borrowed {
+				// SAFETY: $borrowed is assumed to use the same check; this is
+				// enforced by using the pair macro.
+				unsafe { $borrowed::from_str_unchecked(&self.0) }
+			}
+		}
+
+		impl AsRef<str> for $name {
+			fn as_ref(&self) -> &str {
+				&self.0
+			}
+		}
+
+		impl PartialEq<str> for $name {
+			fn eq(&self, other: &str) -> bool {
+				&self.0 == other
+			}
+		}
+
+		// following the example of std::string::String, we define PartialEq
+		// against the slice and the base type.
+		impl PartialEq<$name> for str {
+			fn eq(&self, other: &$name) -> bool {
+				other.0 == self
+			}
+		}
+
+		impl PartialEq<&str> for $name {
+			fn eq(&self, other: &&str) -> bool {
+				&self.0 == *other
+			}
+		}
+
+		impl PartialEq<$name> for &str {
+			fn eq(&self, other: &$name) -> bool {
+				other.0 == *self
+			}
+		}
+
+		impl PartialEq<$borrowed> for $name {
+			fn eq(&self, other: &$borrowed) -> bool {
+				self.0 == other.0
+			}
+		}
+
+		impl PartialEq<$name> for $borrowed {
+			fn eq(&self, other: &$name) -> bool {
+				other.0 == self.0
+			}
+		}
+
+		impl PartialEq<&$borrowed> for $name {
+			fn eq(&self, other: &&$borrowed) -> bool {
+				self.0 == other.0
+			}
+		}
+
+		impl PartialEq<$name> for &$borrowed {
+			fn eq(&self, other: &$name) -> bool {
+				other.0 == self.0
+			}
+		}
+
+		impl From<$name> for String {
+			fn from(other: $name) -> Self {
+				other.0.into()
+			}
+		}
+
+		impl From<$name> for SmartString {
+			fn from(other: $name) -> Self {
+				other.0.into()
+			}
+		}
+
+		impl<'x> From<$name> for Cow<'x, $borrowed> {
+			fn from(other: $name) -> Self {
+				Self::Owned(other)
+			}
+		}
+
+		impl<'x> From<Cow<'x, $borrowed>> for $name {
+			fn from(other: Cow<'x, $borrowed>) -> Self {
+				other.into_owned()
+			}
+		}
+
+		impl TryFrom<SmartString> for $name {
+			type Error = WFError;
+
+			fn try_from(other: SmartString) -> Result<Self, Self::Error> {
+				$check(&other)?;
+				Ok($name(other.into()))
+			}
+		}
+
+		impl TryFrom<String> for $name {
+			type Error = WFError;
+
+			fn try_from(other: String) -> Result<Self, Self::Error> {
+				$check(&other)?;
+				Ok($name(other.into()))
+			}
+		}
+
+		impl TryFrom<&str> for $name {
+			type Error = WFError;
+
+			fn try_from(other: &str) -> Result<Self, Self::Error> {
+				$check(other)?;
+				Ok($name(other.into()))
+			}
+		}
+
+		impl fmt::Display for $name {
+			fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+				f.write_str(&self.0 as &str)
+			}
+		}
+	}
+}
+
+macro_rules! rxml_custom_str_type {
+	(
+		$(#[$outer:meta])*
+		pub struct $name:ident(str) use $check:ident => $owned:ident;
+	) => {
+		$(#[$outer])*
+		#[derive(Debug, Hash, PartialEq, Eq)]
+		#[repr(transparent)]
+		pub struct $name(str);
+
+		impl $name {
+			pub fn from_str<'x>(s: &'x str) -> Result<&'x Self, WFError> {
+				s.try_into()
+			}
+
+			#[doc = rxml_unsafe_str_construct_doc!($name, str)]
+			pub unsafe fn from_str_unchecked<'x>(s: &'x str) -> &'x Self {
+				std::mem::transmute(s)
+			}
+		}
+
+		impl Deref for $name {
+			type Target = str;
+
+			fn deref(&self) -> &Self::Target {
+				&self.0
+			}
+		}
+
+		impl AsRef<str> for $name {
+			fn as_ref(&self) -> &str {
+				&self.0
+			}
+		}
+
+		impl AsRef<$name> for &$name {
+			fn as_ref(&self) -> &$name {
+				&self
+			}
+		}
+
+		impl PartialEq<str> for $name {
+			fn eq(&self, other: &str) -> bool {
+				&self.0 == other
+			}
+		}
+
+		impl PartialEq<$name> for str {
+			fn eq(&self, other: &$name) -> bool {
+				self == &other.0
+			}
+		}
+
+		impl ToOwned for $name {
+			type Owned = $owned;
+
+			fn to_owned(&self) ->Self::Owned {
+				self.into()
+			}
+		}
+
+		impl From<&$name> for $owned {
+			fn from(other: &$name) -> Self {
+				// SAFETY: $owned is assumed to use the same check; this is
+				// enforced by using the pair macro.
+				unsafe { $owned::from_str_unchecked(&other.0) }
+			}
+		}
+
+		impl<'x> TryFrom<&'x str> for &'x $name {
+			type Error = WFError;
+
+			fn try_from(other: &'x str) -> Result<Self, Self::Error> {
+				$check(other)?;
+				// SAFETY: the content check is executed right above and we're
+				// transmuting &str into a repr(transparent) of &str.
+				Ok(unsafe { std::mem::transmute(other) } )
+			}
+		}
+
+		impl fmt::Display for $name {
+			fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
+				f.write_str(&self.0)
+			}
+		}
+	}
+}
+
+macro_rules! rxml_custom_string_type_pair {
+	(
+		$(#[$ownedmeta:meta])*
+		pub struct $owned:ident($string:ty) use $check:ident;
+
+		$(#[$borrowedmeta:meta])*
+		pub struct $borrowed:ident(str);
+	) => {
+		rxml_custom_string_type!{
+			$(#[$ownedmeta])*
+			pub struct $owned($string) use $check => $borrowed;
+		}
+
+		rxml_custom_str_type!{
+			$(#[$borrowedmeta])*
+			pub struct $borrowed(str) use $check => $owned;
+		}
+	}
+}
+
+rxml_custom_string_type_pair! {
+	/// String which conforms to the Name production of XML 1.0.
+	///
+	/// [`Name`] corresponds to a (restricted) [`String`]. For a [`str`]-like type
+	/// with the same restrictions, see [`NameStr`]. `&NameStr` can be created
+	/// from a string literal at compile time using the `xml_name` macro from
+	/// [`rxml_proc`](https://docs.rs/rxml_proc).
+	///
+	/// Since [`Name`] derefs to [`String`], all (non-mutable) methods from
+	/// [`String`] are available.
+	///
+	/// # Formal definition
+	///
+	/// The data inside [`Name`] (and [`NameStr`]) is guaranteed to conform to
+	/// the `Name` production of the below grammar, quoted from
+	/// [XML 1.0 § 2.3](https://www.w3.org/TR/REC-xml/#NT-NameStartChar):
+	///
+	/// ```text
+	/// [4]  NameStartChar ::= ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6]
+	///                        | [#xD8-#xF6] | [#xF8-#x2FF] | [#x370-#x37D]
+	///                        | [#x37F-#x1FFF] | [#x200C-#x200D]
+	///                        | [#x2070-#x218F] | [#x2C00-#x2FEF]
+	///                        | [#x3001-#xD7FF] | [#xF900-#xFDCF]
+	///                        | [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
+	/// [4a] NameChar      ::= NameStartChar | "-" | "." | [0-9] | #xB7
+	///                        | [#x0300-#x036F] | [#x203F-#x2040]
+	/// [5]  Name          ::= NameStartChar (NameChar)*
+	/// ```
+	pub struct Name(SmartString) use validate_name;
+
+	/// str which conforms to the Name production of XML 1.0.
+	///
+	/// [`NameStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
+	/// type with the same restrictions as well as the formal definition of those
+	/// restrictions, see [`Name`].
+	///
+	/// `&NameStr` can be created from a string literal at compile time using the
+	/// `xml_name` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
+	///
+	/// Since [`NameStr`] derefs to [`str`], all (non-mutable) methods from
+	/// [`str`] are available.
+	pub struct NameStr(str);
+}
 
 impl Name {
-	/// Wrap a given [`String`] in a [`Name`].
-	///
-	/// This function enforces that the given string conforms to the `Name`
-	/// production of XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
-	pub fn from_string<T: Into<String>>(s: T) -> Result<Name, WFError> {
-		s.into().try_into()
-	}
-
-	/// Wrap a given [`smartstring::SmartString`] in a [`Name`].
-	///
-	/// This function enforces that the given string conforms to the `Name`
-	/// production of XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
-	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Name, WFError> {
-		s.into().try_into()
-	}
-
-	/// Copy a given [`str`]-like into a new [`Name`].
-	///
-	/// This function enforces that the given string conforms to the `Name`
-	/// production of XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
-	pub fn from_str<T: AsRef<str>>(s: T) -> Result<Name, WFError> {
-		s.as_ref().try_into()
-	}
-
 	/// Split the name at a colon, if it exists.
 	///
 	/// If the name contains no colon, the function returns `(None, self)`.
@@ -164,389 +477,107 @@ impl Name {
 			unsafe { NCName::from_smartstring_unchecked(localname) },
 		))
 	}
-
-	/// Consume the Name and return the internal String
-	pub fn as_string(self) -> String {
-		self.0.into()
-	}
-
-	/// Construct a Name without enforcing anything
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid Name.
-	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> Name {
-		Name(s.as_ref().into())
-	}
-
-	/// Construct a Name without enforcing anything
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid Name.
-	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> Name {
-		Name(s.into().into())
-	}
-
-	/// Construct a Name without enforcing anything
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid Name.
-	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> Name {
-		Name(s.into())
-	}
 }
-
-impl Eq for Name {}
-
-impl PartialEq<Name> for &str {
-	fn eq(&self, other: &Name) -> bool {
-		return self == &other.0
-	}
-}
-
-impl PartialEq<&str> for Name {
-	fn eq(&self, other: &&str) -> bool {
-		return &self.0 == *other
-	}
-}
-
-impl PartialEq<Name> for str {
-	fn eq(&self, other: &Name) -> bool {
-		return self == other.0
-	}
-}
-
-impl PartialEq<str> for Name {
-	fn eq(&self, other: &str) -> bool {
-		return self.0 == other
-	}
-}
-
-impl PartialEq<Name> for &NameStr {
-	fn eq(&self, other: &Name) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl PartialEq<&NameStr> for Name {
-	fn eq(&self, other: &&NameStr) -> bool {
-		return &self.0 == &other.0
-	}
-}
-
-impl PartialEq<Name> for NameStr {
-	fn eq(&self, other: &Name) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl PartialEq<NameStr> for Name {
-	fn eq(&self, other: &NameStr) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl Deref for Name {
-	type Target = SmartString;
-
-	fn deref(&self) -> &SmartString {
-		&self.0
-	}
-}
-
-impl AsRef<SmartString> for Name {
-	fn as_ref(&self) -> &SmartString {
-		&self.0
-	}
-}
-
-impl AsRef<NameStr> for Name {
-	fn as_ref(&self) -> &NameStr {
-		unsafe { NameStr::from_str_unchecked(self) }
-	}
-}
-
-impl AsRef<str> for Name {
-	fn as_ref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl Borrow<SmartString> for Name {
-	fn borrow(&self) -> &SmartString {
-		&self.0
-	}
-}
-
-impl Borrow<NameStr> for Name {
-	fn borrow(&self) -> &NameStr {
-		unsafe { NameStr::from_str_unchecked(self) }
-	}
-}
-
-impl Borrow<str> for Name {
-	fn borrow(&self) -> &str {
-		&self.0
-	}
-}
-
-impl From<Name> for String {
-	fn from(other: Name) -> String {
-		other.0.into()
-	}
-}
-
-impl From<Name> for SmartString {
-	fn from(other: Name) -> SmartString {
-		other.0
-	}
-}
-
-impl<'x> From<Name> for Cow<'x, NameStr> {
-	fn from(other: Name) -> Cow<'x, NameStr> {
-		Cow::Owned(other)
-	}
-}
-
-impl<'x> From<Cow<'x, NameStr>> for Name {
-	fn from(other: Cow<'x, NameStr>) -> Name {
-		other.into_owned()
-	}
-}
-
-impl From<NCName> for Name {
-	fn from(other: NCName) -> Name {
-		Name(other.0)
-	}
-}
-
-impl TryFrom<SmartString> for Name  {
-	type Error = WFError;
-
-	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
-		validate_name(&other)?;
-		Ok(Name(other))
-	}
-}
-
-impl TryFrom<String> for Name  {
-	type Error = WFError;
-
-	fn try_from(other: String) -> Result<Self, Self::Error> {
-		validate_name(&other)?;
-		Ok(Name(other.into()))
-	}
-}
-
-impl TryFrom<&str> for Name  {
-	type Error = WFError;
-
-	fn try_from(other: &str) -> Result<Self, Self::Error> {
-		validate_name(other)?;
-		Ok(Name(other.into()))
-	}
-}
-
-impl fmt::Display for Name {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		f.write_str(&self.0 as &str)
-	}
-}
-
-/// str which conforms to the Name production of XML 1.0.
-///
-/// [`NameStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
-/// type with the same restrictions as well as the formal definition of those
-/// restrictions, see [`Name`].
-///
-/// `&NameStr` can be created from a string literal at compile time using the
-/// `xml_name` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
-///
-/// Since [`NameStr`] derefs to [`str`], all (non-mutable) methods from
-/// [`str`] are available.
-#[derive(Hash, PartialEq)]
-#[repr(transparent)]
-pub struct NameStr(str);
 
 impl NameStr {
-	/// Wrap a given `str` in a [`NameStr`].
-	///
-	/// This function enforces that the given string conforms to the `Name`
-	/// production of XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation or xml_name! macro instead")]
-	pub fn from_str<'x>(s: &'x str) -> Result<&'x NameStr, WFError> {
-		s.try_into()
-	}
-
-	/// Copy the NameStr into a new Name.
 	pub fn to_name(&self) -> Name {
-		unsafe { Name::from_string_unchecked(self.to_string()) }
-	}
-
-	/// Construct a NameStr without enforcing anything
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid Name.
-	pub unsafe fn from_str_unchecked<'x>(s: &'x str) -> &'x NameStr {
-		std::mem::transmute(s)
-	}
-}
-
-impl Eq for NameStr {}
-
-impl PartialEq<NameStr> for &str {
-	fn eq(&self, other: &NameStr) -> bool {
-		return *self == &other.0
-	}
-}
-
-impl PartialEq<&str> for NameStr {
-	fn eq(&self, other: &&str) -> bool {
-		return &self.0 == *other
-	}
-}
-
-impl PartialEq<NameStr> for str {
-	fn eq(&self, other: &NameStr) -> bool {
-		return self == &other.0
-	}
-}
-
-impl PartialEq<str> for NameStr {
-	fn eq(&self, other: &str) -> bool {
-		return &self.0 == other
-	}
-}
-
-impl Deref for NameStr {
-	type Target = str;
-
-	fn deref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl AsRef<NameStr> for NameStr {
-	fn as_ref(&self) -> &Self {
-		&self
-	}
-}
-
-impl AsRef<str> for NameStr {
-	fn as_ref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl AsRef<[u8]> for NameStr {
-	fn as_ref(&self) -> &[u8] {
-		self.0.as_bytes()
-	}
-}
-
-impl ToOwned for NameStr {
-	type Owned = Name;
-
-	fn to_owned(&self) -> Self::Owned {
 		self.into()
 	}
 }
 
-impl From<&NameStr> for String {
-	fn from(other: &NameStr) -> String {
-		other.0.to_string()
+impl From<NCName> for Name {
+	fn from(other: NCName) -> Self {
+		other.as_name()
 	}
 }
 
-impl From<&NameStr> for SmartString {
-	fn from(other: &NameStr) -> SmartString {
-		other.0.into()
+impl<'x> From<&'x NCNameStr> for &'x NameStr {
+	fn from(other: &'x NCNameStr) -> Self {
+		other.as_namestr()
 	}
 }
 
-impl From<&NameStr> for Name {
-	fn from(other: &NameStr) -> Name {
-		unsafe { Name::from_str_unchecked(&other.0) }
-	}
+rxml_custom_string_type_pair! {
+	/// String which conforms to the NCName production of Namespaces in XML 1.0.
+	///
+	/// [`NCName`] corresponds to a (restricted) [`String`]. For a [`str`]-like
+	/// type with the same restrictions, see [`NCNameStr`]. `&NCNameStr` can be
+	/// created from a string literal at compile time using the `xml_ncname` macro
+	/// from [`rxml_proc`](https://docs.rs/rxml_proc).
+	///
+	/// Since [`NCName`] derefs to [`String`], all (non-mutable) methods from
+	/// [`String`] are available.
+	///
+	/// # Formal definition
+	///
+	/// The data inside [`NCName`] (and [`NCNameStr`]) is guaranteed to conform to
+	/// the `NCName` production of the below grammar, quoted from
+	/// [Namespaces in XML 1.0 § 3](https://www.w3.org/TR/REC-xml-names/#NT-NCName):
+	///
+	/// ```text
+	/// [4] NCName ::= Name - (Char* ':' Char*)  /* An XML Name, minus the ":" */
+	/// ```
+	pub struct NCName(SmartString) use validate_ncname;
+
+	/// str which conforms to the NCName production of Namespaces in XML 1.0.
+	///
+	/// [`NCNameStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
+	/// type with the same restrictions as well as the formal definition of those
+	/// restrictions, see [`NCName`].
+	///
+	/// `&NCNameStr` can be created from a string literal at compile time using
+	/// the `xml_ncname` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
+	///
+	/// Since [`NCNameStr`] derefs to [`str`], all (non-mutable) methods from
+	/// [`str`] are available.
+	pub struct NCNameStr(str);
 }
-
-impl<'x> TryFrom<&'x str> for &'x NameStr {
-	type Error = WFError;
-
-	fn try_from(other: &'x str) -> Result<Self, Self::Error> {
-		validate_name(other)?;
-		Ok(unsafe { std::mem::transmute(other) })
-	}
-}
-
-impl fmt::Display for NameStr {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		f.write_str(&self.0)
-	}
-}
-
-/// String which conforms to the NCName production of Namespaces in XML 1.0.
-///
-/// [`NCName`] corresponds to a (restricted) [`String`]. For a [`str`]-like
-/// type with the same restrictions, see [`NCNameStr`]. `&NCNameStr` can be
-/// created from a string literal at compile time using the `xml_ncname` macro
-/// from [`rxml_proc`](https://docs.rs/rxml_proc).
-///
-/// Since [`NCName`] derefs to [`String`], all (non-mutable) methods from
-/// [`String`] are available.
-///
-/// # Formal definition
-///
-/// The data inside [`NCName`] (and [`NCNameStr`]) is guaranteed to conform to
-/// the `NCName` production of the below grammar, quoted from
-/// [Namespaces in XML 1.0 § 3](https://www.w3.org/TR/REC-xml-names/#NT-NCName):
-///
-/// ```text
-/// [4] NCName ::= Name - (Char* ':' Char*)  /* An XML Name, minus the ":" */
-/// ```
-#[derive(Hash, PartialEq, Debug, Clone)]
-pub struct NCName(SmartString);
 
 impl NCName {
-	/// Wrap a given [`String`] in a [`NCName`].
+	/// Compose two [`NCName`] objects to one [`Name`], separating them with
+	/// a colon.
 	///
-	/// This function enforces that the given string conforms to the `NCName`
-	/// production of Namespaces in XML 1.0. If those conditions are not met,
-	/// an error is returned.
-	pub fn from_string<T: Into<String>>(s: T) -> Result<NCName, WFError> {
-		let s = s.into();
-		validate_ncname(&s)?;
-		Ok(NCName(s.into()))
+	/// As an [`NCName`] is always a valid [`Name`], the composition of the
+	/// two with a `:` as separator is also a valid [`Name`].
+	///
+	/// This is the inverse of [`Name::split_name()`].
+	///
+	/// # Example
+	///
+	/// ```
+	/// # use rxml::NCName;
+	/// let prefix = NCName::from_str("xmlns").unwrap();
+	/// let localname = NCName::from_str("stream").unwrap();
+	/// assert_eq!(prefix.add_suffix(&localname), "xmlns:stream");
+	/// ```
+	pub fn add_suffix(self, suffix: &NCNameStr) -> Name {
+		let mut s: String = self.0.into();
+		s.reserve(suffix.len() + 1);
+		s.push_str(":");
+		s.push_str(suffix);
+		// SAFETY: NCName cannot contain a colon; Name is NCName with colons,
+		// so we can concat two NCNames to a Name.
+		unsafe { Name::from_string_unchecked(s) }
 	}
 
-	/// Wrap a given [`smartstring::SmartString`] in a [`NCName`].
-	///
-	/// This function enforces that the given string conforms to the `NCName`
-	/// production of Namespaces in XML 1.0. If those conditions are not met,
-	/// an error is returned.
-	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<NCName, WFError> {
-		let s = s.into();
-		validate_ncname(&s)?;
-		Ok(NCName(s))
+	pub fn as_name(self) -> Name {
+		// SAFETY: NCName is a strict subset of Name
+		unsafe { Name::from_smartstring_unchecked(self.0) }
+	}
+}
+
+impl NCNameStr {
+	pub fn to_ncname(&self) -> NCName {
+		self.into()
 	}
 
-	/// Copy a given [`str`]-like into a new [`NCName`].
-	///
-	/// This function enforces that the given string conforms to the `NCName`
-	/// production of Namespaces in XML 1.0. If those conditions are not met,
-	/// an error is returned.
-	pub fn from_str<T: AsRef<str>>(s: T) -> Result<NCName, WFError> {
-		let s = s.as_ref();
-		validate_ncname(s)?;
-		Ok(NCName(s.into()))
+	pub fn to_name(&self) -> Name {
+		self.to_ncname().as_name()
+	}
+
+	pub fn as_namestr<'x>(&'x self) -> &'x NameStr {
+		// SAFETY: NCName is a strict subset of Name
+		unsafe { NameStr::from_str_unchecked(&self.0) }
 	}
 
 	/// Compose two [`NCName`] objects to one [`Name`], separating them with
@@ -565,719 +596,102 @@ impl NCName {
 	/// let localname = NCName::from_str("stream").unwrap();
 	/// assert_eq!(prefix.add_suffix(&localname), "xmlns:stream");
 	/// ```
-	pub fn add_suffix(self, suffix: &NCName) -> Name {
-		let mut s: String = self.0.into();
-		s.reserve(suffix.len() + 1);
+	pub fn with_suffix(&self, suffix: &NCNameStr) -> Name {
+		let mut s = String::with_capacity(self.len() + 1 + suffix.len());
+		s.push_str(self);
 		s.push_str(":");
-		s.push_str(suffix.as_str());
+		s.push_str(suffix);
+		// SAFETY: NCName cannot contain a colon; Name is NCName with colons,
+		// so we can concat two NCNames to a Name.
 		unsafe { Name::from_string_unchecked(s) }
 	}
+}
 
-	pub fn as_name(self) -> Name {
-		unsafe { Name::from_smartstring_unchecked(self.0) }
-	}
-
-	/// Consume the NCName and return the internal String
-	pub fn as_string(self) -> String {
-		self.0.into()
-	}
-
-	/// Construct an NCName without enforcing anything
+rxml_custom_string_type_pair! {
+	/// String which consists only of XML 1.0 Chars.
 	///
-	/// # Safety
+	/// [`CData`] corresponds to a (restricted) [`String`]. For a [`str`]-like
+	/// type with the same restrictions, see [`CDataStr`]. `&CDataStr` can be
+	/// created from a string literal at compile time using the `xml_cdata` macro
+	/// from [`rxml_proc`](https://docs.rs/rxml_proc).
 	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid NCName.
-	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> NCName {
-		NCName(s.as_ref().into())
-	}
-
-	/// Construct an NCName without enforcing anything
+	/// Since [`CData`] derefs to [`String`], all (non-mutable) methods from
+	/// [`String`] are available.
 	///
-	/// # Safety
+	/// # Formal definition
 	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid NCName.
-	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> NCName {
-		NCName(s.into().into())
-	}
-
-	/// Construct an NCName without enforcing anything
+	/// The data inside [`CData`] (and [`CDataStr`]) is guaranteed to be a
+	/// sequence of `Char` as defined in
+	/// [XML 1.0 § 2.2](https://www.w3.org/TR/REC-xml/#NT-Char) and quoted below:
 	///
-	/// # Safety
+	/// ```text
+	/// [2] Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
+	///              | [#x10000-#x10FFFF]
+	///              /* any Unicode character, excluding the surrogate blocks,
+	///                 FFFE, and FFFF. */
+	/// ```
 	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid NCName.
-	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> NCName {
-		NCName(s.into())
-	}
-}
-
-impl Eq for NCName {}
-
-impl PartialEq<NCName> for &str {
-	fn eq(&self, other: &NCName) -> bool {
-		return self == &other.0
-	}
-}
-
-impl PartialEq<&str> for NCName {
-	fn eq(&self, other: &&str) -> bool {
-		return self.0 == *other
-	}
-}
-
-impl PartialEq<NCName> for str {
-	fn eq(&self, other: &NCName) -> bool {
-		return self == &other.0
-	}
-}
-
-impl PartialEq<str> for NCName {
-	fn eq(&self, other: &str) -> bool {
-		return self.0 == *other
-	}
-}
-
-impl PartialEq<NCName> for &NCNameStr {
-	fn eq(&self, other: &NCName) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl PartialEq<&NCNameStr> for NCName {
-	fn eq(&self, other: &&NCNameStr) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl PartialEq<NCName> for NCNameStr {
-	fn eq(&self, other: &NCName) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl PartialEq<NCNameStr> for NCName {
-	fn eq(&self, other: &NCNameStr) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl Deref for NCName {
-	type Target = SmartString;
-
-	fn deref(&self) -> &SmartString {
-		&self.0
-	}
-}
-
-impl AsRef<SmartString> for NCName {
-	fn as_ref(&self) -> &SmartString {
-		&self.0
-	}
-}
-
-impl AsRef<NCNameStr> for NCName {
-	fn as_ref(&self) -> &NCNameStr {
-		unsafe { NCNameStr::from_str_unchecked(&self.0) }
-	}
-}
-
-impl AsRef<str> for NCName {
-	fn as_ref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl Borrow<SmartString> for NCName {
-	fn borrow(&self) -> &SmartString {
-		&self.0
-	}
-}
-
-impl Borrow<NCNameStr> for NCName {
-	fn borrow(&self) -> &NCNameStr {
-		unsafe { NCNameStr::from_str_unchecked(&self.0) }
-	}
-}
-
-impl Borrow<str> for NCName {
-	fn borrow(&self) -> &str {
-		&self.0
-	}
-}
-
-impl From<NCName> for String {
-	fn from(other: NCName) -> String {
-		other.0.into()
-	}
-}
-
-impl From<NCName> for SmartString {
-	fn from(other: NCName) -> SmartString {
-		other.0
-	}
-}
-
-impl<'x> From<NCName> for Cow<'x, NCNameStr> {
-	fn from(other: NCName) -> Cow<'x, NCNameStr> {
-		Cow::Owned(other)
-	}
-}
-
-impl<'x> From<Cow<'x, NCNameStr>> for NCName {
-	fn from(other: Cow<'x, NCNameStr>) -> NCName {
-		other.into_owned()
-	}
-}
-
-impl TryFrom<SmartString> for NCName {
-	type Error = WFError;
-
-	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
-		NCName::from_smartstring(other)
-	}
-}
-
-impl TryFrom<String> for NCName {
-	type Error = WFError;
-
-	fn try_from(other: String) -> Result<Self, Self::Error> {
-		NCName::from_string(other)
-	}
-}
-
-impl TryFrom<&str> for NCName  {
-	type Error = WFError;
-
-	fn try_from(other: &str) -> Result<Self, Self::Error> {
-		NCName::from_str(other)
-	}
-}
-
-impl fmt::Display for NCName {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		f.write_str(&self.0 as &str)
-	}
-}
-
-/// str which conforms to the NCName production of Namespaces in XML 1.0.
-///
-/// [`NCNameStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
-/// type with the same restrictions as well as the formal definition of those
-/// restrictions, see [`NCName`].
-///
-/// `&NCNameStr` can be created from a string literal at compile time using
-/// the `xml_ncname` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
-///
-/// Since [`NCNameStr`] derefs to [`str`], all (non-mutable) methods from
-/// [`str`] are available.
-#[derive(Hash, PartialEq)]
-#[repr(transparent)]
-pub struct NCNameStr(str);
-
-impl NCNameStr {
-	/// Wrap a str in a NCNameStr
+	/// This is a Unicode scalar value, minus ASCII control characters except
+	/// Tab (`\x09`), CR (`\x0d`) and LF (`\x0a`), the BOM (`\u{fffe}`) and
+	/// whatever `\u{ffff}` is.
 	///
-	/// This function enforces that the given string conforms to the `NCName`
-	/// production of Namespaces in XML 1.0. If those conditions are not met,
-	/// an error is returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation or xml_ncname! macro instead")]
-	pub fn from_str<'x>(s: &'x str) -> Result<&'x NCNameStr, WFError> {
-		validate_name(s)?;
-		Ok(unsafe { std::mem::transmute(s) })
-	}
-
-	/// Copy the NCNameStr into a new NCName
-	pub fn to_ncname(&self) -> NCName {
-		unsafe { NCName::from_string_unchecked(self.0.to_string()) }
-	}
-
-	/// Construct a NCNameStr without checking anything
+	/// # Escaping
 	///
-	/// # Safety
+	/// [`CData`] objects do not contain references or CDATA sections as those are
+	/// expanded by the lexer. This implies that `CData` objects are not safe to
+	/// just verbatimly copy into an XML document; additional escaping may be
+	/// necessary.
+	pub struct CData(String) use validate_cdata;
+
+	/// str which consists only of XML 1.0 Chars.
 	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// a valid NCName.
-	pub unsafe fn from_str_unchecked<'x>(s: &'x str) -> &'x NCNameStr {
-		std::mem::transmute(s)
-	}
-}
-
-impl Eq for NCNameStr {}
-
-impl PartialEq<NCNameStr> for &str {
-	fn eq(&self, other: &NCNameStr) -> bool {
-		return *self == &other.0
-	}
-}
-
-impl PartialEq<&str> for NCNameStr {
-	fn eq(&self, other: &&str) -> bool {
-		return &self.0 == *other
-	}
-}
-
-impl PartialEq<NCNameStr> for str {
-	fn eq(&self, other: &NCNameStr) -> bool {
-		return self == &other.0
-	}
-}
-
-impl PartialEq<str> for NCNameStr {
-	fn eq(&self, other: &str) -> bool {
-		return &self.0 == other
-	}
-}
-
-impl Deref for NCNameStr {
-	type Target = str;
-
-	fn deref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl AsRef<NCNameStr> for NCNameStr {
-	fn as_ref(&self) -> &Self {
-		&self
-	}
-}
-
-impl AsRef<str> for NCNameStr {
-	fn as_ref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl AsRef<[u8]> for NCNameStr {
-	fn as_ref(&self) -> &[u8] {
-		self.0.as_bytes()
-	}
-}
-
-impl ToOwned for NCNameStr {
-	type Owned = NCName;
-
-	fn to_owned(&self) -> Self::Owned {
-		unsafe { NCName::from_str_unchecked(&self.0) }
-	}
-}
-
-impl From<&NCNameStr> for String {
-	fn from(other: &NCNameStr) -> String {
-		other.0.into()
-	}
-}
-
-impl From<&NCNameStr> for SmartString {
-	fn from(other: &NCNameStr) -> SmartString {
-		other.0.into()
-	}
-}
-
-impl From<&NCNameStr> for NCName {
-	fn from(other: &NCNameStr) -> NCName {
-		unsafe { NCName::from_str_unchecked(&other.0) }
-	}
-}
-
-impl fmt::Display for NCNameStr {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		f.write_str(&self.0)
-	}
-}
-
-/// String which consists only of XML 1.0 Chars.
-///
-/// [`CData`] corresponds to a (restricted) [`String`]. For a [`str`]-like
-/// type with the same restrictions, see [`CDataStr`]. `&CDataStr` can be
-/// created from a string literal at compile time using the `xml_cdata` macro
-/// from [`rxml_proc`](https://docs.rs/rxml_proc).
-///
-/// Since [`CData`] derefs to [`String`], all (non-mutable) methods from
-/// [`String`] are available.
-///
-/// # Formal definition
-///
-/// The data inside [`CData`] (and [`CDataStr`]) is guaranteed to be a
-/// sequence of `Char` as defined in
-/// [XML 1.0 § 2.2](https://www.w3.org/TR/REC-xml/#NT-Char) and quoted below:
-///
-/// ```text
-/// [2] Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
-///              | [#x10000-#x10FFFF]
-///              /* any Unicode character, excluding the surrogate blocks,
-///                 FFFE, and FFFF. */
-/// ```
-///
-/// This is a Unicode scalar value, minus ASCII control characters except
-/// Tab (`\x09`), CR (`\x0d`) and LF (`\x0a`), the BOM (`\u{fffe}`) and
-/// whatever `\u{ffff}` is.
-///
-/// # Escaping
-///
-/// [`CData`] objects do not contain references or CDATA sections as those are
-/// expanded by the lexer. This implies that `CData` objects are not safe to
-/// just verbatimly copy into an XML document; additional escaping may be
-/// necessary.
-#[derive(Hash, PartialEq, Debug, Clone)]
-pub struct CData(String);
-
-impl CData {
-	/// Wrap a given [`String`] in a [`CData`].
+	/// [`CDataStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
+	/// type with the same restrictions as well as the formal definition of those
+	/// restrictions, see [`CData`].
 	///
-	/// This function enforces that the chars in the string conform to `Char`
-	/// as defined in XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
-	pub fn from_string<T: Into<String>>(s: T) -> Result<CData, WFError> {
-		s.into().try_into()
-	}
-
-	/// Wrap a given [`smartstring::SmartString`] in a [`CData`].
+	/// `&CDataStr` can be created from a string literal at compile time using the
+	/// `xml_cdata` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
 	///
-	/// This function enforces that the chars in the string conform to `Char`
-	/// as defined in XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
-	pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<CData, WFError> {
-		s.into().try_into()
-	}
-
-	/// Copy a given [`str`]-like into a new [`NCName`].
-	///
-	/// This function enforces that the chars in the string conform to `Char`
-	/// as defined in XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
-	pub fn from_str<T: AsRef<str>>(s: T) -> Result<CData, WFError> {
-		s.as_ref().try_into()
-	}
-
-	pub fn as_cdata_str(&self) -> &CDataStr {
-		unsafe { CDataStr::from_str_unchecked(&self.0) }
-	}
-
-	/// Consume the CData and return the internal String
-	pub fn as_string(self) -> String {
-		self.0
-	}
-
-	/// Construct a CData without checking anything.
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// valid CData.
-	pub unsafe fn from_str_unchecked<T: AsRef<str>>(s: T) -> CData {
-		CData(s.as_ref().into())
-	}
-
-	/// Construct a CData without checking anything.
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// valid CData.
-	pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> CData {
-		CData(s.into().into())
-	}
-
-	/// Construct a CData without checking anything.
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// valid CData.
-	pub unsafe fn from_string_unchecked<T: Into<String>>(s: T) -> CData {
-		CData(s.into())
-	}
+	/// Since [`CDataStr`] derefs to [`str`], all (non-mutable) methods from
+	/// [`str`] are available.
+	pub struct CDataStr(str);
 }
-
-impl Eq for CData {}
-
-impl PartialEq<CData> for &str {
-	fn eq(&self, other: &CData) -> bool {
-		return self == &other.0
-	}
-}
-
-impl PartialEq<&str> for CData {
-	fn eq(&self, other: &&str) -> bool {
-		return self.0 == *other
-	}
-}
-
-impl PartialEq<CData> for str {
-	fn eq(&self, other: &CData) -> bool {
-		return self == &other.0
-	}
-}
-
-impl PartialEq<str> for CData {
-	fn eq(&self, other: &str) -> bool {
-		return self.0 == other
-	}
-}
-
-impl PartialEq<CData> for &CDataStr {
-	fn eq(&self, other: &CData) -> bool {
-		return &self.0 == &other.0
-	}
-}
-
-impl PartialEq<&CDataStr> for CData {
-	fn eq(&self, other: &&CDataStr) -> bool {
-		return self.0 == &other.0
-	}
-}
-
-impl PartialEq<CData> for CDataStr {
-	fn eq(&self, other: &CData) -> bool {
-		return &self.0 == &other.0
-	}
-}
-
-impl PartialEq<CDataStr> for CData {
-	fn eq(&self, other: &CDataStr) -> bool {
-		return self.0 == other.0
-	}
-}
-
-impl Deref for CData {
-	type Target = String;
-
-	fn deref(&self) -> &String {
-		&self.0
-	}
-}
-
-impl AsRef<String> for CData {
-	fn as_ref(&self) -> &String {
-		&self.0
-	}
-}
-
-impl AsRef<CDataStr> for CData {
-	fn as_ref(&self) -> &CDataStr {
-		self.as_cdata_str()
-	}
-}
-
-impl AsRef<str> for CData {
-	fn as_ref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl Borrow<String> for CData {
-	fn borrow(&self) -> &String {
-		&self.0
-	}
-}
-
-impl Borrow<CDataStr> for CData {
-	fn borrow(&self) -> &CDataStr {
-		self.as_cdata_str()
-	}
-}
-
-impl Borrow<str> for CData {
-	fn borrow(&self) -> &str {
-		&self.0
-	}
-}
-
-impl From<CData> for String {
-	fn from(other: CData) -> String {
-		other.0
-	}
-}
-
-impl From<CData> for SmartString {
-	fn from(other: CData) -> SmartString {
-		other.0.into()
-	}
-}
-
-impl<'x> From<CData> for Cow<'x, CDataStr> {
-	fn from(other: CData) -> Cow<'x, CDataStr> {
-		Cow::Owned(other)
-	}
-}
-
-impl<'x> From<Cow<'x, CDataStr>> for CData {
-	fn from(other: Cow<'x, CDataStr>) -> CData {
-		other.into_owned()
-	}
-}
-
-impl From<CData> for Name {
-	fn from(other: CData) -> Name {
-		Name(other.0.into())
-	}
-}
-
-impl TryFrom<SmartString> for CData {
-	type Error = WFError;
-
-	fn try_from(other: SmartString) -> Result<Self, Self::Error> {
-		validate_cdata(&other)?;
-		Ok(CData(other.into()))
-	}
-}
-
-impl TryFrom<String> for CData {
-	type Error = WFError;
-
-	fn try_from(other: String) -> Result<Self, Self::Error> {
-		validate_cdata(&other)?;
-		Ok(CData(other))
-	}
-}
-
-impl TryFrom<&str> for CData  {
-	type Error = WFError;
-
-	fn try_from(other: &str) -> Result<Self, Self::Error> {
-		validate_cdata(other)?;
-		Ok(CData(other.to_string()))
-	}
-}
-
-impl fmt::Display for CData {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		f.write_str(&self.0)
-	}
-}
-
-/// str which consists only of XML 1.0 Chars.
-///
-/// [`CDataStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
-/// type with the same restrictions as well as the formal definition of those
-/// restrictions, see [`CData`].
-///
-/// `&CDataStr` can be created from a string literal at compile time using the
-/// `xml_cdata` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
-///
-/// Since [`CDataStr`] derefs to [`str`], all (non-mutable) methods from
-/// [`str`] are available.
-#[derive(Hash, PartialEq)]
-#[repr(transparent)]
-pub struct CDataStr(str);
 
 impl CDataStr {
-	/// Wrap a str in a CDataStr
-	///
-	/// This function enforces that the chars in the string conform to `Char`
-	/// as defined in XML 1.0. If those conditions are not met, an error is
-	/// returned.
-	#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation  or xml_cdata! macro instead")]
-	pub fn from_str<'x>(s: &'x str) -> Result<&'x CDataStr, WFError> {
-		s.try_into()
-	}
-
-	/// Copy the CDataStr into a new CData
 	pub fn to_cdata(&self) -> CData {
-		unsafe { CData::from_string_unchecked(self.0.to_string()) }
-	}
-
-	/// Construct a CDataStr without checking anything
-	///
-	/// # Safety
-	///
-	/// The caller is responsible for ensuring that the passed data is in fact
-	/// valid CData.
-	pub unsafe fn from_str_unchecked<'x>(s: &'x str) -> &'x CDataStr {
-		std::mem::transmute(s)
+		self.into()
 	}
 }
 
-impl Eq for CDataStr {}
-
-impl PartialEq<CDataStr> for &str {
-	fn eq(&self, other: &CDataStr) -> bool {
-		return *self == &other.0
+impl From<NCName> for CData {
+	fn from(other: NCName) -> Self {
+		// SAFETY: NCNames can only consist of valid XML 1.0 chars, so they
+		// are also valid CData
+		unsafe { CData::from_smartstring_unchecked(other.0) }
 	}
 }
 
-impl PartialEq<&str> for CDataStr {
-	fn eq(&self, other: &&str) -> bool {
-		return &self.0 == *other
+impl From<Name> for CData {
+	fn from(other: Name) -> Self {
+		// SAFETY: Names can only consist of valid XML 1.0 chars, so they
+		// are also valid CData
+		unsafe { CData::from_smartstring_unchecked(other.0) }
 	}
 }
 
-impl PartialEq<CDataStr> for str {
-	fn eq(&self, other: &CDataStr) -> bool {
-		return self == &other.0
+impl<'x> From<&'x NCNameStr> for &'x CDataStr {
+	fn from(other: &'x NCNameStr) -> Self {
+		// SAFETY: NCNames can only consist of valid XML 1.0 chars, so they
+		// are also valid CData
+		unsafe { CDataStr::from_str_unchecked(&other.0) }
 	}
 }
 
-impl PartialEq<str> for CDataStr {
-	fn eq(&self, other: &str) -> bool {
-		return &self.0 == other
-	}
-}
-
-impl Deref for CDataStr {
-	type Target = str;
-
-	fn deref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl AsRef<CDataStr> for CDataStr {
-	fn as_ref(&self) -> &Self {
-		&self
-	}
-}
-
-impl AsRef<str> for CDataStr {
-	fn as_ref(&self) -> &str {
-		&self.0
-	}
-}
-
-impl AsRef<[u8]> for CDataStr {
-	fn as_ref(&self) -> &[u8] {
-		self.0.as_bytes()
-	}
-}
-
-impl ToOwned for CDataStr {
-	type Owned = CData;
-
-	fn to_owned(&self) -> Self::Owned {
-		self.to_cdata()
-	}
-}
-
-impl From<&CDataStr> for String {
-	fn from(other: &CDataStr) -> String {
-		other.0.into()
-	}
-}
-
-impl From<&CDataStr> for SmartString {
-	fn from(other: &CDataStr) -> SmartString {
-		other.0.into()
-	}
-}
-
-impl From<&CDataStr> for CData {
-	fn from(other: &CDataStr) -> CData {
-		unsafe { CData::from_str_unchecked(other) }
-	}
-}
-
-impl<'x> TryFrom<&'x str> for &'x CDataStr {
-	type Error = WFError;
-
-	fn try_from(other: &'x str) -> Result<Self, Self::Error> {
-		validate_cdata(other)?;
-		Ok(unsafe { std::mem::transmute(other) })
+impl<'x> From<&'x NameStr> for &'x CDataStr {
+	fn from(other: &'x NameStr) -> Self {
+		// SAFETY: Names can only consist of valid XML 1.0 chars, so they
+		// are also valid CData
+		unsafe { CDataStr::from_str_unchecked(&other.0) }
 	}
 }
 
