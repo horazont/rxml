@@ -50,7 +50,7 @@ are possible through `.into()`:
 The inverse directions are only available through `try_into`.
 */
 
-use std::ops::Deref;
+use std::ops::{Deref, Add};
 use std::cmp::{PartialOrd, Ordering};
 use std::fmt;
 use std::convert::{TryFrom, TryInto};
@@ -120,6 +120,10 @@ macro_rules! rxml_custom_string_type {
 			#[doc = rxml_unsafe_str_construct_doc!($name, SmartString)]
 			pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> Self {
 				Self(s.into().into())
+			}
+
+			unsafe fn from_native_unchecked(s: $string) -> Self {
+				Self(s)
 			}
 		}
 
@@ -283,6 +287,18 @@ macro_rules! rxml_custom_string_type {
 		impl fmt::Display for $name {
 			fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 				f.write_str(&self.0 as &str)
+			}
+		}
+
+		impl Add<&$borrowed> for $name {
+			type Output = $name;
+
+			fn add(self, rhs: &$borrowed) -> Self::Output {
+				// SAFETY: for Name, NCName and CData, a concatenation with
+				// strings of the same type is always also of the same type.
+				// (NB: A subslice might not be, because e.g. Name has
+				// constraints about what might occur in the first codepoint).
+				unsafe { Self::from_native_unchecked(self.0 + &rhs.0) }
 			}
 		}
 	}
