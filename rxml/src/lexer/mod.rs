@@ -12,7 +12,7 @@ mod ranges;
 use rxml_validation::selectors::*;
 use rxml_validation::{Error as ValidationError};
 use read::{Endbyte};
-use crate::error::{WFError, ErrorWithContext, Result as CrateResult};
+use crate::error::{WFError, ErrorWithContext, Result as CrateResult, Error as CrateError};
 use crate::strings::*;
 use crate::errctx::*;
 use ranges::*;
@@ -1540,21 +1540,36 @@ impl Lexer {
 	/// Returns `None` if a valid end of file is reached, a token if a valid
 	/// token is encountered or an error otherwise.
 	pub fn lex<R: io::BufRead + ?Sized>(&mut self, r: &mut R) -> CrateResult<Option<Token>> {
-		let (mut buf, eof): (&[u8], bool) = match r.fill_buf() {
-			Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-				// if we have a wouldblock, we need to pretend we had an empty buffer, but without the eof flag
-				// worst case it'll be converted to a wouldblock again
-				// this matters in some cases where the internal state already allows to emit a token. most prominently, this happens on element closures: the closing byte (b'>') has been read already which is encoded in the internal state and a corresponding token will be emitted even without more data available.
-				(&[], false)
-			},
-			Err(e) => return Err(e.into()),
-			Ok(b) => (b, b.len() == 0),
-		};
-		let orig_len = buf.len();
-		let result = self.lex_bytes(&mut buf, eof);
-		let new_len = buf.len();
-		r.consume(orig_len - new_len);
-		Ok(result?)
+		loop {
+			let (mut buf, eof): (&[u8], bool) = match r.fill_buf() {
+				Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+					// if we have a wouldblock, we need to pretend we had an empty buffer, but without the eof flag
+					// worst case it'll be converted to a wouldblock again
+					// this matters in some cases where the internal state already allows to emit a token. most prominently, this happens on element closures: the closing byte (b'>') has been read already which is encoded in the internal state and a corresponding token will be emitted even without more data available.
+					(&[], false)
+				},
+				Err(e) => return Err(e.into()),
+				Ok(b) => (b, b.len() == 0),
+			};
+			let orig_len = buf.len();
+			let result = self.lex_bytes(&mut buf, eof);
+			let new_len = buf.len();
+			assert!(new_len <= orig_len);
+			r.consume(orig_len - new_len);
+			if orig_len > 0 {
+				match result {
+					Err(CrateError::IO(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+						// If we did not process any data despite emitting a WouldBlock, that is a bug, because we cannot assume that another call to fill_buf will actually give us more data without having consumed anything.
+						assert!(new_len < orig_len);
+						// If the read was non-zero-length && we got a WouldBlock, we have to keep trying until either the source gives us a WouldBlock or we emit a token or an error.
+						// Otherwise, edge-triggered I/O schedulers may not actually give us another chance for reading: the source might still have data in stock, but the buffer was not empty yet, so the BufReader (or whatever provides the buffer) did not bother reading from the backend again.
+						continue
+					},
+					_ => (),
+				}
+			}
+			return Ok(result?)
+		}
 	}
 
 	/// Release all temporary buffers
@@ -2749,10 +2764,6 @@ mod tests {
 			other => panic!("unexpected result: {:?}", other),
 		};
 		match lexer.lex(&mut buf) {
-			Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
-			other => panic!("unexpected result: {:?}", other),
-		};
-		match lexer.lex(&mut buf) {
 			Err(CrateError::InvalidUtf8Byte(_)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		};
@@ -2773,10 +2784,6 @@ mod tests {
 			other => panic!("unexpected result: {:?}", other),
 		};
 		match lexer.lex(&mut buf) {
-			Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
-			other => panic!("unexpected result: {:?}", other),
-		};
-		match lexer.lex(&mut buf) {
 			Err(CrateError::InvalidUtf8Byte(_)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		};
@@ -2787,10 +2794,6 @@ mod tests {
 		let src = "<xyz>fööbär🎉</xyz>".as_bytes();
 		let mut buf = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::new();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::ElementHeadStart(_, name))) => {
 				assert_eq!(name, "xyz");
@@ -2801,29 +2804,12 @@ mod tests {
 			Ok(Some(Token::ElementHFEnd(_))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		};
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::Text(_, text))) => {
 				assert_eq!(text, "fööbär🎉");
 			},
 			other => panic!("unexpected result: {:?}", other),
 		};
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
-		lexer.lex(&mut buf).err().unwrap();
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::ElementFootStart(_, name))) => {
 				assert_eq!(name, "xyz");
@@ -2834,5 +2820,107 @@ mod tests {
 			Ok(Some(Token::ElementHFEnd(_))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		};
+	}
+
+	#[test]
+	fn lexer_detect_eof_in_name() {
+		let err = lex_err(b"<aa", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_NAME)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_in_element_head_whitespace() {
+		let err = lex_err(b"<aa  ", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ELEMENT)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_in_attrname() {
+		let err = lex_err(b"<a xxxx", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_NAME)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_after_attrname() {
+		let err = lex_err(b"<a x=", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ELEMENT)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_in_attrval() {
+		let err = lex_err(b"<a x='xyz", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ATTVAL)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_after_attr() {
+		let err = lex_err(b"<a x=''", 128).unwrap();
+		match err {
+			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ELEMENT)) => (),
+			other => panic!("unexpected error: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_after_head() {
+		let (_, result) = lex(b"<a>", 128);
+		// this is a proper Eof, the parser will have to decide whether it's ok or not here'
+		match result {
+			Ok(()) => (),
+			other => panic!("unexpected lex result: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_in_text() {
+		let (_, result) = lex(b"<a>foo", 128);
+		// this is a proper Eof, the parser will have to decide whether it's ok or not here'
+		match result {
+			Ok(()) => (),
+			other => panic!("unexpected lex result: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_at_end_of_document() {
+		let (_, result) = lex(b"<a/>", 128);
+		match result {
+			Ok(()) => (),
+			other => panic!("unexpected lex result: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_at_end_of_document_with_whitespace() {
+		let (_, result) = lex(b"<a/>\n\n", 128);
+		match result {
+			Ok(()) => (),
+			other => panic!("unexpected lex result: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn lexer_detect_eof_before_decl_or_el() {
+		let (_, result) = lex(b"", 128);
+		// this is a proper Eof, the parser will have to decide whether it's ok or not here'
+		match result {
+			Ok(()) => (),
+			other => panic!("unexpected lex result: {:?}", other),
+		}
 	}
 }

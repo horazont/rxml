@@ -154,7 +154,7 @@ fn feedparser_can_handle_chunked_input() {
 // are tested extensively in the modules.
 #[test]
 fn pullparser_can_read_xml_document() {
-	let mut doc = &b"<?xml version='1.0'?>\n<root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text</child></root>"[..];
+	let mut doc = &b"<?xml version='1.0'?>\n<root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text</child></root>\n"[..];
 
 	let mut pp = PullParser::new(&mut doc);
 	let mut out = Vec::<Event>::new();
