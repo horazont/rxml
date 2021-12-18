@@ -81,6 +81,9 @@ pub use bufq::BufferQueue;
 pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
 pub use context::Context;
 
+#[cfg(feature = "macros")]
+pub use rxml_proc::{xml_cdata, xml_ncname, xml_name};
+
 #[cfg(feature = "async")]
 use {
 	tokio::io::{AsyncBufRead, AsyncBufReadExt},

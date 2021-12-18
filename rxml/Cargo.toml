@@ -20,12 +20,14 @@ rxml_validation = { path = "../rxml_validation", version = "0.6.0-alpha.0" }
 tokio = { version = "^1", features = ["io-util"], optional = true }
 async-trait = { version = "^0.1", optional = true }
 bytes = { version = "^1.0" }
+rxml_proc = { path = "../rxml_proc", version = "0.6.0-alpha.0", optional = true }
 
 [features]
 mt = []
 shared_ns = ["weak-table"]
 default = ["async"]
 async = ["tokio", "async-trait", "mt"]
+macros = ["rxml_proc"]
 
 [dev-dependencies]
 tokio = { version = "^1", features = ["rt", "macros"] }
