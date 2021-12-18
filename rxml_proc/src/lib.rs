@@ -19,9 +19,9 @@ This crate bases on the [`rxml_validation`] crate and it primarily intended
 for use with the [`rxml`](https://docs.rs/rxml) crate.
 */
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, LitStr};
-use rxml_validation::{validate_cdata, validate_name, validate_ncname};
 use quote::quote;
+use rxml_validation::{validate_cdata, validate_name, validate_ncname};
+use syn::{parse_macro_input, LitStr};
 
 /** XML 1.0 CData compliant string
 
@@ -38,10 +38,10 @@ pub fn xml_cdata(input: TokenStream) -> TokenStream {
 	let data = parse_macro_input!(input as LitStr);
 	let s = data.value();
 	let tokens = match validate_cdata(&s) {
-		Ok(()) => quote!{ unsafe { std::mem::transmute::<_, &rxml::CDataStr>(#s) } },
+		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::CDataStr>(#s) } },
 		Err(e) => {
 			let err = format!("invalid CData string {:?}: {}", s, e);
-			quote!{ compile_error!(#err) }
+			quote! { compile_error!(#err) }
 		}
 	};
 	tokens.into()
@@ -62,10 +62,10 @@ pub fn xml_name(input: TokenStream) -> TokenStream {
 	let data = parse_macro_input!(input as LitStr);
 	let s = data.value();
 	let tokens = match validate_name(&s) {
-		Ok(()) => quote!{ unsafe { std::mem::transmute::<_, &rxml::NameStr>(#s) } },
+		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::NameStr>(#s) } },
 		Err(e) => {
 			let err = format!("invalid Name string {:?}: {}", s, e);
-			quote!{ compile_error!(#err) }
+			quote! { compile_error!(#err) }
 		}
 	};
 	tokens.into()
@@ -86,10 +86,10 @@ pub fn xml_ncname(input: TokenStream) -> TokenStream {
 	let data = parse_macro_input!(input as LitStr);
 	let s = data.value();
 	let tokens = match validate_ncname(&s) {
-		Ok(()) => quote!{ unsafe { std::mem::transmute::<_, &rxml::NCNameStr>(#s) } },
+		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::NCNameStr>(#s) } },
 		Err(e) => {
 			let err = format!("invalid NCName string {:?}: {}", s, e);
-			quote!{ compile_error!(#err) }
+			quote! { compile_error!(#err) }
 		}
 	};
 	tokens.into()

@@ -57,30 +57,30 @@ tasks.
 #[allow(unused_imports)]
 use std::io;
 
+mod bufq;
+mod context;
+mod errctx;
 pub mod error;
 pub mod lexer;
 pub mod parser;
-mod bufq;
 pub mod strings;
-mod context;
-mod errctx;
 pub mod writer;
 
 #[cfg(test)]
 pub mod tests;
 
 #[doc(inline)]
+pub use bufq::BufferQueue;
+pub use context::Context;
+#[doc(inline)]
 pub use error::{Error, Result};
 #[doc(inline)]
 pub use lexer::{Lexer, LexerOptions};
 #[doc(inline)]
-pub use parser::{QName, Parser, Event, LexerAdapter, XMLVersion, XMLNS_XML};
+pub use parser::{Event, LexerAdapter, Parser, QName, XMLVersion, XMLNS_XML};
+pub use strings::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
 #[doc(inline)]
 pub use writer::{Encoder, Item};
-#[doc(inline)]
-pub use bufq::BufferQueue;
-pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
-pub use context::Context;
 
 #[cfg(feature = "macros")]
 #[doc(inline)]
@@ -90,8 +90,8 @@ pub use rxml_proc::{xml_cdata, xml_name, xml_ncname};
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 use {
-	tokio::io::{AsyncBufRead, AsyncBufReadExt},
 	async_trait::async_trait,
+	tokio::io::{AsyncBufRead, AsyncBufReadExt},
 };
 
 /// Package version
@@ -122,7 +122,8 @@ pub trait EventRead {
 	/// returned again by the parser on the next invocation without reading
 	/// further data from the source).
 	fn read_all<F>(&mut self, mut cb: F) -> Result<()>
-		where F: FnMut(Event) -> ()
+	where
+		F: FnMut(Event) -> (),
 	{
 		loop {
 			match self.read()? {
@@ -145,7 +146,8 @@ pub trait EventRead {
 	/// returned again by the parser on the next invocation without reading
 	/// further data from the source).
 	fn read_all_eof<F>(&mut self, cb: F) -> Result<bool>
-		where F: FnMut(Event) -> ()
+	where
+		F: FnMut(Event) -> (),
 	{
 		as_eof_flag(self.read_all(cb))
 	}
@@ -173,8 +175,8 @@ fp.feed(doc[..10].to_vec());
 // We expect a WouldBlock, because the XML declaration is not complete yet
 let ev = fp.read();
 assert!(matches!(
-    ev.err().unwrap(),
-    Error::IO(e) if e.kind() == io::ErrorKind::WouldBlock
+	ev.err().unwrap(),
+	Error::IO(e) if e.kind() == io::ErrorKind::WouldBlock
 ));
 
 fp.feed(doc[10..25].to_vec());
@@ -211,11 +213,8 @@ impl<'x> FeedParser<'x> {
 	}
 
 	pub fn with_context(ctx: parser::RcPtr<Context>) -> FeedParser<'x> {
-		FeedParser{
-			token_source: LexerAdapter::new(
-				Lexer::new(),
-				BufferQueue::new(),
-			),
+		FeedParser {
+			token_source: LexerAdapter::new(Lexer::new(), BufferQueue::new()),
 			parser: Parser::with_context(ctx),
 		}
 	}
@@ -231,8 +230,7 @@ impl<'x> FeedParser<'x> {
 	/// # Panics
 	///
 	/// If [`FeedParser::feed_eof()`] has been called before.
-	pub fn feed<'a: 'x, T: Into<std::borrow::Cow<'a, [u8]>>>(&mut self, data: T)
-	{
+	pub fn feed<'a: 'x, T: Into<std::borrow::Cow<'a, [u8]>>>(&mut self, data: T) {
 		self.token_source.get_mut().push(data);
 	}
 
@@ -340,11 +338,8 @@ impl<T: io::BufRead> PullParser<T> {
 	/// [`std::io::BufReader`] as the implementation will do lots of small
 	/// `read()` calls. Those would be terribly inefficient without buffering.
 	pub fn new(r: T) -> Self {
-		PullParser{
-			token_source: LexerAdapter::new(
-				Lexer::new(),
-				r,
-			),
+		PullParser {
+			token_source: LexerAdapter::new(Lexer::new(), r),
 			parser: Parser::new(),
 		}
 	}
@@ -406,7 +401,8 @@ pub trait AsyncEventRead {
 	///			where F: FnMut(Event) -> () + Send
 	/// ```
 	async fn read_all<F>(&mut self, mut cb: F) -> Result<()>
-		where F: FnMut(Event) -> () + Send
+	where
+		F: FnMut(Event) -> () + Send,
 	{
 		loop {
 			match self.read().await? {
@@ -436,7 +432,8 @@ pub trait AsyncEventRead {
 	///			where F: FnMut(Event) -> () + Send
 	/// ```
 	async fn read_all_eof<F>(&mut self, cb: F) -> Result<bool>
-		where F: FnMut(Event) -> () + Send
+	where
+		F: FnMut(Event) -> () + Send,
 	{
 		as_eof_flag(self.read_all(cb).await)
 	}
@@ -490,11 +487,11 @@ impl<'x, 'y> parser::TokenRead for AsyncLexerAdapter<'x, 'y> {
 			Err(Error::IO(ioerr)) => {
 				*self.blocked = true;
 				Err(Error::IO(ioerr))
-			},
+			}
 			other => {
 				*self.blocked = false;
 				other
-			},
+			}
 		}
 	}
 }
@@ -518,7 +515,7 @@ impl<'x> parser::TokenRead for EofLexerAdapter<'x> {
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 impl<T: AsyncBufRead + Unpin + Send> AsyncParser<T> {
 	pub fn new(r: T) -> Self {
-		Self{
+		Self {
 			reader: r,
 			lexer: Lexer::new(),
 			parser: Parser::new(),
@@ -527,9 +524,14 @@ impl<T: AsyncBufRead + Unpin + Send> AsyncParser<T> {
 	}
 
 	#[inline]
-	fn parse(lexer: &mut Lexer, parser: &mut Parser, buf: &mut &[u8], blocked: &mut bool) -> (usize, Option<Result<Option<Event>>>) {
+	fn parse(
+		lexer: &mut Lexer,
+		parser: &mut Parser,
+		buf: &mut &[u8],
+		blocked: &mut bool,
+	) -> (usize, Option<Result<Option<Event>>>) {
 		let old_len = buf.len();
-		let result = parser.parse(&mut AsyncLexerAdapter{
+		let result = parser.parse(&mut AsyncLexerAdapter {
 			lexer,
 			buf,
 			blocked,
@@ -566,20 +568,32 @@ impl<T: AsyncBufRead + Unpin + Send> AsyncEventRead for AsyncParser<T> {
 		// 3. If the parser has events buffered, they will be emitted without further reads from the source.
 		if !self.blocked {
 			let mut empty: &[u8] = &[];
-			let (_, result) = Self::parse(&mut self.lexer, &mut self.parser, &mut empty, &mut self.blocked);
+			let (_, result) = Self::parse(
+				&mut self.lexer,
+				&mut self.parser,
+				&mut empty,
+				&mut self.blocked,
+			);
 			if let Some(result) = result {
-				return result
+				return result;
 			}
 		}
 		loop {
 			let mut buf = self.reader.fill_buf().await?;
 			if buf.len() == 0 {
-				return self.parser.parse(&mut EofLexerAdapter{lexer: &mut self.lexer});
+				return self.parser.parse(&mut EofLexerAdapter {
+					lexer: &mut self.lexer,
+				});
 			}
-			let (nread, result) = Self::parse(&mut self.lexer, &mut self.parser, &mut buf, &mut self.blocked);
+			let (nread, result) = Self::parse(
+				&mut self.lexer,
+				&mut self.parser,
+				&mut buf,
+				&mut self.blocked,
+			);
 			self.reader.consume(nread);
 			if let Some(result) = result {
-				return result
+				return result;
 			}
 		}
 	}

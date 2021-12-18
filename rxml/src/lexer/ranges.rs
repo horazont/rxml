@@ -1,9 +1,5 @@
 #[cfg(test)]
-use rxml_validation::selectors::{
-	CodepointRange,
-	CodepointRanges,
-	CLASS_XML_NAMESTART,
-};
+use rxml_validation::selectors::{CodepointRange, CodepointRanges, CLASS_XML_NAMESTART};
 
 pub trait ByteSelect {
 	fn select(&self, b: u8) -> bool;
@@ -109,7 +105,6 @@ pub static CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE: &'static [ByteRange] = &
 /// XML whitespace
 pub static CLASS_XML_SPACE_BYTE: &'static [u8] = b" \t\r\n";
 
-
 // XML 1.0 § 2.3 [10]
 pub const CLASS_XML_CDATA_ATT_APOS_DELIMITED_BYTE: &'static [ByteRange] = &[
 	// exclude all whitespace except normal space because those get converted into spaces
@@ -117,7 +112,6 @@ pub const CLASS_XML_CDATA_ATT_APOS_DELIMITED_BYTE: &'static [ByteRange] = &[
 	ByteRange(b'\x28', b'\x3b'), // excludes <
 	ByteRange(b'\x3d', b'\xff'),
 ];
-
 
 // XML 1.0 § 2.3 [10]
 pub const CLASS_XML_CDATA_ATT_QUOT_DELIMITED_BYTE: &'static [ByteRange] = &[
@@ -137,7 +131,6 @@ pub static CLASS_XML_HEXADECIMAL_DIGIT_BYTE: &'static [ByteRange] = &[
 	ByteRange(b'a', b'f'),
 	ByteRange(b'A', b'F'),
 ];
-
 
 /// Valid codepoints for XML character data minus delimiters (XML 1.0 § 2.4 [14])
 ///
@@ -159,7 +152,6 @@ const VALID_XML_CDATA_RANGES_TEXT_DELIMITED: &'static [CodepointRange] = &[
 	CodepointRange('\u{10000}', '\u{10ffff}'),
 ];
 
-
 // XML 1.0 § 2.3 [10]
 #[cfg(test)]
 const VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED: &'static [CodepointRange] = &[
@@ -170,7 +162,6 @@ const VALID_XML_CDATA_RANGES_ATT_APOS_DELIMITED: &'static [CodepointRange] = &[
 	CodepointRange('\u{e000}', '\u{fffd}'),
 	CodepointRange('\u{10000}', '\u{10ffff}'),
 ];
-
 
 // XML 1.0 § 2.3 [10]
 #[cfg(test)]
@@ -184,7 +175,6 @@ const VALID_XML_CDATA_RANGES_ATT_QUOT_DELIMITED: &'static [CodepointRange] = &[
 	CodepointRange('\u{10000}', '\u{10ffff}'),
 ];
 
-
 // XML 1.0 § 2.4 [14]
 #[cfg(test)]
 const VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED: &'static [CodepointRange] = &[
@@ -197,8 +187,8 @@ const VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED: &'static [CodepointRange] =
 ];
 
 #[cfg(test)]
-static CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED: CodepointRanges = CodepointRanges(VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED);
-
+static CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED: CodepointRanges =
+	CodepointRanges(VALID_XML_CDATA_RANGES_CDATASECTION_DELIMITED);
 
 #[cfg(test)]
 mod tests {
@@ -211,8 +201,14 @@ mod tests {
 		for cp in 0x0..=0x10ffffu32 {
 			if let Some(ch) = std::char::from_u32(cp) {
 				let s = ch.encode_utf8(&mut buf[..]);
-				if CLASS_XML_NAMESTART.select(ch) && !CLASS_XML_NAMESTART_BYTE.select(s.as_bytes()[0]) {
-					panic!("byte selector rejects byte 0x{:02x}, which is the start byte of U+{:04x}", s.as_bytes()[0], cp);
+				if CLASS_XML_NAMESTART.select(ch)
+					&& !CLASS_XML_NAMESTART_BYTE.select(s.as_bytes()[0])
+				{
+					panic!(
+						"byte selector rejects byte 0x{:02x}, which is the start byte of U+{:04x}",
+						s.as_bytes()[0],
+						cp
+					);
 				}
 			}
 		}
@@ -223,12 +219,18 @@ mod tests {
 		assert!(!CLASS_XML_NAMESTART_BYTE.select(b'\xc0'));
 		for b in 0x80..0xc2u8 {
 			if CLASS_XML_NAMESTART_BYTE.select(b) {
-				panic!("accepts byte 0x{:02x}, which is not a valid UTF-8 start byte", b);
+				panic!(
+					"accepts byte 0x{:02x}, which is not a valid UTF-8 start byte",
+					b
+				);
 			}
 		}
 		for b in 0xf8..0xffu8 {
 			if CLASS_XML_NAMESTART_BYTE.select(b) {
-				panic!("accepts byte 0x{:02x}, which is not a valid UTF-8 start byte", b);
+				panic!(
+					"accepts byte 0x{:02x}, which is not a valid UTF-8 start byte",
+					b
+				);
 			}
 		}
 	}
@@ -277,7 +279,9 @@ mod tests {
 			if let Some(ch) = std::char::from_u32(cp) {
 				let s = ch.encode_utf8(&mut buf[..]);
 				for b in s.as_bytes() {
-					if CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED.select(ch) && !CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE.select(*b) {
+					if CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED.select(ch)
+						&& !CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE.select(*b)
+					{
 						panic!("byte selector rejects byte 0x{:02x}, which is a utf-8 byte of U+{:04x}", *b, cp);
 					}
 				}

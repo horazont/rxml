@@ -1,6 +1,6 @@
-use std::io;
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::io;
 
 pub const ERR_NODATA: &'static str = "no data in buffer";
 
@@ -54,7 +54,7 @@ pub struct BufferQueue<'x> {
 impl<'x> BufferQueue<'x> {
 	/// Create a new, empty buffer queue.
 	pub fn new() -> Self {
-		Self{
+		Self {
 			q: VecDeque::new(),
 			offset: 0,
 			len: 0,
@@ -69,8 +69,7 @@ impl<'x> BufferQueue<'x> {
 	/// # Panics
 	///
 	/// If [`BufferQueue::push_eof`] has been called.
-	pub fn push<'a: 'x, T: Into<Cow<'a, [u8]>>>(&mut self, new: T)
-	{
+	pub fn push<'a: 'x, T: Into<Cow<'a, [u8]>>>(&mut self, new: T) {
 		let new = new.into();
 		if self.eof {
 			panic!("cannot push behind eof");
@@ -141,17 +140,17 @@ impl io::Read for BufferQueue<'_> {
 			let front = match self.q.front() {
 				None => {
 					if self.eof {
-						return Ok(0)
+						return Ok(0);
 					} else {
-						return Err(io::Error::new(io::ErrorKind::WouldBlock, ERR_NODATA))
+						return Err(io::Error::new(io::ErrorKind::WouldBlock, ERR_NODATA));
 					}
-				},
+				}
 				Some(v) => v,
 			};
 			debug_assert!(self.offset < front.len());
 			let effective_len = front.len() - self.offset;
 			let to_read = dst.len().min(effective_len);
-			dst[..to_read].copy_from_slice(&front[self.offset..(to_read+self.offset)]);
+			dst[..to_read].copy_from_slice(&front[self.offset..(to_read + self.offset)]);
 			self.offset += to_read;
 			(to_read, front.len() - self.offset)
 		};
@@ -175,11 +174,13 @@ impl io::BufRead for BufferQueue<'_> {
 	/// reached yet, [`std::io::ErrorKind::WouldBlock`] is returned.
 	fn fill_buf(&mut self) -> io::Result<&[u8]> {
 		match self.q.front() {
-			None => if self.eof {
-				Ok(&[])
-			} else {
-				Err(io::Error::new(io::ErrorKind::WouldBlock, ERR_NODATA))
-			},
+			None => {
+				if self.eof {
+					Ok(&[])
+				} else {
+					Err(io::Error::new(io::ErrorKind::WouldBlock, ERR_NODATA))
+				}
+			}
 			Some(v) => Ok(&v[self.offset..]),
 		}
 	}
@@ -212,13 +213,12 @@ impl io::BufRead for BufferQueue<'_> {
 		}
 		self.len -= amt;
 	}
-
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use std::io::{Read, BufRead};
+	use std::io::{BufRead, Read};
 
 	#[test]
 	fn bufq_len_grows_with_buffers() {
@@ -280,7 +280,10 @@ mod tests {
 		bq.push(s1.to_vec());
 		let mut buf = [0; 4];
 		assert_eq!(bq.read(&mut buf[..]).unwrap(), 3);
-		assert_eq!(bq.read(&mut buf[..]).err().unwrap().kind(), io::ErrorKind::WouldBlock);
+		assert_eq!(
+			bq.read(&mut buf[..]).err().unwrap().kind(),
+			io::ErrorKind::WouldBlock
+		);
 	}
 
 	#[test]
@@ -534,7 +537,10 @@ mod tests {
 		let mut bq = BufferQueue::new();
 		bq.push(s1.to_vec());
 		bq.consume(3);
-		assert_eq!(bq.fill_buf().err().unwrap().kind(), io::ErrorKind::WouldBlock);
+		assert_eq!(
+			bq.fill_buf().err().unwrap().kind(),
+			io::ErrorKind::WouldBlock
+		);
 	}
 
 	#[test]
@@ -544,7 +550,10 @@ mod tests {
 		bq.push(s1.to_vec());
 		bq.clear();
 		assert_eq!(bq.len(), 0);
-		assert_eq!(bq.fill_buf().err().unwrap().kind(), io::ErrorKind::WouldBlock);
+		assert_eq!(
+			bq.fill_buf().err().unwrap().kind(),
+			io::ErrorKind::WouldBlock
+		);
 	}
 
 	#[test]

@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use rxml::{PullParser, FeedParser, EventRead, Event};
+use rxml::{Event, EventRead, FeedParser, PullParser};
 
 static HUGE_STANZA: &'static [u8] =  br#"<iq to='loadtest0@conference.example.com/63653b5f'
 id='b3JhE-1363385' type='set'><jingle xmlns='urn:xmpp:jingle:1' action='session-initiate'
@@ -2929,9 +2929,11 @@ fn huge_document(c: &mut Criterion) {
 			evs.clear();
 			let mut doc = &HUGE_STANZA[..];
 			let mut p = PullParser::new(&mut doc);
-			assert!(p.read_all_eof(|ev| {
-				evs.push(ev);
-			}).unwrap());
+			assert!(p
+				.read_all_eof(|ev| {
+					evs.push(ev);
+				})
+				.unwrap());
 		});
 	});
 
@@ -2943,9 +2945,11 @@ fn huge_document(c: &mut Criterion) {
 			let mut p = FeedParser::new();
 			p.feed(&HUGE_STANZA[..]);
 			p.feed_eof();
-			assert!(p.read_all_eof(|ev| {
-				evs.push(ev);
-			}).unwrap());
+			assert!(p
+				.read_all_eof(|ev| {
+					evs.push(ev);
+				})
+				.unwrap());
 		});
 	});
 
@@ -2957,13 +2961,14 @@ fn huge_document(c: &mut Criterion) {
 		b.iter(|| {
 			evs.clear();
 			p.feed(&HUGE_STANZA[..]);
-			assert!(!p.read_all_eof(|ev| {
-				evs.push(ev);
-			}).unwrap());
+			assert!(!p
+				.read_all_eof(|ev| {
+					evs.push(ev);
+				})
+				.unwrap());
 		});
 	});
 }
-
 
 criterion_group!(benches, short_document, huge_document);
 criterion_main!(benches);

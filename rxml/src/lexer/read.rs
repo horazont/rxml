@@ -16,12 +16,10 @@ fn find_first_not<B: ByteSelect>(src: &[u8], s: &B) -> Option<usize> {
 				src[i]
 			}
 			#[cfg(not(debug_assertions))]
-			*unsafe {
-				src.get_unchecked(i)
-			}
+			*unsafe { src.get_unchecked(i) }
 		};
 		if !s.select(b) {
-			return Some(i)
+			return Some(i);
 		}
 	}
 	None
@@ -32,9 +30,8 @@ pub fn read_validated_bytes<B: ByteSelect>(
 	selector: &B,
 	limit: usize,
 	into: &mut Vec<u8>,
-	) -> Endbyte
-{
-	let end_pos  = match find_first_not(*r, selector) {
+) -> Endbyte {
+	let end_pos = match find_first_not(*r, selector) {
 		None => r.len().min(limit),
 		Some(p) => p.min(limit),
 	};
@@ -57,12 +54,8 @@ pub fn read_validated_bytes<B: ByteSelect>(
 	}
 }
 
-pub fn skip_matching_bytes<B: ByteSelect>(
-	r: &mut &[u8],
-	selector: &B,
-	) -> (usize, Endbyte)
-{
-	let end_pos  = match find_first_not(*r, selector) {
+pub fn skip_matching_bytes<B: ByteSelect>(r: &mut &[u8], selector: &B) -> (usize, Endbyte) {
+	let end_pos = match find_first_not(*r, selector) {
 		None => r.len(),
 		Some(p) => p,
 	};

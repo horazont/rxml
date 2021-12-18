@@ -1,20 +1,20 @@
 /*!
 # XML 1.0 Parser
 */
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fmt;
 use std::io;
-#[cfg(feature = "mt")]
-use std::sync::Arc;
 #[cfg(not(feature = "mt"))]
 use std::rc::Rc;
 use std::result::Result as StdResult;
-use std::collections::HashMap;
-use std::collections::VecDeque;
+#[cfg(feature = "mt")]
+use std::sync::Arc;
 
-use crate::lexer::{Token, Lexer, TokenMetrics};
-use crate::error::*;
-use crate::strings::*;
 use crate::context;
+use crate::error::*;
+use crate::lexer::{Lexer, Token, TokenMetrics};
+use crate::strings::*;
 
 /// XML core namespace URI (for the `xml:` prefix)
 pub const XMLNS_XML: &'static CDataStr =
@@ -79,7 +79,7 @@ impl EventMetrics {
 
 	// Create new event metrics
 	pub const fn new(len: usize) -> EventMetrics {
-		EventMetrics{len: len}
+		EventMetrics { len: len }
 	}
 }
 
@@ -173,7 +173,7 @@ enum DocSt {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum State {
 	Initial,
-	Decl{
+	Decl {
 		substate: DeclSt,
 		version: Option<XMLVersion>,
 	},
@@ -183,7 +183,7 @@ enum State {
 }
 
 fn add_context<T, E: ErrorWithContext>(r: StdResult<T, E>, ctx: &'static str) -> StdResult<T, E> {
-	r.or_else(|e| { Err(e.with_context(ctx)) })
+	r.or_else(|e| Err(e.with_context(ctx)))
 }
 
 /**
@@ -253,7 +253,7 @@ impl Parser {
 
 	pub fn with_context(ctx: RcPtr<context::Context>) -> Self {
 		let xmlns = ctx.intern_cdata(XMLNS_XML.to_cdata());
-		Self{
+		Self {
 			ctx: ctx,
 			state: State::Initial,
 			fixed_xml_namespace: xmlns,
@@ -275,9 +275,10 @@ impl Parser {
 
 	fn account_token(&mut self, tm: &TokenMetrics) -> Result<usize> {
 		let last_end = self.event_last_token_end.unwrap();
-		self.event_length = self.event_length.checked_add(
-			tm.len() + tm.start().wrapping_sub(last_end),
-		).ok_or_else(||{ Error::RestrictedXml("event too long") })?;
+		self.event_length = self
+			.event_length
+			.checked_add(tm.len() + tm.start().wrapping_sub(last_end))
+			.ok_or_else(|| Error::RestrictedXml("event too long"))?;
 		self.event_last_token_end = Some(tm.end());
 		Ok(self.event_length)
 	}
@@ -287,12 +288,12 @@ impl Parser {
 		let len = self.event_length;
 		self.event_last_token_end = None;
 		self.event_length = 0;
-		EventMetrics{len: len}
+		EventMetrics { len: len }
 	}
 
 	fn fixed_event(&self, len: usize) -> EventMetrics {
 		debug_assert!(self.event_last_token_end.is_none());
-		EventMetrics{len: len}
+		EventMetrics { len: len }
 	}
 
 	fn read_token<'r, R: TokenRead>(&mut self, r: &'r mut R) -> Result<Option<Token>> {
@@ -303,7 +304,7 @@ impl Parser {
 			Some(tok) => {
 				self.account_token(tok.metrics())?;
 				Ok(Some(tok))
-			},
+			}
 			None => Ok(None),
 		}
 	}
@@ -335,7 +336,7 @@ impl Parser {
 			panic!("element scratchpad is not None at start of element");
 		}
 		let (prefix, localname) = add_context(name.split_name(), ERRCTX_ELEMENT)?;
-		self.element_scratchpad = Some(ElementScratchpad{
+		self.element_scratchpad = Some(ElementScratchpad {
 			prefix: prefix,
 			localname: localname,
 			attributes: Vec::new(),
@@ -357,19 +358,21 @@ impl Parser {
 						Some(uri) => return Some(&uri),
 						None => (),
 					};
-				};
-			},
+				}
+			}
 			None => {
 				for decls in self.namespace_stack.iter().rev() {
 					match decls.0.as_ref() {
-						Some(uri) => if uri.len() > 0 {
-							return Some(&uri)
-						} else {
-							return None
-						},
+						Some(uri) => {
+							if uri.len() > 0 {
+								return Some(&uri);
+							} else {
+								return None;
+							}
+						}
 						None => (),
 					};
-				};
+				}
 			}
 		}
 		None
@@ -380,21 +383,28 @@ impl Parser {
 	/// This may fail for various reasons, such as duplicate attributes or
 	/// references to undeclared namespace prefixes.
 	fn finalize_element(&mut self) -> Result<()> {
-		let ElementScratchpad{
+		let ElementScratchpad {
 			prefix,
 			localname,
 			mut attributes,
 			default_namespace_decl,
 			namespace_decls,
 			attrprefix: _,
-			attrlocalname: _
+			attrlocalname: _,
 		} = self.element_scratchpad.take().unwrap();
-		self.namespace_stack.push((default_namespace_decl, namespace_decls));
+		self.namespace_stack
+			.push((default_namespace_decl, namespace_decls));
 		let (assembled_name, nsuri, localname) = match prefix {
-			None => (localname.clone().as_name(), self.lookup_namespace(None), localname),
+			None => (
+				localname.clone().as_name(),
+				self.lookup_namespace(None),
+				localname,
+			),
 			Some(prefix) => {
 				let nsuri = self.lookup_namespace(Some(&prefix)).ok_or_else(|| {
-					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(ERRCTX_ELEMENT))
+					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(
+						ERRCTX_ELEMENT,
+					))
 				})?;
 				let assembled = prefix.add_suffix(&localname);
 				(assembled, Some(nsuri), localname)
@@ -403,21 +413,26 @@ impl Parser {
 		let mut resolved_attributes: HashMap<QName, CData> = HashMap::new();
 		for (prefix, localname, value) in attributes.drain(..) {
 			let nsuri = match prefix {
-				Some(prefix) => Some(self.lookup_namespace(Some(&prefix)).ok_or_else(|| {
-					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(ERRCTX_ATTNAME))
-				})?.clone()),
+				Some(prefix) => Some(
+					self.lookup_namespace(Some(&prefix))
+						.ok_or_else(|| {
+							Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(
+								ERRCTX_ATTNAME,
+							))
+						})?
+						.clone(),
+				),
 				None => None,
 			};
-			if resolved_attributes.insert((nsuri, localname), value).is_some() {
-				return Err(Error::NotWellFormed(WFError::DuplicateAttribute))
+			if resolved_attributes
+				.insert((nsuri, localname), value)
+				.is_some()
+			{
+				return Err(Error::NotWellFormed(WFError::DuplicateAttribute));
 			}
 		}
-		let nsuri = nsuri.and_then(|s| { Some(s.clone()) });
-		let ev = Event::StartElement(
-			self.finish_event(),
-			(nsuri, localname),
-			resolved_attributes,
-		);
+		let nsuri = nsuri.and_then(|s| Some(s.clone()));
+		let ev = Event::StartElement(self.finish_event(), (nsuri, localname), resolved_attributes);
 		self.emit_event(ev);
 		self.element_stack.push(assembled_name);
 		Ok(())
@@ -446,13 +461,16 @@ impl Parser {
 		match self.read_token(r)? {
 			Some(Token::XMLDeclStart(tm)) => {
 				self.start_event(&tm);
-				Ok(State::Decl{ substate: DeclSt::VersionName, version: None })
-			},
+				Ok(State::Decl {
+					substate: DeclSt::VersionName,
+					version: None,
+				})
+			}
 			Some(Token::ElementHeadStart(tm, name)) => {
 				self.start_event(&tm);
 				self.start_processing_element(name)?;
 				Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
-			},
+			}
 			Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 				ERRCTX_DOCBEGIN,
 				tok.name(),
@@ -465,83 +483,101 @@ impl Parser {
 	/// XML declaration state.
 	///
 	/// See [`State::Decl`].
-	fn parse_decl<'r, R: TokenRead>(&mut self, state: DeclSt, version: Option<XMLVersion>, r: &'r mut R) -> Result<State> {
+	fn parse_decl<'r, R: TokenRead>(
+		&mut self,
+		state: DeclSt,
+		version: Option<XMLVersion>,
+		r: &'r mut R,
+	) -> Result<State> {
 		match self.read_token(r)? {
 			None => Err(Error::wfeof(ERRCTX_XML_DECL)),
-			Some(Token::Name(_, name)) => match state {
-				DeclSt::VersionName => {
-					if name == "version" {
-						Ok(State::Decl{ substate: DeclSt::VersionEq, version: version })
-					} else {
-						Err(Error::NotWellFormed(WFError::InvalidSyntax("'<?xml' must be followed by version attribute")))
+			Some(Token::Name(_, name)) => {
+				match state {
+					DeclSt::VersionName => {
+						if name == "version" {
+							Ok(State::Decl {
+								substate: DeclSt::VersionEq,
+								version: version,
+							})
+						} else {
+							Err(Error::NotWellFormed(WFError::InvalidSyntax(
+								"'<?xml' must be followed by version attribute",
+							)))
+						}
 					}
-				},
-				DeclSt::EncodingName => {
-					if name == "encoding" {
-						Ok(State::Decl{ substate: DeclSt::EncodingEq, version: version })
-					} else {
-						Err(Error::NotWellFormed(WFError::InvalidSyntax("'version' attribute must be followed by '?>' or 'encoding' attribute")))
+					DeclSt::EncodingName => {
+						if name == "encoding" {
+							Ok(State::Decl {
+								substate: DeclSt::EncodingEq,
+								version: version,
+							})
+						} else {
+							Err(Error::NotWellFormed(WFError::InvalidSyntax("'version' attribute must be followed by '?>' or 'encoding' attribute")))
+						}
 					}
-				},
-				DeclSt::StandaloneName => {
-					if name == "standalone" {
-						Ok(State::Decl{ substate: DeclSt::StandaloneEq, version: version })
-					} else {
-						Err(Error::NotWellFormed(WFError::InvalidSyntax("'encoding' attribute must be followed by '?>' or 'standalone' attribute")))
+					DeclSt::StandaloneName => {
+						if name == "standalone" {
+							Ok(State::Decl {
+								substate: DeclSt::StandaloneEq,
+								version: version,
+							})
+						} else {
+							Err(Error::NotWellFormed(WFError::InvalidSyntax("'encoding' attribute must be followed by '?>' or 'standalone' attribute")))
+						}
 					}
-				},
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
-					ERRCTX_XML_DECL,
-					Token::NAME_NAME,
-					None,  // TODO: add expected tokens here
-				))),
-			},
-			Some(Token::Eq(_)) => Ok(
-				State::Decl{
-					substate: match state {
-						DeclSt::VersionEq => Ok(DeclSt::VersionValue),
-						DeclSt::EncodingEq => Ok(DeclSt::EncodingValue),
-						DeclSt::StandaloneEq => Ok(DeclSt::StandaloneValue),
-						_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
-							ERRCTX_XML_DECL,
-							Token::NAME_EQ,
-							None,
-						))),
-					}?,
-					version: version,
-				},
-			),
+					_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+						ERRCTX_XML_DECL,
+						Token::NAME_NAME,
+						None, // TODO: add expected tokens here
+					))),
+				}
+			}
+			Some(Token::Eq(_)) => Ok(State::Decl {
+				substate: match state {
+					DeclSt::VersionEq => Ok(DeclSt::VersionValue),
+					DeclSt::EncodingEq => Ok(DeclSt::EncodingValue),
+					DeclSt::StandaloneEq => Ok(DeclSt::StandaloneValue),
+					_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+						ERRCTX_XML_DECL,
+						Token::NAME_EQ,
+						None,
+					))),
+				}?,
+				version: version,
+			}),
 			Some(Token::AttributeValue(_, v)) => match state {
 				DeclSt::VersionValue => {
 					if v == "1.0" {
-						Ok(State::Decl{
+						Ok(State::Decl {
 							substate: DeclSt::EncodingName,
 							version: Some(XMLVersion::V1_0),
 						})
 					} else {
 						Err(Error::RestrictedXml("only XML version 1.0 is allowed"))
 					}
-				},
+				}
 				DeclSt::EncodingValue => {
 					if v.eq_ignore_ascii_case("utf-8") {
-						Ok(State::Decl{
+						Ok(State::Decl {
 							substate: DeclSt::StandaloneName,
 							version: version,
 						})
 					} else {
 						Err(Error::RestrictedXml("only utf-8 encoding is allowed"))
 					}
-				},
+				}
 				DeclSt::StandaloneValue => {
 					if v.eq_ignore_ascii_case("yes") {
-						Ok(State::Decl{
+						Ok(State::Decl {
 							substate: DeclSt::Close,
 							version: version,
 						})
 					} else {
-						Err(Error::RestrictedXml("only standalone documents are allowed"))
+						Err(Error::RestrictedXml(
+							"only standalone documents are allowed",
+						))
 					}
-				},
+				}
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_XML_DECL,
 					Token::NAME_ATTRIBUTEVALUE,
@@ -553,7 +589,7 @@ impl Parser {
 					let ev = Event::XMLDeclaration(self.finish_event(), version.unwrap());
 					self.emit_event(ev);
 					Ok(State::Document(DocSt::Element(ElementSt::Expected)))
-				},
+				}
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_XML_DECL,
 					Token::NAME_XMLDECLEND,
@@ -585,21 +621,29 @@ impl Parser {
 			(Some(prefix), localname) if prefix == "xmlns" => {
 				// declares xml namespace, move elsewhere for later lookups
 				if localname == "xmlns" {
-					Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix))
+					Err(Error::NotNamespaceWellFormed(
+						NWFError::ReservedNamespacePrefix,
+					))
 				} else if localname == "xml" {
 					if val != XMLNS_XML {
-						Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix))
+						Err(Error::NotNamespaceWellFormed(
+							NWFError::ReservedNamespacePrefix,
+						))
 					} else {
 						Ok(())
 					}
 				} else if val.len() == 0 {
 					Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri))
-				} else if scratchpad.namespace_decls.insert(localname, self.ctx.intern_cdata(val)).is_some() {
+				} else if scratchpad
+					.namespace_decls
+					.insert(localname, self.ctx.intern_cdata(val))
+					.is_some()
+				{
 					Err(Error::NotWellFormed(WFError::DuplicateAttribute))
 				} else {
 					Ok(())
 				}
-			},
+			}
 			(None, localname) if localname == "xmlns" => {
 				// declares default xml namespace, move elsewhere for later lookups
 				if scratchpad.default_namespace_decl.is_some() {
@@ -608,11 +652,11 @@ impl Parser {
 					scratchpad.default_namespace_decl = Some(self.ctx.intern_cdata(val));
 					Ok(())
 				}
-			},
+			}
 			(prefix, localname) => {
 				scratchpad.attributes.push((prefix, localname, val));
 				Ok(())
-			},
+			}
 		}
 	}
 
@@ -629,12 +673,12 @@ impl Parser {
 				self.start_event(&tm);
 				self.start_processing_element(name)?;
 				Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
-			},
+			}
 			Some(Token::ElementHFEnd(_)) => match state {
 				ElementSt::AttrName => {
 					self.finalize_element()?;
 					Ok(State::Document(DocSt::CData))
-				},
+				}
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_ELEMENTHEADCLOSE,
@@ -645,7 +689,7 @@ impl Parser {
 				ElementSt::AttrName => {
 					self.finalize_element()?;
 					Ok(self.pop_element(self.fixed_event(0))?)
-				},
+				}
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_ELEMENTHEADCLOSE,
@@ -678,7 +722,7 @@ impl Parser {
 				ElementSt::AttrValue => {
 					self.push_attribute(val)?;
 					Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
-				},
+				}
 				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_EQ,
@@ -705,24 +749,28 @@ impl Parser {
 					let ev = Event::Text(self.finish_event(), s);
 					self.emit_event(ev);
 					Ok(State::Document(DocSt::CData))
-				},
+				}
 				Some(Token::ElementHeadStart(tm, name)) => {
 					self.start_event(&tm);
 					self.start_processing_element(name)?;
 					Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
-				},
+				}
 				Some(Token::ElementFootStart(tm, name)) => {
 					self.start_event(&tm);
-					if self.element_stack[self.element_stack.len()-1] != name {
+					if self.element_stack[self.element_stack.len() - 1] != name {
 						Err(Error::NotWellFormed(WFError::ElementMismatch))
 					} else {
 						Ok(State::Document(DocSt::ElementFoot))
 					}
-				},
+				}
 				Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_TEXT,
 					tok.name(),
-					Some(&[Token::NAME_TEXT, Token::NAME_ELEMENTHEADSTART, Token::NAME_ELEMENTFOOTSTART]),
+					Some(&[
+						Token::NAME_TEXT,
+						Token::NAME_ELEMENTHEADSTART,
+						Token::NAME_ELEMENTFOOTSTART,
+					]),
 				))),
 				None => Err(Error::wfeof(ERRCTX_TEXT)),
 			},
@@ -730,7 +778,7 @@ impl Parser {
 				Some(Token::ElementHFEnd(_)) => {
 					let em = self.finish_event();
 					self.pop_element(em)
-				},
+				}
 				Some(other) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 					ERRCTX_ELEMENT_FOOT,
 					other.name(),
@@ -758,17 +806,23 @@ impl Parser {
 		self.check_poison()?;
 		loop {
 			if self.eventq.len() > 0 {
-				return Ok(Some(self.eventq.pop_front().unwrap()))
+				return Ok(Some(self.eventq.pop_front().unwrap()));
 			}
 
 			let result = match self.state {
 				State::Initial => self.parse_initial(r),
-				State::Decl{ substate, version } => self.parse_decl(substate, version, r),
+				State::Decl { substate, version } => self.parse_decl(substate, version, r),
 				State::Document(substate) => self.parse_document(substate, r),
 				State::End => match self.read_token(r)? {
 					None => Ok(State::Eof),
 					// whitespace after the root element is explicitly allowed
-					Some(Token::Text(_, s)) if s.as_bytes().iter().all(|&c| c == b' ' || c == b'\t' || c == b'\n' || c == b'\r') => Ok(State::End),
+					Some(Token::Text(_, s))
+						if s.as_bytes()
+							.iter()
+							.all(|&c| c == b' ' || c == b'\t' || c == b'\n' || c == b'\r') =>
+					{
+						Ok(State::End)
+					}
 					Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
 						ERRCTX_DOCEND,
 						tok.name(),
@@ -820,7 +874,7 @@ pub struct LexerAdapter<R: io::BufRead> {
 impl<R: io::BufRead> LexerAdapter<R> {
 	/// Wraps a lexer and a codepoint source
 	pub fn new(lexer: Lexer, src: R) -> Self {
-		Self{
+		Self {
 			lexer: lexer,
 			src: src,
 		}
@@ -861,9 +915,9 @@ impl<R: io::BufRead> TokenRead for LexerAdapter<R> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use std::io;
 	use crate::lexer::TokenMetrics;
 	use std::convert::TryInto;
+	use std::io;
 
 	const TEST_NS: &'static str = "urn:uuid:4e1c8b65-ae37-49f8-a250-c27d52827da9";
 	const TEST_NS2: &'static str = "urn:uuid:678ba034-6200-4ecd-803f-bbcbfa225236";
@@ -871,12 +925,12 @@ mod tests {
 	const DM: TokenMetrics = TokenMetrics::new(0, 0);
 
 	// XXX: this should be possible without a subtype *shrug*
-	struct TokenSliceReader<'x>{
+	struct TokenSliceReader<'x> {
 		base: &'x [Token],
 		offset: usize,
 	}
 
-	struct SometimesBlockingTokenSliceReader<'x>{
+	struct SometimesBlockingTokenSliceReader<'x> {
 		base: &'x [Token],
 		offset: usize,
 		has_blocked: bool,
@@ -888,7 +942,7 @@ mod tests {
 
 	impl<'x> TokenSliceWrapper<'x> for TokenSliceReader<'x> {
 		fn new(src: &'x [Token]) -> TokenSliceReader<'x> {
-			TokenSliceReader{
+			TokenSliceReader {
 				base: src,
 				offset: 0,
 			}
@@ -897,7 +951,7 @@ mod tests {
 
 	impl<'x> TokenSliceWrapper<'x> for SometimesBlockingTokenSliceReader<'x> {
 		fn new(src: &'x [Token]) -> SometimesBlockingTokenSliceReader<'x> {
-			SometimesBlockingTokenSliceReader{
+			SometimesBlockingTokenSliceReader {
 				base: src,
 				offset: 0,
 				has_blocked: false,
@@ -913,7 +967,7 @@ mod tests {
 					let result = x.clone();
 					println!("returning token {:?}", result);
 					Ok(Some(result))
-				},
+				}
 				None => Ok(None),
 			}
 		}
@@ -923,7 +977,10 @@ mod tests {
 		fn read(&mut self) -> Result<Option<Token>> {
 			if !self.has_blocked {
 				self.has_blocked = true;
-				return Err(Error::io(io::Error::new(io::ErrorKind::WouldBlock, "noise")))
+				return Err(Error::io(io::Error::new(
+					io::ErrorKind::WouldBlock,
+					"noise",
+				)));
 			}
 
 			match self.base.get(self.offset) {
@@ -933,13 +990,15 @@ mod tests {
 					let result = x.clone();
 					println!("returning token {:?}", result);
 					Ok(Some(result))
-				},
+				}
 				None => Ok(None),
 			}
 		}
 	}
 
-	fn parse_custom<'t, T: TokenSliceWrapper<'t> + TokenRead>(src: &'t [Token]) -> (Vec<Event>, Result<()>) {
+	fn parse_custom<'t, T: TokenSliceWrapper<'t> + TokenRead>(
+		src: &'t [Token],
+	) -> (Vec<Event>, Result<()>) {
 		let mut sink = Vec::<Event>::new();
 		let mut reader = T::new(src);
 		let mut parser = Parser::new();
@@ -974,11 +1033,14 @@ mod tests {
 		match iter.next().unwrap() {
 			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 7);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		}
 		assert!(iter.next().is_none());
-		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::InvalidEof(ERRCTX_DOCBEGIN))));
+		assert!(matches!(
+			r.err().unwrap(),
+			Error::NotWellFormed(WFError::InvalidEof(ERRCTX_DOCBEGIN))
+		));
 	}
 
 	#[test]
@@ -987,14 +1049,19 @@ mod tests {
 
 		impl TokenRead for DegenerateTokenSource {
 			fn read(&mut self) -> Result<Option<Token>> {
-				Err(Error::io(io::Error::new(io::ErrorKind::WouldBlock, "nevar!")))
+				Err(Error::io(io::Error::new(
+					io::ErrorKind::WouldBlock,
+					"nevar!",
+				)))
 			}
 		}
 
 		let mut reader = DegenerateTokenSource();
 		let mut parser = Parser::new();
 		let r = parser.parse(&mut reader);
-		assert!(matches!(r.err().unwrap(), Error::IO(ioerr) if ioerr.kind() == io::ErrorKind::WouldBlock));
+		assert!(
+			matches!(r.err().unwrap(), Error::IO(ioerr) if ioerr.kind() == io::ErrorKind::WouldBlock)
+		);
 	}
 
 	#[test]
@@ -1019,7 +1086,10 @@ mod tests {
 				Ok(None) => panic!("unexpected eof: {:?}", parser),
 			}
 		}
-		assert!(matches!(&evs[0], Event::XMLDeclaration(EventMetrics{len: 0}, XMLVersion::V1_0)));
+		assert!(matches!(
+			&evs[0],
+			Event::XMLDeclaration(EventMetrics { len: 0 }, XMLVersion::V1_0)
+		));
 		assert_eq!(evs.len(), 1);
 	}
 
@@ -1036,7 +1106,10 @@ mod tests {
 		let mut reader = TokenSliceReader::new(toks);
 		let mut parser = Parser::new();
 		let r = parser.parse(&mut reader);
-		assert!(matches!(r.unwrap().unwrap(), Event::XMLDeclaration(EventMetrics{len: 0}, XMLVersion::V1_0)));
+		assert!(matches!(
+			r.unwrap().unwrap(),
+			Event::XMLDeclaration(EventMetrics { len: 0 }, XMLVersion::V1_0)
+		));
 	}
 
 	#[test]
@@ -1051,8 +1124,13 @@ mod tests {
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
-		assert!(matches!(&evs[1], Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(&evs[2], Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(&evs[1], Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(matches!(
+			&evs[2],
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1062,8 +1140,13 @@ mod tests {
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
-		assert!(matches!(&evs[0], Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(&evs[0], Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(matches!(
+			&evs[1],
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1077,14 +1160,20 @@ mod tests {
 		]);
 		r.unwrap();
 		match &evs[0] {
-			Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), attrs) => {
+			Event::StartElement(EventMetrics { len: 0 }, (nsuri, localname), attrs) => {
 				assert_eq!(localname, "root");
 				assert!(nsuri.is_none());
-				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, "foo".try_into().unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(
+			&evs[1],
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1103,10 +1192,13 @@ mod tests {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
-			},
+			}
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(
+			&evs[1],
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1126,12 +1218,18 @@ mod tests {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
+				assert_eq!(
+					attrs.get(&(None, "foo".try_into().unwrap())).unwrap(),
+					"bar"
+				);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
-			},
+			}
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(
+			&evs[1],
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1151,12 +1249,23 @@ mod tests {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(RcPtr::new(TEST_NS.try_into().unwrap())), "bar".try_into().unwrap())).unwrap(), "baz");
+				assert_eq!(
+					attrs
+						.get(&(
+							Some(RcPtr::new(TEST_NS.try_into().unwrap())),
+							"bar".try_into().unwrap()
+						))
+						.unwrap(),
+					"baz"
+				);
 				assert!(nsuri.is_none());
-			},
+			}
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(
+			&evs[1],
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1173,12 +1282,25 @@ mod tests {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len, 0);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(Some(RcPtr::new("http://www.w3.org/XML/1998/namespace".try_into().unwrap())), "lang".try_into().unwrap())).unwrap(), "en");
+				assert_eq!(
+					attrs
+						.get(&(
+							Some(RcPtr::new(
+								"http://www.w3.org/XML/1998/namespace".try_into().unwrap()
+							)),
+							"lang".try_into().unwrap()
+						))
+						.unwrap(),
+					"en"
+				);
 				assert!(nsuri.is_none());
-			},
+			}
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(&evs[1], Event::EndElement(EventMetrics{len: 0})));
+		assert!(matches!(
+			&evs[1],
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1193,7 +1315,10 @@ mod tests {
 			Token::AttributeValue(DM, "baz".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
-		assert!(matches!(r.err().unwrap(), Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)));
+		assert!(matches!(
+			r.err().unwrap(),
+			Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)
+		));
 		assert_eq!(evs.len(), 0);
 	}
 
@@ -1203,7 +1328,10 @@ mod tests {
 			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::Name(DM, "xmlns:xml".try_into().unwrap()),
 			Token::Eq(DM),
-			Token::AttributeValue(DM, "http://www.w3.org/XML/1998/namespace".try_into().unwrap()),
+			Token::AttributeValue(
+				DM,
+				"http://www.w3.org/XML/1998/namespace".try_into().unwrap(),
+			),
 			Token::ElementHeadClose(DM),
 		]);
 		r.unwrap();
@@ -1222,7 +1350,10 @@ mod tests {
 			Token::AttributeValue(DM, "baz".try_into().unwrap()),
 			Token::ElementHeadClose(DM),
 		]);
-		assert!(matches!(r.err().unwrap(), Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)));
+		assert!(matches!(
+			r.err().unwrap(),
+			Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)
+		));
 		assert_eq!(evs.len(), 0);
 	}
 
@@ -1240,10 +1371,20 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1263,13 +1404,29 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "Hello"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "mixed"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
-		assert!(matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "world!"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "Hello")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "mixed")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
+		assert!(
+			matches!(iter.next().unwrap(), Event::Text(EventMetrics{len: 0}, t) if t == "world!")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1284,10 +1441,17 @@ mod tests {
 			Token::ElementFootStart(DM, "root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
-		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::ElementMismatch)));
+		assert!(matches!(
+			r.err().unwrap(),
+			Error::NotWellFormed(WFError::ElementMismatch)
+		));
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child")
+		);
 		assert!(iter.next().is_none());
 	}
 
@@ -1316,13 +1480,24 @@ mod tests {
 				assert_eq!(em.len, 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, "foo".try_into().unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1350,13 +1525,24 @@ mod tests {
 				assert_eq!(em.len, 0);
 				assert_eq!(nsuri.as_ref().unwrap().as_str(), TEST_NS);
 				assert_eq!(localname, "root");
-				assert_eq!(attrs.get(&(None, "foo".try_into().unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, "foo".try_into().unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			ev => panic!("unexpected event: {:?}", ev),
 		}
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "child")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1379,10 +1565,20 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1405,10 +1601,20 @@ mod tests {
 		]);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS2 && localname == "child")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1431,7 +1637,10 @@ mod tests {
 			Token::ElementFootStart(DM, "x:root".try_into().unwrap()),
 			Token::ElementHFEnd(DM),
 		]);
-		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::DuplicateAttribute)));
+		assert!(matches!(
+			r.err().unwrap(),
+			Error::NotWellFormed(WFError::DuplicateAttribute)
+		));
 		assert_eq!(evs.len(), 0);
 	}
 
@@ -1458,9 +1667,15 @@ mod tests {
 		let mut reader = TokenSliceReader::new(toks);
 		let mut parser = Parser::new();
 		let r = parser.parse(&mut reader);
-		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::DuplicateAttribute)));
+		assert!(matches!(
+			r.err().unwrap(),
+			Error::NotWellFormed(WFError::DuplicateAttribute)
+		));
 		let r = parser.parse(&mut reader);
-		assert!(matches!(r.err().unwrap(), Error::NotWellFormed(WFError::DuplicateAttribute)));
+		assert!(matches!(
+			r.err().unwrap(),
+			Error::NotWellFormed(WFError::DuplicateAttribute)
+		));
 	}
 
 	#[test]
@@ -1475,7 +1690,10 @@ mod tests {
 			Token::ElementHFEnd(DM),
 		];
 		let err = parse_err(toks).unwrap();
-		assert!(matches!(err, Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri)));
+		assert!(matches!(
+			err,
+			Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri)
+		));
 	}
 
 	#[test]
@@ -1514,10 +1732,20 @@ mod tests {
 		let (evs, r) = parse(toks);
 		r.unwrap();
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.as_ref().unwrap().as_str() == TEST_NS && localname == "root")
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "child")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 	}
 
 	#[test]
@@ -1532,7 +1760,10 @@ mod tests {
 			Token::ElementHFEnd(DM),
 		];
 		let err = parse_err(toks).unwrap();
-		assert!(matches!(err, Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(_))));
+		assert!(matches!(
+			err,
+			Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(_))
+		));
 	}
 
 	#[test]
@@ -1548,8 +1779,13 @@ mod tests {
 			Token::ElementHFEnd(DM),
 		]);
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 		assert!(iter.next().is_none());
 		match r {
 			Err(Error::NotWellFormed(WFError::UnexpectedToken(_, _, _))) => (),
@@ -1567,8 +1803,13 @@ mod tests {
 			Token::Text(DM, "foo".try_into().unwrap()),
 		]);
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 		assert!(iter.next().is_none());
 		match r {
 			Err(Error::NotWellFormed(WFError::UnexpectedToken(_, _, _))) => (),
@@ -1587,8 +1828,13 @@ mod tests {
 			Token::Text(DM, "\n\r\t ".try_into().unwrap()),
 		]);
 		let mut iter = evs.iter();
-		assert!(matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root"));
-		assert!(matches!(iter.next().unwrap(), Event::EndElement(EventMetrics{len: 0})));
+		assert!(
+			matches!(iter.next().unwrap(), Event::StartElement(EventMetrics{len: 0}, (nsuri, localname), _attrs) if nsuri.is_none() && localname == "root")
+		);
+		assert!(matches!(
+			iter.next().unwrap(),
+			Event::EndElement(EventMetrics { len: 0 })
+		));
 		assert!(iter.next().is_none());
 		r.unwrap();
 	}

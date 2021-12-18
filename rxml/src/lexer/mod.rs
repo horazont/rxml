@@ -6,16 +6,16 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io;
 
-mod read;
 mod ranges;
+mod read;
 
-use rxml_validation::selectors::*;
-use rxml_validation::{Error as ValidationError};
-use read::{Endbyte};
-use crate::error::{WFError, ErrorWithContext, Result as CrateResult, Error as CrateError};
-use crate::strings::*;
 use crate::errctx::*;
+use crate::error::{Error as CrateError, ErrorWithContext, Result as CrateResult, WFError};
+use crate::strings::*;
 use ranges::*;
+use read::Endbyte;
+use rxml_validation::selectors::*;
+use rxml_validation::Error as ValidationError;
 
 /// Carry information about where in the stream the token was observed
 ///
@@ -59,9 +59,12 @@ impl TokenMetrics {
 	}
 
 	// for use in parser unit tests
-    #[cfg(test)]
+	#[cfg(test)]
 	pub(crate) const fn new(start: usize, end: usize) -> TokenMetrics {
-		TokenMetrics{start: start, end: end}
+		TokenMetrics {
+			start: start,
+			end: end,
+		}
 	}
 }
 
@@ -132,7 +135,7 @@ pub enum Token {
 	ElementHFEnd(TokenMetrics),
 
 	/// The `<?xml` sequence.
-	XMLDeclStart(TokenMetrics),  // <?xml
+	XMLDeclStart(TokenMetrics), // <?xml
 
 	/// The `<` sequence, not followed by `/` or `?xml`.
 	ElementHeadStart(TokenMetrics, Name),
@@ -279,7 +282,6 @@ enum ContentState {
 	MaybeCRLF(bool),
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RefReturnState {
 	AttributeValue(ElementKind, u8, &'static [ByteRange]),
@@ -289,7 +291,7 @@ enum RefReturnState {
 impl RefReturnState {
 	fn to_state(self) -> State {
 		match self {
-			Self::AttributeValue(kind, delim, selector) => State::Element{
+			Self::AttributeValue(kind, delim, selector) => State::Element {
 				kind: kind,
 				state: ElementState::AttributeValue(delim, selector, false),
 			},
@@ -301,10 +303,17 @@ impl RefReturnState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum State {
 	Content(ContentState),
-	Element{ kind: ElementKind, state: ElementState },
+	Element {
+		kind: ElementKind,
+		state: ElementState,
+	},
 
 	/// encountered &
-	Reference{ ctx: &'static str, ret: RefReturnState, kind: RefKind },
+	Reference {
+		ctx: &'static str,
+		ret: RefReturnState,
+		kind: RefKind,
+	},
 
 	Eof,
 }
@@ -401,7 +410,7 @@ impl Default for LexerOptions {
 	///
 	/// The defaults are implementation-defined and should not be relied upon.
 	fn default() -> Self {
-		Self{
+		Self {
 			max_token_length: 8192,
 		}
 	}
@@ -428,7 +437,13 @@ fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut Vec<u8>) -> R
 	let codepoint = u32::from_str_radix(s, radix).unwrap();
 	let ch = match std::char::from_u32(codepoint) {
 		Some(ch) => ch,
-		None => return Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_UNKNOWN, codepoint, true))),
+		None => {
+			return Err(Error::NotWellFormed(WFError::InvalidChar(
+				ERRCTX_UNKNOWN,
+				codepoint,
+				true,
+			)))
+		}
 	};
 	if !CLASS_XML_NONCHAR.select(ch) {
 		let mut buf = [0u8; 4];
@@ -436,18 +451,20 @@ fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut Vec<u8>) -> R
 		into.extend_from_slice(s.as_bytes());
 		Ok(())
 	} else {
-		Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_UNKNOWN, codepoint, true)))
+		Err(Error::NotWellFormed(WFError::InvalidChar(
+			ERRCTX_UNKNOWN,
+			codepoint,
+			true,
+		)))
 	}
 }
 
 fn add_context<T>(r: Result<T>, ctx: &'static str) -> Result<T> {
-	r.or_else(|e| { Err(e.with_context(ctx)) })
+	r.or_else(|e| Err(e.with_context(ctx)))
 }
 
 fn handle_eof<T>(v: Option<T>, ctx: &'static str) -> Result<T> {
-	v.ok_or_else(|| {
-		Error::wfeof(ctx)
-	})
+	v.ok_or_else(|| Error::wfeof(ctx))
 }
 
 struct ST(State, Option<Token>);
@@ -458,7 +475,6 @@ impl ST {
 		self.1
 	}
 }
-
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 enum Error {
@@ -505,7 +521,9 @@ impl From<ValidationError> for Error {
 impl From<Error> for crate::Error {
 	fn from(other: Error) -> Self {
 		match other {
-			Error::EndOfBuffer => io::Error::new(io::ErrorKind::WouldBlock, "end of current buffer reached").into(),
+			Error::EndOfBuffer => {
+				io::Error::new(io::ErrorKind::WouldBlock, "end of current buffer reached").into()
+			}
 			Error::NotWellFormed(e) => Self::NotWellFormed(e),
 			Error::RestrictedXml(what) => Self::RestrictedXml(what),
 			Error::InvalidUtf8Byte(b) => Self::InvalidUtf8Byte(b),
@@ -514,7 +532,6 @@ impl From<Error> for crate::Error {
 }
 
 type Result<T> = std::result::Result<T, Error>;
-
 
 /**
 # Restricted XML 1.0 lexer
@@ -565,11 +582,13 @@ impl Lexer {
 
 	fn demote_eof(&self, ep: Endbyte) -> Result<Endbyte> {
 		match ep {
-			Endbyte::Eof => if self.has_eof {
-				Ok(Endbyte::Eof)
-			} else {
-				Err(Error::EndOfBuffer)
-			},
+			Endbyte::Eof => {
+				if self.has_eof {
+					Ok(Endbyte::Eof)
+				} else {
+					Err(Error::EndOfBuffer)
+				}
+			}
 			other => Ok(other),
 		}
 	}
@@ -586,23 +605,24 @@ impl Lexer {
 	fn prep_scratchpad(&mut self) {
 		if self.scratchpad.capacity() < self.opts.max_token_length {
 			// unless there is a bug, we should never exceed the capacity requested by max_token_length, so we go with reserve_exact
-			self.scratchpad.reserve_exact(self.opts.max_token_length - self.scratchpad.capacity())
+			self.scratchpad
+				.reserve_exact(self.opts.max_token_length - self.scratchpad.capacity())
 		}
 	}
 
-	fn read_validated<B: ByteSelect>(&mut self, r: &mut &[u8], selector: &B, limit: usize) -> Result<Endbyte> {
+	fn read_validated<B: ByteSelect>(
+		&mut self,
+		r: &mut &[u8],
+		selector: &B,
+		limit: usize,
+	) -> Result<Endbyte> {
 		let remaining = match limit.checked_sub(self.scratchpad.len()) {
 			None => return Ok(Endbyte::Limit),
 			Some(v) => v,
 		};
 		let old_len = self.scratchpad.len();
 		self.prep_scratchpad();
-		let ep = read::read_validated_bytes(
-			r,
-			selector,
-			remaining,
-			&mut self.scratchpad,
-		);
+		let ep = read::read_validated_bytes(r, selector, remaining, &mut self.scratchpad);
 		self.ctr = self.ctr.wrapping_add(self.scratchpad.len() - old_len);
 		match ep {
 			Endbyte::Delimiter(_) => self.ctr = self.ctr.wrapping_add(1),
@@ -618,12 +638,14 @@ impl Lexer {
 				self.ctr = self.ctr.wrapping_add(1);
 				*r = tail;
 				Some(*v)
-			},
-			None => if self.has_eof {
-				None
-			} else {
-				return Err(Error::EndOfBuffer)
-			},
+			}
+			None => {
+				if self.has_eof {
+					None
+				} else {
+					return Err(Error::EndOfBuffer);
+				}
+			}
 		};
 		#[cfg(debug_assertions)]
 		{
@@ -637,8 +659,7 @@ impl Lexer {
 		&mut self,
 		r: &mut &[u8],
 		selector: &B,
-		) -> (usize, Result<Endbyte>)
-	{
+	) -> (usize, Result<Endbyte>) {
 		let (nread, ep) = read::skip_matching_bytes(r, selector);
 		self.ctr = self.ctr.wrapping_add(nread);
 		match self.demote_eof(ep) {
@@ -647,7 +668,7 @@ impl Lexer {
 					self.ctr = self.ctr.wrapping_add(1)
 				};
 				(nread, Ok(ep))
-			},
+			}
 			Err(e) => (nread, Err(e)),
 		}
 	}
@@ -672,7 +693,7 @@ impl Lexer {
 		let start = self.last_token_end;
 		let end = self.ctr.wrapping_sub(without);
 		self.last_token_end = end;
-		TokenMetrics{
+		TokenMetrics {
 			start: start,
 			end: end,
 		}
@@ -713,12 +734,12 @@ impl Lexer {
 				if valid_up_to == 0 {
 					// this means that we actually and truly have a broken utf-8 sequence.
 					// return an error.
-					return Err(Error::InvalidUtf8Byte(self.scratchpad[0]))
+					return Err(Error::InvalidUtf8Byte(self.scratchpad[0]));
 				} else {
 					// okay, we can return the stuff up to here and then let the next call deal with it
 					unsafe { std::str::from_utf8_unchecked(&self.scratchpad[..valid_up_to]) }
 				}
-			},
+			}
 		};
 		let result = s.try_into()?;
 		let to_drop = s.len();
@@ -732,13 +753,19 @@ impl Lexer {
 			self.eat_whitespace_metrics(without);
 			Ok(None)
 		} else {
-			Ok(Some(Token::Text(self.metrics(without), self.flush_scratchpad_as_complete_cdata()?)))
+			Ok(Some(Token::Text(
+				self.metrics(without),
+				self.flush_scratchpad_as_complete_cdata()?,
+			)))
 		}
 	}
 
 	fn flush_limited_scratchpad_as_text(&mut self) -> Result<Option<Token>> {
 		if self.scratchpad.len() >= self.opts.max_token_length {
-			Ok(Some(Token::Text(self.metrics(0), self.flush_scratchpad_as_partial_cdata()?)))
+			Ok(Some(Token::Text(
+				self.metrics(0),
+				self.flush_scratchpad_as_partial_cdata()?,
+			)))
 		} else {
 			Ok(None)
 		}
@@ -754,7 +781,8 @@ impl Lexer {
 	fn lex_posttext_char(&mut self, b: u8) -> Result<Option<ST>> {
 		match b {
 			b'<' => Ok(Some(ST(
-				State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), self.maybe_flush_scratchpad_as_text(1)?,  // 1 == len("<")
+				State::Content(ContentState::MaybeElement(MaybeElementState::Initial)),
+				self.maybe_flush_scratchpad_as_text(1)?, // 1 == len("<")
 			))),
 			// begin of forbidden CDATA section end sequence (see XML 1.0 § 2.4 [14])
 			b']' => Ok(Some(ST(
@@ -765,24 +793,24 @@ impl Lexer {
 			b'&' => {
 				// We need to be careful here! First, we *have* to swap the scratchpad because that is part of the contract with the Reference state.
 				// Second, we have to do this *after* we "maybe" flush the scratchpad as text -- otherwise, we would flush the empty text and then clobber the entity lookup.
-				let tok = self.maybe_flush_scratchpad_as_text(1)?;  // 1 == len("&")
+				let tok = self.maybe_flush_scratchpad_as_text(1)?; // 1 == len("&")
 				self.swap_scratchpad()?;
 				Ok(Some(ST(
-					State::Reference{
+					State::Reference {
 						ctx: ERRCTX_TEXT,
 						ret: RefReturnState::Text,
 						kind: RefKind::Entity,
 					},
 					tok,
 				)))
-			},
+			}
 			b'\r' => {
 				// CRLF needs to be folded to LF, and standalone LF needs, too
 				Ok(Some(ST(
 					State::Content(ContentState::MaybeCRLF(false)),
 					None,
 				)))
-			},
+			}
 			_ => Ok(None),
 		}
 	}
@@ -794,42 +822,52 @@ impl Lexer {
 					b'?' => {
 						self.drop_scratchpad()?;
 						Ok(ST(
-							State::Content(ContentState::MaybeElement(MaybeElementState::XMLDeclStart(2))),
+							State::Content(ContentState::MaybeElement(
+								MaybeElementState::XMLDeclStart(2),
+							)),
 							None,
 						))
-					},
+					}
 					b'!' => {
 						self.drop_scratchpad()?;
 						Ok(ST(
-							State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(2))),
+							State::Content(ContentState::MaybeElement(
+								MaybeElementState::CDataSectionStart(2),
+							)),
 							None,
 						))
 					}
 					b'/' => {
 						self.drop_scratchpad()?;
 						Ok(ST(
-							State::Element{
+							State::Element {
 								kind: ElementKind::Footer,
 								state: ElementState::Start,
 							},
 							None,
 						))
-					},
-					byte => if CLASS_XML_NAMESTART_BYTE.select(byte) {
-						// add the first character to the scratchpad, because read_single does not do that
-						self.prep_scratchpad();
-						self.scratchpad.push(byte);
-						Ok(ST(
-							State::Element{
-								kind: ElementKind::Header,
-								state: ElementState::Start,
-							},
-							None,
-						))
-					} else {
-						self.drop_scratchpad()?;
-						Err(Error::NotWellFormed(WFError::UnexpectedByte(ERRCTX_NAMESTART, byte, None)))
-					},
+					}
+					byte => {
+						if CLASS_XML_NAMESTART_BYTE.select(byte) {
+							// add the first character to the scratchpad, because read_single does not do that
+							self.prep_scratchpad();
+							self.scratchpad.push(byte);
+							Ok(ST(
+								State::Element {
+									kind: ElementKind::Header,
+									state: ElementState::Start,
+								},
+								None,
+							))
+						} else {
+							self.drop_scratchpad()?;
+							Err(Error::NotWellFormed(WFError::UnexpectedByte(
+								ERRCTX_NAMESTART,
+								byte,
+								None,
+							)))
+						}
+					}
 				},
 				None => Err(Error::wfeof(ERRCTX_ELEMENT)),
 			},
@@ -845,7 +883,7 @@ impl Lexer {
 					// eliminate the `xml` from the scratchpad
 					self.drop_scratchpad()?;
 					Ok(ST(
-						State::Element{
+						State::Element {
 							kind: ElementKind::XMLDecl,
 							state: ElementState::SpaceRequired,
 						},
@@ -853,18 +891,22 @@ impl Lexer {
 					))
 				} else {
 					Ok(ST(
-						State::Content(ContentState::MaybeElement(MaybeElementState::XMLDeclStart(next))),
+						State::Content(ContentState::MaybeElement(
+							MaybeElementState::XMLDeclStart(next),
+						)),
 						None,
 					))
 				}
-			},
+			}
 			MaybeElementState::CDataSectionStart(i) => {
 				debug_assert!(i < TOK_XML_CDATA_START.len());
 				let b = handle_eof(self.read_single(r)?, ERRCTX_XML_DECL_START)?;
 				if i == 1 && b == b'-' {
 					return Err(Error::RestrictedXml("comments"));
 				} else if b != TOK_XML_CDATA_START[i] {
-					return Err(Error::NotWellFormed(WFError::InvalidSyntax("malformed cdata section start")));
+					return Err(Error::NotWellFormed(WFError::InvalidSyntax(
+						"malformed cdata section start",
+					)));
 				}
 				let next = i + 1;
 				if next == TOK_XML_CDATA_START.len() {
@@ -875,10 +917,13 @@ impl Lexer {
 					))
 				} else {
 					Ok(ST(
-						State::Content(ContentState::MaybeElement(MaybeElementState::CDataSectionStart(next))), None,
+						State::Content(ContentState::MaybeElement(
+							MaybeElementState::CDataSectionStart(next),
+						)),
+						None,
 					))
 				}
-			},
+			}
 		}
 	}
 
@@ -887,18 +932,21 @@ impl Lexer {
 			// special delimiter char -> state transition
 			Some(st) => Ok(st),
 			// no special char -> check if it is possibly valid text and proceed accordingly
-			None => if CLASS_XML_MAY_NONCHAR_BYTE.select(b) {
-				// non-Char, error
-				Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, b as u32, false)))
-			} else {
-				// nothing special, push to scratchpad and return to initial content state
-				self.prep_scratchpad();
-				self.scratchpad.push(b);
-				Ok(ST(
-					State::Content(ContentState::Initial),
-					None,
-				))
-			},
+			None => {
+				if CLASS_XML_MAY_NONCHAR_BYTE.select(b) {
+					// non-Char, error
+					Err(Error::NotWellFormed(WFError::InvalidChar(
+						ERRCTX_TEXT,
+						b as u32,
+						false,
+					)))
+				} else {
+					// nothing special, push to scratchpad and return to initial content state
+					self.prep_scratchpad();
+					self.scratchpad.push(b);
+					Ok(ST(State::Content(ContentState::Initial), None))
+				}
+			}
 		}
 	}
 
@@ -919,18 +967,22 @@ impl Lexer {
 					None,
 				)),
 				// ]]> read completely! Do something!
-				2 => if !in_cdata {
-					// ]]> is forbidden outside CDATA sections -> error
-					Err(Error::NotWellFormed(WFError::InvalidSyntax("unescaped ']]>' forbidden in text")))
-				} else {
-					// we are inside the cdata section and the previous char we read was the last byte of the closing delimiter
-					// this means that we can safely exit without interpreting the char.
-					// and we must not subtract this char, because it is part of the CDATA section
-					Ok(ST(
-						State::Content(ContentState::Initial),
-						self.maybe_flush_scratchpad_as_text(0)?,
-					))
-				},
+				2 => {
+					if !in_cdata {
+						// ]]> is forbidden outside CDATA sections -> error
+						Err(Error::NotWellFormed(WFError::InvalidSyntax(
+							"unescaped ']]>' forbidden in text",
+						)))
+					} else {
+						// we are inside the cdata section and the previous char we read was the last byte of the closing delimiter
+						// this means that we can safely exit without interpreting the char.
+						// and we must not subtract this char, because it is part of the CDATA section
+						Ok(ST(
+							State::Content(ContentState::Initial),
+							self.maybe_flush_scratchpad_as_text(0)?,
+						))
+					}
+				}
 				_ => panic!("unreachable state: cdata nend = {:?}", nend),
 			}
 		} else if b == b']' {
@@ -945,11 +997,16 @@ impl Lexer {
 		} else {
 			// sequence was broken
 			self.prep_scratchpad();
-			self.scratchpad.extend_from_slice(&TOK_XML_CDATA_END[..nend]);
+			self.scratchpad
+				.extend_from_slice(&TOK_XML_CDATA_END[..nend]);
 			if in_cdata {
 				if CLASS_XML_MAY_NONCHAR_BYTE.select(b) {
 					// that’s a sneaky one!
-					Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, b as u32, false)))
+					Err(Error::NotWellFormed(WFError::InvalidChar(
+						ERRCTX_CDATA_SECTION,
+						b as u32,
+						false,
+					)))
 				} else {
 					// broken sequence inside cdata section, that’s fine; just push whatever we read to the scratchpad and move on
 					// no need for prep, we pushed above already
@@ -967,11 +1024,12 @@ impl Lexer {
 		}
 	}
 
-	fn lex_content(&mut self, state: ContentState, r: &mut &[u8]) -> Result<ST>
-	{
+	fn lex_content(&mut self, state: ContentState, r: &mut &[u8]) -> Result<ST> {
 		match state {
 			ContentState::MaybeElement(substate) => self.lex_maybe_element(substate, r),
-			ContentState::MaybeCDataEnd(in_cdata, nend) => self.lex_maybe_cdata_end(in_cdata, nend, r),
+			ContentState::MaybeCDataEnd(in_cdata, nend) => {
+				self.lex_maybe_cdata_end(in_cdata, nend, r)
+			}
 
 			ContentState::MaybeCRLF(in_cdata) => {
 				let b = handle_eof(self.read_single(r)?, ERRCTX_TEXT)?;
@@ -989,17 +1047,14 @@ impl Lexer {
 							},
 							None,
 						))
-					},
+					}
 					b'\r' => {
 						// double CR, so this may still be followed by an LF; but the first CR gets converted to LF
 						self.prep_scratchpad();
 						self.scratchpad.push(b'\n');
 						// stay in the same state, we may still get an LF here.
-						Ok(ST(
-							State::Content(ContentState::MaybeCRLF(in_cdata)),
-							None,
-						))
-					},
+						Ok(ST(State::Content(ContentState::MaybeCRLF(in_cdata)), None))
+					}
 					b => {
 						// we read a single CR, so we push a \n to the scratchpad and hope for the best
 						self.prep_scratchpad();
@@ -1015,42 +1070,48 @@ impl Lexer {
 								// ^ but of course we still need to check for a valid char. Thanks afl.
 								// no need for prep as we pushed above already
 								self.scratchpad.push(b);
-								Ok(ST(
-									State::Content(ContentState::CDataSection),
-									None,
-								))
+								Ok(ST(State::Content(ContentState::CDataSection), None))
 							} else {
-								Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, b as u32, false)))
+								Err(Error::NotWellFormed(WFError::InvalidChar(
+									ERRCTX_CDATA_SECTION,
+									b as u32,
+									false,
+								)))
 							}
 						} else {
 							self.lex_resume_text(b)
 						}
-					},
+					}
 				}
-			},
+			}
 
 			// read until next `<` or `&`, which are the only things which
 			// can break us out of this state.
-			ContentState::Initial => match self.read_validated(r, &CLASS_XML_TEXT_DELIMITED_BYTE, self.opts.max_token_length)? {
-				Endbyte::Eof => {
-					Ok(ST(
-						State::Eof,
-						self.maybe_flush_scratchpad_as_text(0)?,
-					))
-				},
-				Endbyte::Limit => {
-					Ok(ST(
-						State::Content(ContentState::Initial),
-						self.maybe_flush_scratchpad_as_text(0)?,
-					))
-				},
+			ContentState::Initial => match self.read_validated(
+				r,
+				&CLASS_XML_TEXT_DELIMITED_BYTE,
+				self.opts.max_token_length,
+			)? {
+				Endbyte::Eof => Ok(ST(State::Eof, self.maybe_flush_scratchpad_as_text(0)?)),
+				Endbyte::Limit => Ok(ST(
+					State::Content(ContentState::Initial),
+					self.maybe_flush_scratchpad_as_text(0)?,
+				)),
 				Endbyte::Delimiter(b) => match self.lex_posttext_char(b)? {
 					Some(st) => Ok(st),
 					// not a "special" char but not text either -> error
-					None => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_TEXT, b as u32, false))),
+					None => Err(Error::NotWellFormed(WFError::InvalidChar(
+						ERRCTX_TEXT,
+						b as u32,
+						false,
+					))),
 				},
 			},
-			ContentState::CDataSection => match self.read_validated(r, &CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE, self.opts.max_token_length)? {
+			ContentState::CDataSection => match self.read_validated(
+				r,
+				&CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE,
+				self.opts.max_token_length,
+			)? {
 				Endbyte::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
 				Endbyte::Limit => Ok(ST(
 					State::Content(ContentState::CDataSection),
@@ -1062,23 +1123,20 @@ impl Lexer {
 						State::Content(ContentState::MaybeCDataEnd(true, 1)),
 						None,
 					)),
-					b'\r' => Ok(ST(
-						State::Content(ContentState::MaybeCRLF(true)),
-						None,
-					)),
-					_ => Err(Error::NotWellFormed(WFError::InvalidChar(ERRCTX_CDATA_SECTION, b as u32, false)))
-				}
+					b'\r' => Ok(ST(State::Content(ContentState::MaybeCRLF(true)), None)),
+					_ => Err(Error::NotWellFormed(WFError::InvalidChar(
+						ERRCTX_CDATA_SECTION,
+						b as u32,
+						false,
+					))),
+				},
 			},
 			ContentState::Whitespace => match self.skip_matching(r, &CLASS_XML_SPACE_BYTE) {
-				(_, Ok(Endbyte::Eof)) | (_, Ok(Endbyte::Limit)) => {
-					Ok(ST(
-						State::Eof,
-						None,
-					))
-				},
+				(_, Ok(Endbyte::Eof)) | (_, Ok(Endbyte::Limit)) => Ok(ST(State::Eof, None)),
 				(_, Ok(Endbyte::Delimiter(b))) => match b {
 					b'<' => Ok(ST(
-						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)), None,
+						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)),
+						None,
 					)),
 					_ => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 						ERRCTX_XML_DECL_END,
@@ -1094,28 +1152,52 @@ impl Lexer {
 	fn lex_element_postblank(&mut self, kind: ElementKind, b: u8) -> Result<ElementState> {
 		match b {
 			b' ' | b'\t' | b'\r' | b'\n' => Ok(ElementState::Blank),
-			b'"' => Ok(ElementState::AttributeValue(b'"', &CLASS_XML_CDATA_ATT_QUOT_DELIMITED_BYTE, false)),
-			b'\'' => Ok(ElementState::AttributeValue(b'\'', &CLASS_XML_CDATA_ATT_APOS_DELIMITED_BYTE, false)),
+			b'"' => Ok(ElementState::AttributeValue(
+				b'"',
+				&CLASS_XML_CDATA_ATT_QUOT_DELIMITED_BYTE,
+				false,
+			)),
+			b'\'' => Ok(ElementState::AttributeValue(
+				b'\'',
+				&CLASS_XML_CDATA_ATT_APOS_DELIMITED_BYTE,
+				false,
+			)),
 			b'=' => Ok(ElementState::Eq),
 			b'>' => match kind {
 				ElementKind::Footer | ElementKind::Header => Ok(ElementState::Close),
-				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_XML_DECL, '>', Some(&["?"])))),
-			}
+				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					ERRCTX_XML_DECL,
+					'>',
+					Some(&["?"]),
+				))),
+			},
 			b'?' => match kind {
 				ElementKind::XMLDecl => Ok(ElementState::MaybeXMLDeclEnd),
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ELEMENT, '?', None))),
+				_ => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					ERRCTX_ELEMENT,
+					'?',
+					None,
+				))),
 			},
 			b'/' => match kind {
 				ElementKind::Header => Ok(ElementState::MaybeHeadClose),
-				ElementKind::Footer => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ELEMENT_FOOT, '/', None))),
-				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_XML_DECL, '/', None))),
+				ElementKind::Footer => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					ERRCTX_ELEMENT_FOOT,
+					'/',
+					None,
+				))),
+				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+					ERRCTX_XML_DECL,
+					'/',
+					None,
+				))),
 			},
 			b if CLASS_XML_NAMESTART_BYTE.select(b) => {
 				// write the char to scratchpad because it’ll be needed.
 				self.prep_scratchpad();
 				self.scratchpad.push(b);
 				Ok(ElementState::Name)
-			},
+			}
 			_ => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 				match kind {
 					ElementKind::XMLDecl => ERRCTX_XML_DECL,
@@ -1127,58 +1209,66 @@ impl Lexer {
 		}
 	}
 
-	fn lex_attval_next(&mut self, delim: u8, selector: &'static [ByteRange], b: u8, element_kind: ElementKind) -> Result<ST> {
+	fn lex_attval_next(
+		&mut self,
+		delim: u8,
+		selector: &'static [ByteRange],
+		b: u8,
+		element_kind: ElementKind,
+	) -> Result<ST> {
 		match b {
-			b'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(ERRCTX_ATTVAL, '<', None))),
+			b'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				ERRCTX_ATTVAL,
+				'<',
+				None,
+			))),
 			b'&' => {
 				// must swap scratchpad here to avoid clobbering the
 				// attribute value during entity read
 				self.swap_scratchpad()?;
 				Ok(ST(
-					State::Reference{
+					State::Reference {
 						ctx: ERRCTX_ATTVAL,
-						ret: RefReturnState::AttributeValue(
-							element_kind,
-							delim,
-							selector,
-						),
+						ret: RefReturnState::AttributeValue(element_kind, delim, selector),
 						kind: RefKind::Entity,
-					}, None
+					},
+					None,
 				))
-			},
+			}
 			b'\t' | b'\n' => {
 				self.prep_scratchpad();
 				self.scratchpad.push(b' ');
 				Ok(ST(
-					State::Element{
+					State::Element {
 						kind: element_kind,
 						state: ElementState::AttributeValue(delim, selector, false),
 					},
 					None,
 				))
-			},
-			b'\r' => {
-				Ok(ST(
-					State::Element{
-						kind: element_kind,
-						state: ElementState::AttributeValue(delim, selector, true),
-					},
-					None,
-				))
-			},
+			}
+			b'\r' => Ok(ST(
+				State::Element {
+					kind: element_kind,
+					state: ElementState::AttributeValue(delim, selector, true),
+				},
+				None,
+			)),
 			d if d == delim => Ok(ST(
-				State::Element{
+				State::Element {
 					kind: element_kind,
 					// require whitespace after attribute as the grammar demands
 					state: ElementState::SpaceRequired,
 				},
-				Some(Token::AttributeValue(self.metrics(0), self.flush_scratchpad_as_complete_cdata()?)),
+				Some(Token::AttributeValue(
+					self.metrics(0),
+					self.flush_scratchpad_as_complete_cdata()?,
+				)),
 			)),
 			other => Err(Error::NotWellFormed(WFError::InvalidChar(
 				ERRCTX_ATTVAL,
 				other as u32,
 				false,
-			)))
+			))),
 		}
 	}
 
@@ -1189,13 +1279,17 @@ impl Lexer {
 					// we are reading the first char; the first one is special because it must match CLASS_XML_NAMESTART, and not just CLASS_XML_NAME
 					let b = handle_eof(self.read_single(r)?, ERRCTX_NAME)?;
 					if !CLASS_XML_NAMESTART_BYTE.select(b) {
-						Err(Error::NotWellFormed(WFError::UnexpectedByte(ERRCTX_NAME, b, None)))
+						Err(Error::NotWellFormed(WFError::UnexpectedByte(
+							ERRCTX_NAME,
+							b,
+							None,
+						)))
 					} else {
 						self.prep_scratchpad();
 						self.scratchpad.push(b);
 						// continue in the same state; the branch below will be taken next and read_validated will take care of it if we’re done already
 						Ok(ST(
-							State::Element{
+							State::Element {
 								kind: kind,
 								state: state,
 							},
@@ -1203,7 +1297,11 @@ impl Lexer {
 						))
 					}
 				} else {
-					match self.read_validated(r, &CLASS_XML_NAME_BYTE, self.opts.max_token_length)? {
+					match self.read_validated(
+						r,
+						&CLASS_XML_NAME_BYTE,
+						self.opts.max_token_length,
+					)? {
 						Endbyte::Eof => Err(Error::wfeof(ERRCTX_NAME)),
 						Endbyte::Limit => Err(Self::token_length_error()),
 						Endbyte::Delimiter(ch) => {
@@ -1211,7 +1309,7 @@ impl Lexer {
 							let name = self.flush_scratchpad_as_name()?;
 							let metrics = self.metrics(1);
 							Ok(ST(
-								State::Element{
+								State::Element {
 									kind: kind,
 									state: next_state,
 								},
@@ -1219,8 +1317,12 @@ impl Lexer {
 									Token::Name(metrics, name)
 								} else {
 									match kind {
-										ElementKind::Header => Token::ElementHeadStart(metrics, name),
-										ElementKind::Footer => Token::ElementFootStart(metrics, name),
+										ElementKind::Header => {
+											Token::ElementHeadStart(metrics, name)
+										}
+										ElementKind::Footer => {
+											Token::ElementFootStart(metrics, name)
+										}
 										ElementKind::XMLDecl => panic!("invalid state"),
 									}
 								}),
@@ -1228,45 +1330,58 @@ impl Lexer {
 						}
 					}
 				}
-			},
-			ElementState::SpaceRequired | ElementState::Blank => match self.skip_matching(r, &CLASS_XML_SPACE_BYTE) {
-				(_, Ok(Endbyte::Eof)) | (_, Ok(Endbyte::Limit)) => Err(Error::wfeof(ERRCTX_ELEMENT)),
-				(nmatching, Err(Error::EndOfBuffer)) if nmatching > 0 && state == ElementState::SpaceRequired => {
-					// we have to treat IO errors here specially and implicitly retry them (because we swallow this one). that is in line with the contract which says that IO errors are retriable
-					// this is because we need to transition from SpaceRequired to Blank after reading even only a single char. otherwise, we are not resilient against chunking.
-					Ok(ST(
-						State::Element{
-							kind: kind,
-							state: ElementState::Blank,
-						},
-						None,
-					))
-				},
-				(nmatching, Ok(Endbyte::Delimiter(b))) => {
-					self.eat_whitespace_metrics(1);
-					let next_state = self.lex_element_postblank(kind, b)?;
-					if next_state == ElementState::Name && state == ElementState::SpaceRequired && nmatching == 0 {
-						Err(Error::NotWellFormed(WFError::InvalidSyntax(
-							"space required before attribute names",
-						)))
-					} else {
+			}
+			ElementState::SpaceRequired | ElementState::Blank => {
+				match self.skip_matching(r, &CLASS_XML_SPACE_BYTE) {
+					(_, Ok(Endbyte::Eof)) | (_, Ok(Endbyte::Limit)) => {
+						Err(Error::wfeof(ERRCTX_ELEMENT))
+					}
+					(nmatching, Err(Error::EndOfBuffer))
+						if nmatching > 0 && state == ElementState::SpaceRequired =>
+					{
+						// we have to treat IO errors here specially and implicitly retry them (because we swallow this one). that is in line with the contract which says that IO errors are retriable
+						// this is because we need to transition from SpaceRequired to Blank after reading even only a single char. otherwise, we are not resilient against chunking.
 						Ok(ST(
-							State::Element{
+							State::Element {
 								kind: kind,
-								state: next_state,
+								state: ElementState::Blank,
 							},
 							None,
 						))
 					}
-				},
-				(_, Err(e)) => Err(e),
-			},
+					(nmatching, Ok(Endbyte::Delimiter(b))) => {
+						self.eat_whitespace_metrics(1);
+						let next_state = self.lex_element_postblank(kind, b)?;
+						if next_state == ElementState::Name
+							&& state == ElementState::SpaceRequired
+							&& nmatching == 0
+						{
+							Err(Error::NotWellFormed(WFError::InvalidSyntax(
+								"space required before attribute names",
+							)))
+						} else {
+							Ok(ST(
+								State::Element {
+									kind: kind,
+									state: next_state,
+								},
+								None,
+							))
+						}
+					}
+					(_, Err(e)) => Err(e),
+				}
+			}
 			// XML 1.0 §2.3 [10] AttValue
-			ElementState::AttributeValue(delim, selector, false) => match self.read_validated(r, &selector, self.opts.max_token_length)? {
-				Endbyte::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
-				Endbyte::Limit => Err(Self::token_length_error()),
-				Endbyte::Delimiter(utf8ch) => self.lex_attval_next(delim, selector, utf8ch, kind),
-			},
+			ElementState::AttributeValue(delim, selector, false) => {
+				match self.read_validated(r, &selector, self.opts.max_token_length)? {
+					Endbyte::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
+					Endbyte::Limit => Err(Self::token_length_error()),
+					Endbyte::Delimiter(utf8ch) => {
+						self.lex_attval_next(delim, selector, utf8ch, kind)
+					}
+				}
+			}
 			// CRLF normalization for attributes; cannot reuse the element mechanism here because we have to carry around the delimiter and stuff
 			ElementState::AttributeValue(delim, selector, true) => {
 				let b = handle_eof(self.read_single(r)?, ERRCTX_ATTVAL)?;
@@ -1275,7 +1390,7 @@ impl Lexer {
 					self.prep_scratchpad();
 					self.scratchpad.push(b' ');
 					Ok(ST(
-						State::Element{
+						State::Element {
 							kind: kind,
 							state: ElementState::AttributeValue(delim, selector, true),
 						},
@@ -1285,7 +1400,7 @@ impl Lexer {
 					// not another CR, so we can move on to the default handling
 					self.lex_attval_next(delim, selector, b, kind)
 				}
-			},
+			}
 			ElementState::MaybeXMLDeclEnd => match self.read_single(r)? {
 				Some(b) if b == b'>' => {
 					self.drop_scratchpad()?;
@@ -1293,7 +1408,7 @@ impl Lexer {
 						State::Content(ContentState::Whitespace),
 						Some(Token::XMLDeclEnd(self.metrics(0))),
 					))
-				},
+				}
 				Some(b) => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 					ERRCTX_XML_DECL_END,
 					b,
@@ -1308,7 +1423,7 @@ impl Lexer {
 						State::Content(ContentState::Initial),
 						Some(Token::ElementHeadClose(self.metrics(0))),
 					))
-				},
+				}
 				Some(b) => Err(Error::NotWellFormed(WFError::UnexpectedByte(
 					ERRCTX_ELEMENT_CLOSE,
 					b,
@@ -1321,7 +1436,7 @@ impl Lexer {
 			// Blank afterward, as that will read the next char and decide
 			// (and potentially scratchpad) correctly.
 			ElementState::Eq => Ok(ST(
-				State::Element{
+				State::Element {
 					kind: kind,
 					state: ElementState::Blank,
 				},
@@ -1335,11 +1450,23 @@ impl Lexer {
 		}
 	}
 
-	fn lex_reference(&mut self, ctx: &'static str, ret: RefReturnState, kind: RefKind, r: &mut &[u8]) -> Result<ST> {
+	fn lex_reference(
+		&mut self,
+		ctx: &'static str,
+		ret: RefReturnState,
+		kind: RefKind,
+		r: &mut &[u8],
+	) -> Result<ST> {
 		let result = match kind {
-			RefKind::Entity => self.read_validated(r, &CLASS_XML_NAME_BYTE, MAX_REFERENCE_LENGTH)?,
-			RefKind::Char(CharRefRadix::Decimal) => self.read_validated(r, &CLASS_XML_DECIMAL_DIGIT_BYTE, MAX_REFERENCE_LENGTH)?,
-			RefKind::Char(CharRefRadix::Hexadecimal) => self.read_validated(r, &CLASS_XML_HEXADECIMAL_DIGIT_BYTE, MAX_REFERENCE_LENGTH)?,
+			RefKind::Entity => {
+				self.read_validated(r, &CLASS_XML_NAME_BYTE, MAX_REFERENCE_LENGTH)?
+			}
+			RefKind::Char(CharRefRadix::Decimal) => {
+				self.read_validated(r, &CLASS_XML_DECIMAL_DIGIT_BYTE, MAX_REFERENCE_LENGTH)?
+			}
+			RefKind::Char(CharRefRadix::Hexadecimal) => {
+				self.read_validated(r, &CLASS_XML_HEXADECIMAL_DIGIT_BYTE, MAX_REFERENCE_LENGTH)?
+			}
 		};
 		let result = match result {
 			Endbyte::Eof => return Err(Error::wfeof(ERRCTX_REF)),
@@ -1352,18 +1479,18 @@ impl Lexer {
 						match kind {
 							RefKind::Entity => {
 								return Ok(ST(
-									State::Reference{
+									State::Reference {
 										ctx: ctx,
 										ret: ret,
 										kind: RefKind::Char(CharRefRadix::Decimal),
 									},
 									None,
 								))
-							},
+							}
 							_ => Err(b'#'),
 						}
 					}
-				},
+				}
 				b'x' => {
 					if self.scratchpad.len() > 0 {
 						Err(b'x')
@@ -1371,21 +1498,23 @@ impl Lexer {
 						match kind {
 							RefKind::Char(CharRefRadix::Decimal) => {
 								return Ok(ST(
-									State::Reference{
+									State::Reference {
 										ctx: ctx,
 										ret: ret,
 										kind: RefKind::Char(CharRefRadix::Hexadecimal),
 									},
 									None,
 								))
-							},
+							}
 							_ => Err(b'x'),
 						}
 					}
-				},
+				}
 				b';' => {
 					if self.scratchpad.len() == 0 {
-						return Err(Error::NotWellFormed(WFError::InvalidSyntax("empty reference")));
+						return Err(Error::NotWellFormed(WFError::InvalidSyntax(
+							"empty reference",
+						)));
 					}
 					// return to main scratchpad
 					self.swap_scratchpad()?;
@@ -1396,50 +1525,57 @@ impl Lexer {
 							let b = add_context(resolve_named_entity(&entity[..]), ctx)?;
 							self.scratchpad.push(b);
 							Ok(())
-						},
+						}
 						RefKind::Char(radix) => {
 							// this is safe because the bytes allowed by the digit byte ranges are all plain ascii
 							let entity = unsafe { std::str::from_utf8_unchecked(&entity[..]) };
-							Ok(add_context(resolve_char_reference(entity, radix, &mut self.scratchpad), ctx)?)
-						},
+							Ok(add_context(
+								resolve_char_reference(entity, radix, &mut self.scratchpad),
+								ctx,
+							)?)
+						}
 					}
 				}
 				c => Err(c),
-			}
+			},
 		};
 		match result {
 			Ok(_) => Ok(ST(ret.to_state(), None)),
-			Err(b) => return Err(Error::NotWellFormed(WFError::UnexpectedByte(
-				ERRCTX_REF,
-				b,
-				Some(&[";"]),
-			))),
+			Err(b) => {
+				return Err(Error::NotWellFormed(WFError::UnexpectedByte(
+					ERRCTX_REF,
+					b,
+					Some(&[";"]),
+				)))
+			}
 		}
 	}
 
-	fn lex_bytes_raw(&mut self, r: &mut &[u8]) -> Result<Option<Token>>
-	{
+	fn lex_bytes_raw(&mut self, r: &mut &[u8]) -> Result<Option<Token>> {
 		if let Some(e) = self.err {
-			return Err(e)
+			return Err(e);
 		}
 
 		loop {
 			let stresult = match self.state {
 				State::Content(substate) => self.lex_content(substate, r),
-				State::Element{ kind, state: substate } => self.lex_element(kind, substate, r),
-				State::Reference{ ctx, ret, kind } => self.lex_reference(ctx, ret, kind, r),
+				State::Element {
+					kind,
+					state: substate,
+				} => self.lex_element(kind, substate, r),
+				State::Reference { ctx, ret, kind } => self.lex_reference(ctx, ret, kind, r),
 				State::Eof => return Ok(None),
 			};
 			let st = match stresult {
 				Err(Error::EndOfBuffer) => {
 					// we do not cache I/O errors
 					return Err(Error::EndOfBuffer);
-				},
+				}
 				Err(other) => {
 					// we cache all other errors because we don't want to read / emit invalid data
 					self.err = Some(other);
 					return Err(other);
-				},
+				}
 				Ok(st) => st,
 			};
 			match st.splice(&mut self.state) {
@@ -1450,7 +1586,7 @@ impl Lexer {
 						self.prev_state = (self.scratchpad.clone(), self.state.clone());
 					}
 					return Ok(Some(tok));
-				},
+				}
 				None => (),
 			};
 			#[cfg(debug_assertions)]
@@ -1458,7 +1594,10 @@ impl Lexer {
 				// we did not leave the loop; assert that the state has
 				// actually changed
 				if self.prev_state.0 == self.scratchpad && self.prev_state.1 == self.state {
-					panic!("state has not changed in the last iteration: {:?} {:?} last read: {:?}", self, self.scratchpad, self.last_single_read)
+					panic!(
+						"state has not changed in the last iteration: {:?} {:?} last read: {:?}",
+						self, self.scratchpad, self.last_single_read
+					)
 				} else {
 					self.prev_state = (self.scratchpad.clone(), self.state.clone())
 				}
@@ -1547,7 +1686,7 @@ impl Lexer {
 					// worst case it'll be converted to a wouldblock again
 					// this matters in some cases where the internal state already allows to emit a token. most prominently, this happens on element closures: the closing byte (b'>') has been read already which is encoded in the internal state and a corresponding token will be emitted even without more data available.
 					(&[], false)
-				},
+				}
 				Err(e) => return Err(e.into()),
 				Ok(b) => (b, b.len() == 0),
 			};
@@ -1563,12 +1702,12 @@ impl Lexer {
 						assert!(new_len < orig_len);
 						// If the read was non-zero-length && we got a WouldBlock, we have to keep trying until either the source gives us a WouldBlock or we emit a token or an error.
 						// Otherwise, edge-triggered I/O schedulers may not actually give us another chance for reading: the source might still have data in stock, but the buffer was not empty yet, so the BufReader (or whatever provides the buffer) did not bother reading from the backend again.
-						continue
-					},
+						continue;
+					}
 					_ => (),
 				}
 			}
-			return Ok(result?)
+			return Ok(result?);
 		}
 	}
 
@@ -1585,9 +1724,7 @@ impl Lexer {
 
 impl fmt::Debug for Lexer {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		f.debug_struct("Lexer")
-			.field("state", &self.state)
-			.finish()
+		f.debug_struct("Lexer").field("state", &self.state).finish()
 	}
 }
 
@@ -1600,14 +1737,18 @@ pub trait Sink {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use std::io;
-	use std::fmt;
-	use std::error;
 	use crate::bufq::BufferQueue;
-	use crate::error::{Error as CrateError};
+	use crate::error::Error as CrateError;
+	use std::error;
+	use std::fmt;
+	use std::io;
 
 	/// Stream tokens to the sink until the end of stream is reached.
-	fn stream_to_sink<'r, 's, 'l, R: io::BufRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> CrateResult<()> {
+	fn stream_to_sink<'r, 's, 'l, R: io::BufRead, S: Sink>(
+		l: &'l mut Lexer,
+		r: &'r mut R,
+		s: &'s mut S,
+	) -> CrateResult<()> {
 		loop {
 			match l.lex(r) {
 				Ok(Some(tok)) => s.token(tok),
@@ -1615,18 +1756,22 @@ mod tests {
 				Err(CrateError::IO(e)) if e.kind() == io::ErrorKind::WouldBlock => {
 					if let Ok(buf) = r.fill_buf() {
 						if buf.len() > 0 {
-							continue
+							continue;
 						}
 					}
-					return Err(CrateError::IO(e))
-				},
+					return Err(CrateError::IO(e));
+				}
 				Err(e) => return Err(e),
 			}
 		}
 		Ok(())
 	}
 
-	fn stream_to_sink_from_bytes<'r, 's, 'l, R: io::BufRead, S: Sink>(l: &'l mut Lexer, r: &'r mut R, s: &'s mut S) -> CrateResult<()> {
+	fn stream_to_sink_from_bytes<'r, 's, 'l, R: io::BufRead, S: Sink>(
+		l: &'l mut Lexer,
+		r: &'r mut R,
+		s: &'s mut S,
+	) -> CrateResult<()> {
 		stream_to_sink(l, r, s)
 	}
 
@@ -1713,9 +1858,14 @@ mod tests {
 		let mut src = "<?xml".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
+			.err()
+			.unwrap();
 
-		assert_eq!(sink.dest[0], Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
+		assert_eq!(
+			sink.dest[0],
+			Token::XMLDeclStart(TokenMetrics { start: 0, end: 5 })
+		);
 	}
 
 	#[test]
@@ -1723,10 +1873,18 @@ mod tests {
 		let mut src = "<?xmlversion".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		let err = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
-		assert!(!matches!(err, CrateError::NotWellFormed(WFError::InvalidEof(..))));
+		let err = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
+			.err()
+			.unwrap();
+		assert!(!matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidEof(..))
+		));
 
-		assert_eq!(sink.dest[0], Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
+		assert_eq!(
+			sink.dest[0],
+			Token::XMLDeclStart(TokenMetrics { start: 0, end: 5 })
+		);
 		assert_eq!(sink.dest.len(), 1);
 	}
 
@@ -1735,9 +1893,17 @@ mod tests {
 		let mut src = "<?xml version=".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
+			.err()
+			.unwrap();
 
-		assert_eq!(sink.dest[1], Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
+		assert_eq!(
+			sink.dest[1],
+			Token::Name(
+				TokenMetrics { start: 6, end: 13 },
+				"version".try_into().unwrap()
+			)
+		);
 	}
 
 	#[test]
@@ -1745,9 +1911,11 @@ mod tests {
 		let mut src = "<?xml version=".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
+			.err()
+			.unwrap();
 
-		assert_eq!(sink.dest[2], Token::Eq(TokenMetrics{start: 13, end: 14}));
+		assert_eq!(sink.dest[2], Token::Eq(TokenMetrics { start: 13, end: 14 }));
 	}
 
 	#[test]
@@ -1755,9 +1923,17 @@ mod tests {
 		let mut src = "<?xml version='1.0'".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
+			.err()
+			.unwrap();
 
-		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
+		assert_eq!(
+			sink.dest[3],
+			Token::AttributeValue(
+				TokenMetrics { start: 14, end: 19 },
+				"1.0".try_into().unwrap()
+			)
+		);
 	}
 
 	#[test]
@@ -1765,9 +1941,17 @@ mod tests {
 		let mut src = "<?xml version=\"1.0\"".as_bytes();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
+			.err()
+			.unwrap();
 
-		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
+		assert_eq!(
+			sink.dest[3],
+			Token::AttributeValue(
+				TokenMetrics { start: 14, end: 19 },
+				"1.0".try_into().unwrap()
+			)
+		);
 	}
 
 	#[test]
@@ -1777,7 +1961,10 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[4], Token::XMLDeclEnd(TokenMetrics{start: 19, end: 21}));
+		assert_eq!(
+			sink.dest[4],
+			Token::XMLDeclEnd(TokenMetrics { start: 19, end: 21 })
+		);
 	}
 
 	#[test]
@@ -1788,14 +1975,44 @@ mod tests {
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink);
 
 		assert!(result.is_ok());
-		assert_eq!(sink.dest[0], Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(sink.dest[1], Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
-		assert_eq!(sink.dest[2], Token::Eq(TokenMetrics{start: 13, end: 14}));
-		assert_eq!(sink.dest[3], Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
-		assert_eq!(sink.dest[4], Token::Name(TokenMetrics{start: 20, end: 28}, "encoding".try_into().unwrap()));
-		assert_eq!(sink.dest[5], Token::Eq(TokenMetrics{start: 28, end: 29}));
-		assert_eq!(sink.dest[6], Token::AttributeValue(TokenMetrics{start: 29, end: 36}, "utf-8".try_into().unwrap()));
-		assert_eq!(sink.dest[7], Token::XMLDeclEnd(TokenMetrics{start: 36, end: 38}));
+		assert_eq!(
+			sink.dest[0],
+			Token::XMLDeclStart(TokenMetrics { start: 0, end: 5 })
+		);
+		assert_eq!(
+			sink.dest[1],
+			Token::Name(
+				TokenMetrics { start: 6, end: 13 },
+				"version".try_into().unwrap()
+			)
+		);
+		assert_eq!(sink.dest[2], Token::Eq(TokenMetrics { start: 13, end: 14 }));
+		assert_eq!(
+			sink.dest[3],
+			Token::AttributeValue(
+				TokenMetrics { start: 14, end: 19 },
+				"1.0".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			sink.dest[4],
+			Token::Name(
+				TokenMetrics { start: 20, end: 28 },
+				"encoding".try_into().unwrap()
+			)
+		);
+		assert_eq!(sink.dest[5], Token::Eq(TokenMetrics { start: 28, end: 29 }));
+		assert_eq!(
+			sink.dest[6],
+			Token::AttributeValue(
+				TokenMetrics { start: 29, end: 36 },
+				"utf-8".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			sink.dest[7],
+			Token::XMLDeclEnd(TokenMetrics { start: 36, end: 38 })
+		);
 	}
 
 	#[test]
@@ -1803,9 +2020,17 @@ mod tests {
 		let mut src = &b"<element "[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).err().unwrap();
+		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
+			.err()
+			.unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
+		assert_eq!(
+			sink.dest[0],
+			Token::ElementHeadStart(
+				TokenMetrics { start: 0, end: 8 },
+				"element".try_into().unwrap()
+			)
+		);
 	}
 
 	#[test]
@@ -1815,8 +2040,17 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
-		assert_eq!(sink.dest[1], Token::ElementHeadClose(TokenMetrics{start: 8, end: 10}));
+		assert_eq!(
+			sink.dest[0],
+			Token::ElementHeadStart(
+				TokenMetrics { start: 0, end: 8 },
+				"element".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			sink.dest[1],
+			Token::ElementHeadClose(TokenMetrics { start: 8, end: 10 })
+		);
 	}
 
 	#[test]
@@ -1826,8 +2060,17 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
-		assert_eq!(sink.dest[1], Token::ElementHFEnd(TokenMetrics{start: 8, end: 9}));
+		assert_eq!(
+			sink.dest[0],
+			Token::ElementHeadStart(
+				TokenMetrics { start: 0, end: 8 },
+				"element".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			sink.dest[1],
+			Token::ElementHFEnd(TokenMetrics { start: 8, end: 9 })
+		);
 	}
 
 	#[test]
@@ -1837,10 +2080,28 @@ mod tests {
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
-		assert_eq!(sink.dest[0], Token::ElementHeadStart(TokenMetrics{start: 0, end: 8}, "element".try_into().unwrap()));
-		assert_eq!(sink.dest[1], Token::ElementHFEnd(TokenMetrics{start: 8, end: 9}));
-		assert_eq!(sink.dest[2], Token::ElementFootStart(TokenMetrics{start: 9, end: 18}, "element".try_into().unwrap()));
-		assert_eq!(sink.dest[3], Token::ElementHFEnd(TokenMetrics{start: 18, end: 19}));
+		assert_eq!(
+			sink.dest[0],
+			Token::ElementHeadStart(
+				TokenMetrics { start: 0, end: 8 },
+				"element".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			sink.dest[1],
+			Token::ElementHFEnd(TokenMetrics { start: 8, end: 9 })
+		);
+		assert_eq!(
+			sink.dest[2],
+			Token::ElementFootStart(
+				TokenMetrics { start: 9, end: 18 },
+				"element".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			sink.dest[3],
+			Token::ElementHFEnd(TokenMetrics { start: 18, end: 19 })
+		);
 	}
 
 	#[test]
@@ -1852,19 +2113,64 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "element"));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 9, end: 10}, "x".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(TokenMetrics { start: 9, end: 10 }, "x".try_into().unwrap())
+		);
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 11, end: 16}, "foo".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 17, end: 18}, "y".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 11, end: 16 },
+				"foo".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(TokenMetrics { start: 17, end: 18 }, "y".try_into().unwrap())
+		);
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 19, end: 24}, "bar".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 25, end: 30}, "xmlns".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 19, end: 24 },
+				"bar".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(
+				TokenMetrics { start: 25, end: 30 },
+				"xmlns".try_into().unwrap()
+			)
+		);
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 31, end: 36}, "baz".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 37, end: 46}, "xmlns:abc".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 31, end: 36 },
+				"baz".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(
+				TokenMetrics { start: 37, end: 46 },
+				"xmlns:abc".try_into().unwrap()
+			)
+		);
 		assert!(matches!(iter.next().unwrap(), Token::Eq(_)));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 47, end: 54}, "fnord".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 54, end: 55}));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 47, end: 54 },
+				"fnord".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 54, end: 55 })
+		);
 	}
 
 	#[test]
@@ -1877,7 +2183,13 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 18}, "Hello World!".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(
+				TokenMetrics { start: 6, end: 18 },
+				"Hello World!".try_into().unwrap()
+			)
+		);
 		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(_, nm) if nm == "root"));
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
@@ -1891,9 +2203,17 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
-		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6})));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 11}, "&".try_into().unwrap()));
-		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 11, end: 17}, nm) if nm == "root"));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(TokenMetrics { start: 6, end: 11 }, "&".try_into().unwrap())
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 11, end: 17}, nm) if nm == "root")
+		);
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
 
@@ -1906,9 +2226,17 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
-		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6})));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 11}, "<".try_into().unwrap()));
-		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 11, end: 17}, nm) if nm == "root"));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(TokenMetrics { start: 6, end: 11 }, "<".try_into().unwrap())
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 11, end: 17}, nm) if nm == "root")
+		);
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
 
@@ -1921,13 +2249,23 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
-		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6})));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 12}, ">".try_into().unwrap()));
-		assert!(matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 12, end: 18}, nm) if nm == "root"));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(TokenMetrics { start: 6, end: 12 }, ">".try_into().unwrap())
+		);
+		assert!(
+			matches!(iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 12, end: 18}, nm) if nm == "root")
+		);
 		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(_)));
 	}
 
-	fn collect_texts<'x, T: Iterator<Item = &'x Token>>(iter: &'x mut T) -> (String, usize, usize, Option<&'x Token>) {
+	fn collect_texts<'x, T: Iterator<Item = &'x Token>>(
+		iter: &'x mut T,
+	) -> (String, usize, usize, Option<&'x Token>) {
 		let mut texts: Vec<String> = Vec::new();
 		let mut start = 0;
 		let mut had_start = false;
@@ -1945,27 +2283,31 @@ mod tests {
 					}
 					end = metrics.end();
 					texts.push(t.to_string());
-				},
+				}
 				other => {
 					token = Some(other);
 					break;
-				},
+				}
 			}
 		}
 		let text = texts.join("");
-		return (text, start, end, token)
+		return (text, start, end, token);
 	}
 
 	#[test]
 	fn lexer_lex_mixed_text_entities() {
-		let mut src = &b"<root>&#60;example foo=&quot;bar&quot; baz=&apos;fnord&apos;/&gt;</root>"[..];
+		let mut src =
+			&b"<root>&#60;example foo=&quot;bar&quot; baz=&apos;fnord&apos;/&gt;</root>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
 
 		let mut iter = sink.dest.iter();
 		assert!(matches!(iter.next().unwrap(), Token::ElementHeadStart(_, nm) if nm == "root"));
-		assert!(matches!(iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6})));
+		assert!(matches!(
+			iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		));
 
 		let (text, start, end, _) = collect_texts(&mut iter);
 
@@ -1993,13 +2335,20 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 9, end: 10}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 10, end: 17}, "&".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Eq(TokenMetrics { start: 9, end: 10 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(TokenMetrics { start: 10, end: 17 }, "&".try_into().unwrap())
+		);
 	}
 
 	#[test]
 	fn lexer_lex_attribute_mixed_with_entities() {
-		let mut src = &b"<root foo='&#60;example foo=&quot;bar&quot; baz=&apos;fnord&apos;/&gt;'>"[..];
+		let mut src =
+			&b"<root foo='&#60;example foo=&quot;bar&quot; baz=&apos;fnord&apos;/&gt;'>"[..];
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
 		stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink).unwrap();
@@ -2007,8 +2356,17 @@ mod tests {
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 9, end: 10}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 10, end: 71}, "<example foo=\"bar\" baz='fnord'/>".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Eq(TokenMetrics { start: 9, end: 10 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 10, end: 71 },
+				"<example foo=\"bar\" baz='fnord'/>".try_into().unwrap()
+			)
+		);
 	}
 
 	#[test]
@@ -2020,9 +2378,24 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6}));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 6, end: 50}, "<example foo=\"bar\" baz='fnord'/>".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 50, end: 56}, "root".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(
+				TokenMetrics { start: 6, end: 50 },
+				"<example foo=\"bar\" baz='fnord'/>".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementFootStart(
+				TokenMetrics { start: 50, end: 56 },
+				"root".try_into().unwrap()
+			)
+		);
 		iter.next().unwrap();
 	}
 
@@ -2035,8 +2408,17 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6}));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 18, end: 24}, "root".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementFootStart(
+				TokenMetrics { start: 18, end: 24 },
+				"root".try_into().unwrap()
+			)
+		);
 		iter.next().unwrap();
 	}
 
@@ -2049,7 +2431,10 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6}));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		);
 
 		let (text, start, end, next) = collect_texts(&mut iter);
 
@@ -2124,11 +2509,35 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 2, end: 3}));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 3, end: 9}, "foo001".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 9, end: 15}, "foo002".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 15, end: 21}, "foo003".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 21, end: 24}, "a".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 2, end: 3 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(
+				TokenMetrics { start: 3, end: 9 },
+				"foo001".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(
+				TokenMetrics { start: 9, end: 15 },
+				"foo002".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(
+				TokenMetrics { start: 15, end: 21 },
+				"foo003".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementFootStart(TokenMetrics { start: 21, end: 24 }, "a".try_into().unwrap())
+		);
 		iter.next().unwrap();
 	}
 
@@ -2193,55 +2602,91 @@ mod tests {
 	#[test]
 	fn lexer_rejects_undeclared_or_invalid_references() {
 		let err = lex_err(b"&123;", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::UndeclaredEntity)));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::UndeclaredEntity)
+		));
 
 		let err = lex_err(b"&foobar;", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::UndeclaredEntity)));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::UndeclaredEntity)
+		));
 
 		let err = lex_err(b"&?;", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'?', _))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'?', _))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_non_scalar_char_refs() {
 		let err = lex_err(b"&#x110000;", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_via_refs_in_text() {
 		let err = lex_err(b"&#x00;", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+		));
 
 		let err = lex_err(b"&#x1f;", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_via_refs_in_attrs() {
 		let err = lex_err(b"<a foo='&#x00;'/>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+		));
 
 		let err = lex_err(b"<a foo='&#x1f;'/>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_verbatim_in_text() {
 		let err = lex_err(b"\x00", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))
+		));
 
 		let err = lex_err(b"\x1f", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_non_xml_10_chars_verbatim_in_attrs() {
 		let err = lex_err(b"<a foo='\x00'/>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))
+		));
 
 		let err = lex_err(b"<a foo='\x1f'/>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))
+		));
 	}
 
 	#[test]
@@ -2250,8 +2695,12 @@ mod tests {
 		let mut buffered = io::BufReader::with_capacity(1, src);
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
-		let e1 = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).err().unwrap();
-		let e2 = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink).err().unwrap();
+		let e1 = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink)
+			.err()
+			.unwrap();
+		let e2 = stream_to_sink_from_bytes(&mut lexer, &mut buffered, &mut sink)
+			.err()
+			.unwrap();
 		assert_eq!(e1, e2);
 
 		let mut iter = sink.dest.iter();
@@ -2269,8 +2718,18 @@ mod tests {
 
 		let mut iter = sink.dest.iter();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 2, end: 3}));	assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 3, end: 16}, "]".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 16, end: 19}, "a".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 2, end: 3 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(TokenMetrics { start: 3, end: 16 }, "]".try_into().unwrap())
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementFootStart(TokenMetrics { start: 16, end: 19 }, "a".try_into().unwrap())
+		);
 		iter.next().unwrap();
 	}
 
@@ -2284,7 +2743,9 @@ mod tests {
 			r.push(std::borrow::Cow::from(chunk));
 			loop {
 				match lexer.lex(&mut r) {
-					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
+					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => {
+						break
+					}
 					Err(other) => panic!("unexpected error: {:?}", other),
 					Ok(None) => panic!("unexpected eof signal: {:?}", lexer),
 					Ok(Some(tok)) => sink.push(tok),
@@ -2293,11 +2754,32 @@ mod tests {
 		}
 
 		let mut iter = sink.iter();
-		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 13, end: 14}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd(TokenMetrics{start: 19, end: 21}));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::XMLDeclStart(TokenMetrics { start: 0, end: 5 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(
+				TokenMetrics { start: 6, end: 13 },
+				"version".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Eq(TokenMetrics { start: 13, end: 14 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 14, end: 19 },
+				"1.0".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::XMLDeclEnd(TokenMetrics { start: 19, end: 21 })
+		);
 	}
 
 	#[test]
@@ -2310,7 +2792,9 @@ mod tests {
 			r.push(std::borrow::Cow::from(chunk));
 			loop {
 				match lexer.lex(&mut r) {
-					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
+					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => {
+						break
+					}
 					Err(other) => panic!("unexpected error: {:?}", other),
 					Ok(None) => panic!("unexpected eof signal: {:?}", lexer),
 					Ok(Some(tok)) => sink.push(tok),
@@ -2319,41 +2803,83 @@ mod tests {
 		}
 
 		let mut iter = sink.iter();
-		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 8, end: 15}, "version".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 17, end: 18}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 20, end: 25}, "1.0".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd(TokenMetrics{start: 27, end: 29}));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::XMLDeclStart(TokenMetrics { start: 0, end: 5 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(
+				TokenMetrics { start: 8, end: 15 },
+				"version".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Eq(TokenMetrics { start: 17, end: 18 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 20, end: 25 },
+				"1.0".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::XMLDeclEnd(TokenMetrics { start: 27, end: 29 })
+		);
 	}
 
 	#[test]
 	fn lexer_rejects_missing_whitespace_between_attrvalue_and_attrname() {
 		let err = lex_err(b"<a a='x'b='y'/>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_nonchar_in_cdata_section() {
 		let err = lex_err(b"<a><![CDATA[\x00]]></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+		));
 
 		let err = lex_err(b"<a><![CDATA[]\x00]]></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+		));
 
 		let err = lex_err(b"<a><![CDATA[]]\x00]]></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_cdata_end_in_text() {
 		let err = lex_err(b"<a>]]></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
+		));
 
 		let err = lex_err(b"<a>]]]></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
+		));
 
 		let err = lex_err(b"<a>]]]]></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidSyntax(_))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
+		));
 	}
 
 	#[test]
@@ -2438,8 +2964,17 @@ mod tests {
 
 		let mut iter = toks.iter();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::ElementHFEnd(TokenMetrics{start: 5, end: 6}));
-		assert_eq!(*iter.next().unwrap(), Token::ElementFootStart(TokenMetrics{start: 18, end: 24}, "root".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementHFEnd(TokenMetrics { start: 5, end: 6 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::ElementFootStart(
+				TokenMetrics { start: 18, end: 24 },
+				"root".try_into().unwrap()
+			)
+		);
 		iter.next().unwrap();
 
 		let (toks, r) = lex(&b"<root><![CDATA[]]>&amp;</root>"[..], 128);
@@ -2448,7 +2983,10 @@ mod tests {
 		let mut iter = toks.iter();
 		iter.next().unwrap();
 		iter.next().unwrap();
-		assert_eq!(*iter.next().unwrap(), Token::Text(TokenMetrics{start: 18, end: 23}, "&".try_into().unwrap()));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Text(TokenMetrics { start: 18, end: 23 }, "&".try_into().unwrap())
+		);
 
 		let (toks, r) = lex(&b"<root><![CDATA[]]><![CDATA[]]]]>&gt;</root>"[..], 128);
 		r.unwrap();
@@ -2466,24 +3004,36 @@ mod tests {
 	#[test]
 	fn lexer_rejects_nonchar_in_cdata_end_in_text() {
 		let err = lex_err(b"<a>]\x00]></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+		));
 
 		let err = lex_err(b"<a>]]\x00></a>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_numeric_start_of_name_in_closing_tag() {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"</4foo>", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'4', None))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'4', None))
+		));
 	}
 
 	#[test]
 	fn lexer_rejects_zero_length_name_in_closing_tag() {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"</ >", 128).unwrap();
-		assert!(matches!(err, CrateError::NotWellFormed(WFError::UnexpectedByte(_, b' ', None))));
+		assert!(matches!(
+			err,
+			CrateError::NotWellFormed(WFError::UnexpectedByte(_, b' ', None))
+		));
 	}
 
 	#[test]
@@ -2498,18 +3048,54 @@ mod tests {
 		assert!(result.is_ok());
 
 		let mut iter = sink.dest.iter();
-		assert_eq!(*iter.next().unwrap(), Token::XMLDeclStart(TokenMetrics{start: 0, end: 5}));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 6, end: 13}, "version".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 13, end: 14}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 14, end: 19}, "1.0".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Name(TokenMetrics{start: 20, end: 28}, "encoding".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::Eq(TokenMetrics{start: 28, end: 29}));
-		assert_eq!(*iter.next().unwrap(), Token::AttributeValue(TokenMetrics{start: 29, end: 36}, "utf-8".try_into().unwrap()));
-		assert_eq!(*iter.next().unwrap(), Token::XMLDeclEnd(TokenMetrics{start: 36, end: 38}));
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::XMLDeclStart(TokenMetrics { start: 0, end: 5 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(
+				TokenMetrics { start: 6, end: 13 },
+				"version".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Eq(TokenMetrics { start: 13, end: 14 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 14, end: 19 },
+				"1.0".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Name(
+				TokenMetrics { start: 20, end: 28 },
+				"encoding".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::Eq(TokenMetrics { start: 28, end: 29 })
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::AttributeValue(
+				TokenMetrics { start: 29, end: 36 },
+				"utf-8".try_into().unwrap()
+			)
+		);
+		assert_eq!(
+			*iter.next().unwrap(),
+			Token::XMLDeclEnd(TokenMetrics { start: 36, end: 38 })
+		);
 		match iter.next().unwrap() {
 			Token::ElementHeadStart(tm, ..) => {
-				assert_eq!(*tm, TokenMetrics{start: 38, end: 45});
-			},
+				assert_eq!(*tm, TokenMetrics { start: 38, end: 45 });
+			}
 			other => panic!("unexpected event: {:?}", other),
 		}
 	}
@@ -2526,7 +3112,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2575,7 +3161,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2592,7 +3178,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2609,7 +3195,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2626,7 +3212,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n<>");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2643,7 +3229,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n\n");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2660,7 +3246,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::Text(_, cdata) => {
 				assert_eq!(cdata, "\n");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2680,7 +3266,7 @@ mod tests {
 				// just four spaces, because CRLF normalization happens before attribute value normalization
 				// gotta love this
 				assert_eq!(cdata, "    ");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2698,7 +3284,7 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::AttributeValue(_, cdata) => {
 				assert_eq!(cdata, "   ");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
@@ -2716,17 +3302,14 @@ mod tests {
 		match iter.next().unwrap() {
 			Token::AttributeValue(_, cdata) => {
 				assert_eq!(cdata, "\r\n\t ");
-			},
+			}
 			other => panic!("unexpected token: {:?}", other),
 		}
 	}
 
 	#[test]
 	fn lexer_is_resilient_to_chunking() {
-		let (_toks, r) = lex_chunked(
-			&[&b"<foo bar='baz' "[..], &b"fnord=''/>"[..]],
-			128,
-		);
+		let (_toks, r) = lex_chunked(&[&b"<foo bar='baz' "[..], &b"fnord=''/>"[..]], 128);
 		r.unwrap();
 	}
 
@@ -2756,7 +3339,7 @@ mod tests {
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::ElementHeadStart(_, name))) => {
 				assert_eq!(name, "xyz");
-			},
+			}
 			other => panic!("unexpected result: {:?}", other),
 		};
 		match lexer.lex(&mut buf) {
@@ -2776,7 +3359,7 @@ mod tests {
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::ElementHeadStart(_, name))) => {
 				assert_eq!(name, "xyz");
-			},
+			}
 			other => panic!("unexpected result: {:?}", other),
 		};
 		match lexer.lex(&mut buf) {
@@ -2797,7 +3380,7 @@ mod tests {
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::ElementHeadStart(_, name))) => {
 				assert_eq!(name, "xyz");
-			},
+			}
 			other => panic!("unexpected result: {:?}", other),
 		};
 		match lexer.lex(&mut buf) {
@@ -2807,13 +3390,13 @@ mod tests {
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::Text(_, text))) => {
 				assert_eq!(text, "fööbär🎉");
-			},
+			}
 			other => panic!("unexpected result: {:?}", other),
 		};
 		match lexer.lex(&mut buf) {
 			Ok(Some(Token::ElementFootStart(_, name))) => {
 				assert_eq!(name, "xyz");
-			},
+			}
 			other => panic!("unexpected result: {:?}", other),
 		};
 		match lexer.lex(&mut buf) {

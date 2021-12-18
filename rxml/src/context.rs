@@ -1,15 +1,15 @@
-use std::fmt;
 use std::borrow::Cow;
+use std::fmt;
 
-#[cfg(all(feature = "shared_ns", feature = "mt"))]
-use std::sync::{Weak, Mutex, MutexGuard};
-#[cfg(all(feature = "shared_ns", not(feature = "mt")))]
-use std::rc::Weak;
 #[cfg(all(feature = "shared_ns", not(feature = "mt")))]
 use std::cell::{RefCell, RefMut};
+#[cfg(all(feature = "shared_ns", not(feature = "mt")))]
+use std::rc::Weak;
+#[cfg(all(feature = "shared_ns", feature = "mt"))]
+use std::sync::{Mutex, MutexGuard, Weak};
 
-use crate::strings;
 use crate::parser::RcPtr;
+use crate::strings;
 
 #[cfg(feature = "shared_ns")]
 use weak_table;
@@ -41,17 +41,17 @@ pub struct Context {
 impl Context {
 	#[cfg(all(feature = "shared_ns", feature = "mt"))]
 	fn wrap_nss(nss: CDataWeakSet) -> Mutex<CDataWeakSet> {
-		return Mutex::new(nss)
+		return Mutex::new(nss);
 	}
 
 	#[cfg(all(feature = "shared_ns", not(feature = "mt")))]
 	fn wrap_nss(nss: CDataWeakSet) -> RefCell<CDataWeakSet> {
-		return RefCell::new(nss)
+		return RefCell::new(nss);
 	}
 
 	/// Create a new context
 	pub fn new() -> Context {
-		Context{
+		Context {
 			#[cfg(feature = "shared_ns")]
 			nss: Self::wrap_nss(weak_table::WeakHashSet::new()),
 		}
@@ -78,7 +78,10 @@ impl Context {
 	///
 	/// To force expiry, call [`Context::release_temporaries`], although that
 	/// should only rarely be necessary and may be detrimental to performance.
-	pub fn intern_cdata<'a, T: Into<Cow<'a, strings::CDataStr>>>(&self, ns: T) -> RcPtr<strings::CData> {
+	pub fn intern_cdata<'a, T: Into<Cow<'a, strings::CDataStr>>>(
+		&self,
+		ns: T,
+	) -> RcPtr<strings::CData> {
 		let ns = ns.into();
 		#[cfg(feature = "shared_ns")]
 		{
@@ -89,11 +92,11 @@ impl Context {
 					let ptr = RcPtr::new(ns.into_owned());
 					nss.insert(ptr.clone());
 					ptr
-				},
-			}
+				}
+			};
 		}
 		#[cfg(not(feature = "shared_ns"))]
-		return RcPtr::new(ns.into_owned())
+		return RcPtr::new(ns.into_owned());
 	}
 
 	/// Remove all unreferenced strings from storage and shrink the storage to
@@ -147,7 +150,8 @@ impl fmt::Debug for Context {
 		#[cfg(feature = "shared_ns")]
 		{
 			let nss = self.lock_nss();
-			f.field("nss.capacity()", &nss.capacity()).field("nss.length()", &nss.len());
+			f.field("nss.capacity()", &nss.capacity())
+				.field("nss.length()", &nss.len());
 		}
 		f.finish()
 	}

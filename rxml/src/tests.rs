@@ -24,55 +24,65 @@ fn feedparser_can_read_xml_document() {
 		match iter.next().unwrap() {
 			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					"foo"
+				);
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 8);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 7);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 	}
 
 	fp.feed_eof();
-	let result = fp.read_all_eof(|ev| {
-		panic!("unexpected event: {:?}", ev)
-	});
+	let result = fp.read_all_eof(|ev| panic!("unexpected event: {:?}", ev));
 	assert_eq!(result.unwrap(), true);
 }
 
@@ -99,54 +109,64 @@ fn feedparser_can_handle_chunked_input() {
 		match iter.next().unwrap() {
 			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 76);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					"foo"
+				);
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 8);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 7);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 	}
 
 	fp.feed_eof();
-	let result = fp.read_all_eof(|ev| {
-		panic!("unexpected event: {:?}", ev)
-	});
+	let result = fp.read_all_eof(|ev| panic!("unexpected event: {:?}", ev));
 	assert_eq!(result.unwrap(), true);
 }
 
@@ -168,47 +188,59 @@ fn pullparser_can_read_xml_document() {
 		match iter.next().unwrap() {
 			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					"foo"
+				);
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 8);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 7);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 	}
@@ -237,9 +269,11 @@ async fn asyncparser_can_read_xml_document() {
 	let mut r = &doc[..];
 	let mut ap = AsyncParser::new(&mut r);
 	let mut out = Vec::<Event>::new();
-	let result = ap.read_all_eof(|ev| {
-		out.push(ev);
-	}).await;
+	let result = ap
+		.read_all_eof(|ev| {
+			out.push(ev);
+		})
+		.await;
 	assert_eq!(result.unwrap(), true);
 
 	{
@@ -247,47 +281,59 @@ async fn asyncparser_can_read_xml_document() {
 		match iter.next().unwrap() {
 			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					"foo"
+				);
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 8);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 7);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 	}
@@ -302,9 +348,11 @@ async fn asyncparser_can_handle_chunked_input() {
 	let mut r = tokio::io::BufReader::with_capacity(4, &mut r);
 	let mut ap = AsyncParser::new(&mut r);
 	let mut out = Vec::<Event>::new();
-	let result = ap.read_all_eof(|ev| {
-		out.push(ev);
-	}).await;
+	let result = ap
+		.read_all_eof(|ev| {
+			out.push(ev);
+		})
+		.await;
 	assert_eq!(result.unwrap(), true);
 
 	{
@@ -312,47 +360,59 @@ async fn asyncparser_can_handle_chunked_input() {
 		match iter.next().unwrap() {
 			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
-				assert_eq!(attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(), "foo");
-				assert_eq!(attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(), "bar");
-			},
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					"foo"
+				);
+				assert_eq!(
+					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					"bar"
+				);
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
-				assert_eq!(nsuri.as_ref().unwrap().as_str(), "urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4");
+				assert_eq!(
+					nsuri.as_ref().unwrap().as_str(),
+					"urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4"
+				);
 				assert_eq!(localname, "child");
 				assert_eq!(attrs.len(), 0);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 8);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
 			Event::EndElement(em) => {
 				assert_eq!(em.len(), 7);
-			},
+			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 	}

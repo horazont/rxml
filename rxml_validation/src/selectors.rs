@@ -6,7 +6,6 @@ The contents of this module are implementation details of `rxml`,
 */
 use std::fmt;
 
-
 /**
 # Predicate trait for matching chars
 */
@@ -42,12 +41,10 @@ impl CharSelector for AllChars {
 	}
 }
 
-
 // start to end (incl., because some of our edge points are not valid chars
 // in rust)
 /// Selects all chars from a range (including both ends)
 pub struct CodepointRange(pub char, pub char);
-
 
 /// Valid codepoints for character data (XML 1.0 § 2.2)
 pub const VALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
@@ -57,7 +54,6 @@ pub const VALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 	CodepointRange('\u{e000}', '\u{fffd}'),
 	CodepointRange('\u{10000}', '\u{10ffff}'),
 ];
-
 
 /// Invalid codepoints for character data (XML 1.0 § 2.2)
 ///
@@ -69,7 +65,6 @@ pub const INVALID_XML_CDATA_RANGES: &'static [CodepointRange] = &[
 	CodepointRange('\x0e', '\x1f'),
 	CodepointRange('\u{fffe}', '\u{ffff}'),
 ];
-
 
 const VALID_XML_NAME_START_RANGES: &'static [CodepointRange] = &[
 	CodepointRange(':', ':'),
@@ -88,7 +83,6 @@ const VALID_XML_NAME_START_RANGES: &'static [CodepointRange] = &[
 	CodepointRange('\u{f900}', '\u{fdcf}'),
 	CodepointRange('\u{10000}', '\u{effff}'),
 ];
-
 
 const VALID_XML_NAME_RANGES: &'static [CodepointRange] = &[
 	CodepointRange(':', ':'),
@@ -116,7 +110,7 @@ const VALID_XML_NAME_RANGES: &'static [CodepointRange] = &[
 
 impl CodepointRange {
 	pub fn contains(&self, c: char) -> bool {
-		return (self.0 <= c) && (c <= self.1)
+		return (self.0 <= c) && (c <= self.1);
 	}
 }
 

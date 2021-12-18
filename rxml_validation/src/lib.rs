@@ -54,18 +54,19 @@ pub fn validate_name(s: &str) -> Result<(), Error> {
 	match chars.next() {
 		// must have at least one char
 		None => return Err(Error::EmptyName),
-		Some(c) => if !selectors::CLASS_XML_NAMESTART.select(c) {
-			return Err(Error::InvalidChar(c))
+		Some(c) => {
+			if !selectors::CLASS_XML_NAMESTART.select(c) {
+				return Err(Error::InvalidChar(c));
+			}
 		}
 	}
 	for ch in chars {
 		if !selectors::CLASS_XML_NAME.select(ch) {
-			return Err(Error::InvalidChar(ch))
+			return Err(Error::InvalidChar(ch));
 		}
 	}
 	Ok(())
 }
-
 
 /**
 Check whether a str is a valid XML 1.0 Name, without colons.
@@ -84,13 +85,15 @@ pub fn validate_ncname(s: &str) -> Result<(), Error> {
 	match chars.next() {
 		// must have at least one char
 		None => return Err(Error::EmptyName),
-		Some(c) => if !selectors::CLASS_XML_NAMESTART.select(c) || c == ':' {
-			return Err(Error::InvalidChar(c))
+		Some(c) => {
+			if !selectors::CLASS_XML_NAMESTART.select(c) || c == ':' {
+				return Err(Error::InvalidChar(c));
+			}
 		}
 	}
 	for ch in chars {
 		if !selectors::CLASS_XML_NAME.select(ch) || ch == ':' {
-			return Err(Error::InvalidChar(ch))
+			return Err(Error::InvalidChar(ch));
 		}
 	}
 	Ok(())
@@ -110,7 +113,7 @@ assert!(matches!(validate_cdata("\x01"), Err(Error::InvalidChar('\x01'))));
 pub fn validate_cdata(s: &str) -> Result<(), Error> {
 	for ch in s.chars() {
 		if selectors::CLASS_XML_NONCHAR.select(ch) {
-			return Err(Error::InvalidChar(ch))
+			return Err(Error::InvalidChar(ch));
 		}
 	}
 	Ok(())

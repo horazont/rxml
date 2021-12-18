@@ -1,6 +1,6 @@
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use rxml::lexer::{DecodingReader, CodepointRead, Utf8Decoder};
+use rxml::lexer::{CodepointRead, DecodingReader, Utf8Decoder};
 
 fn decode_perf_singlebyte(c: &mut Criterion) {
 	let mut group = c.benchmark_group("single-buffer single-byte decode performance");
@@ -109,7 +109,7 @@ fn decode_perf_fourbyte(c: &mut Criterion) {
 	let mut data = Vec::with_capacity(nbytes);
 	data.resize(nbytes, 0);
 	for i in 0..(data.len() / 4) {
-		data[i * 4..(i+1) * 4].copy_from_slice(&b"\xf0\x9f\x8e\x89"[..]);
+		data[i * 4..(i + 1) * 4].copy_from_slice(&b"\xf0\x9f\x8e\x89"[..]);
 	}
 	// this is a huge array of utf8(Ä) now.
 
@@ -157,5 +157,10 @@ fn decode_perf_fourbyte(c: &mut Criterion) {
 	});
 }
 
-criterion_group!(benches, decode_perf_singlebyte, decode_perf_twobyte, decode_perf_fourbyte);
+criterion_group!(
+	benches,
+	decode_perf_singlebyte,
+	decode_perf_twobyte,
+	decode_perf_fourbyte
+);
 criterion_main!(benches);

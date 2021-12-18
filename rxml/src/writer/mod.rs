@@ -1,53 +1,31 @@
 /*!
 # Writer for restricted XML 1.0
 */
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::fmt;
 
-use bytes::{BytesMut, BufMut};
+use bytes::{BufMut, BytesMut};
 
-use crate::strings::{Name, NCName, NCNameStr, CDataStr, CData};
-use crate::parser::{
-	XMLVersion,
-	Event,
-	RcPtr,
-	NamespaceName,
-	XMLNS_XML,
-	XMLNS_XMLNS,
-};
-
+use crate::parser::{Event, NamespaceName, RcPtr, XMLVersion, XMLNS_XML, XMLNS_XMLNS};
+use crate::strings::{CData, CDataStr, NCName, NCNameStr, Name};
 
 static XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
 pub const PREFIX_XML: &'static NCNameStr = unsafe { std::mem::transmute("xml") };
 pub const PREFIX_XMLNS: &'static NCNameStr = unsafe { std::mem::transmute("xmlns") };
 
-const CDATA_SPECIALS: &'static [u8] = &[
-	b'<',
-	b'>',
-	b'&',
-	b'\r',
-];
+const CDATA_SPECIALS: &'static [u8] = &[b'<', b'>', b'&', b'\r'];
 
-const ATTR_SPECIALS: &'static [u8] = &[
-	b'"',
-	b'\'',
-	b'\r',
-	b'\n',
-	b'\t',
-	b'<',
-	b'>',
-	b'&',
-];
+const ATTR_SPECIALS: &'static [u8] = &[b'"', b'\'', b'\r', b'\n', b'\t', b'<', b'>', b'&'];
 
 fn escape<'a, B: BufMut>(out: &'a mut B, data: &'a [u8], specials: &'static [u8]) {
 	let mut last_index = 0;
 	for i in 0..data.len() {
 		let ch = data[i];
 		if !specials.contains(&ch) {
-			continue
+			continue;
 		}
 		if i > last_index {
 			out.put_slice(&data[last_index..i]);
@@ -63,7 +41,7 @@ fn escape<'a, B: BufMut>(out: &'a mut B, data: &'a [u8], specials: &'static [u8]
 			b'\t' => out.put_slice(b"&#x9;"),
 			_ => panic!("unexpected special character?!"),
 		}
-		last_index = i+1;
+		last_index = i + 1;
 	}
 	out.put_slice(&data[last_index..data.len()]);
 }
@@ -171,7 +149,10 @@ pub trait TrackNamespace {
 
 	/// Get the prefix for a given URI, which may be empty if the namespace
 	/// with that URI is defined as the default namespace.
-	fn get_prefix_or_default(&self, name: Option<NamespaceName>) -> Result<Option<&NCNameStr>, PrefixError>;
+	fn get_prefix_or_default(
+		&self,
+		name: Option<NamespaceName>,
+	) -> Result<Option<&NCNameStr>, PrefixError>;
 
 	/// Get the prefix for a given URI.
 	///
@@ -215,7 +196,7 @@ pub struct SimpleNamespaces {
 
 impl SimpleNamespaces {
 	pub fn new() -> Self {
-		Self{
+		Self {
 			global_ns: HashMap::new(),
 			global_ns_rev: HashSet::new(),
 			global_ns_ctr: 0,
@@ -234,17 +215,17 @@ impl TrackNamespace for SimpleNamespaces {
 		match prefix.as_ref() {
 			Some(v) if *v == PREFIX_XML => {
 				if name.as_ref().map(|x| &***x) == Some(XMLNS_XML) {
-					return false
+					return false;
 				}
 				panic!("xml is a reserved prefix")
 			}
 			Some(v) if *v == PREFIX_XMLNS => {
 				if name.as_ref().map(|x| &***x) == Some(XMLNS_XMLNS) {
-					return false
+					return false;
 				}
 				panic!("xmlns is a reserved prefix")
 			}
-			_ => {},
+			_ => {}
 		}
 
 		match name {
@@ -260,7 +241,10 @@ impl TrackNamespace for SimpleNamespaces {
 		match prefix {
 			Some(prefix) => {
 				if self.global_ns_rev.contains(prefix) {
-					panic!("prefix declaration conflicts with global prefix: {:?}", prefix)
+					panic!(
+						"prefix declaration conflicts with global prefix: {:?}",
+						prefix
+					)
 				}
 				if self.temp_ns_rev.contains(prefix) {
 					panic!("duplicate prefix: {:?}", prefix);
@@ -287,9 +271,7 @@ impl TrackNamespace for SimpleNamespaces {
 		}
 
 		match self.next_default_ns.as_ref() {
-			Some(v) if *v == name => {
-				(false, None)
-			}
+			Some(v) if *v == name => (false, None),
 			Some(v) => {
 				drop(v);
 				let (new, prefix) = self.declare_with_auto_prefix(name);
@@ -298,12 +280,8 @@ impl TrackNamespace for SimpleNamespaces {
 			None => {
 				self.next_default_ns = Some(name);
 				let new = match self.default_ns_stack.last() {
-					Some(v) => {
-						v != self.next_default_ns.as_ref().unwrap()
-					}
-					None => {
-						self.next_default_ns.as_ref().unwrap().is_some()
-					}
+					Some(v) => v != self.next_default_ns.as_ref().unwrap(),
+					None => self.next_default_ns.as_ref().unwrap().is_some(),
 				};
 				(new, None)
 			}
@@ -321,29 +299,40 @@ impl TrackNamespace for SimpleNamespaces {
 			Entry::Occupied(o) => (false, o.into_mut()),
 			Entry::Vacant(v) => {
 				let ctr = self.temp_ns_ctr;
-				let temp_ns_prefix: NCName = format!("tns{}", ctr).try_into().expect("auto-generated prefix must always be valid");
+				let temp_ns_prefix: NCName = format!("tns{}", ctr)
+					.try_into()
+					.expect("auto-generated prefix must always be valid");
 				if self.global_ns_rev.contains(&temp_ns_prefix) {
-					panic!("automatic prefix declaration conflicts with global prefix: {:?}", temp_ns_prefix)
+					panic!(
+						"automatic prefix declaration conflicts with global prefix: {:?}",
+						temp_ns_prefix
+					)
 				}
 				if self.temp_ns_rev.contains(&temp_ns_prefix) {
-					panic!("automatic prefix declaration conflicts with local prefix: {:?}", temp_ns_prefix)
+					panic!(
+						"automatic prefix declaration conflicts with local prefix: {:?}",
+						temp_ns_prefix
+					)
 				}
 				self.temp_ns_ctr += 1;
 				self.temp_ns_rev.insert(temp_ns_prefix.clone());
 				(true, v.insert(temp_ns_prefix))
-			},
+			}
 		}
 	}
 
-	fn get_prefix_or_default(&self, name: Option<NamespaceName>) -> Result<Option<&NCNameStr>, PrefixError> {
+	fn get_prefix_or_default(
+		&self,
+		name: Option<NamespaceName>,
+	) -> Result<Option<&NCNameStr>, PrefixError> {
 		if let Some(next) = self.next_default_ns.as_ref() {
 			if *next == name {
-				return Ok(None)
+				return Ok(None);
 			}
 		}
 		if let Some(prev) = self.default_ns_stack.last() {
 			if *prev == name {
-				return Ok(None)
+				return Ok(None);
 			}
 		}
 		Ok(Some(self.get_prefix(name)?))
@@ -369,9 +358,7 @@ impl TrackNamespace for SimpleNamespaces {
 				let old = self.default_ns_stack.last().unwrap_or(&None).clone();
 				self.default_ns_stack.push(old);
 			}
-			Some(v) => {
-				self.default_ns_stack.push(v)
-			}
+			Some(v) => self.default_ns_stack.push(v),
 		}
 		if self.default_ns_stack.len() == 1 {
 			// the first element! globalize the declarations
@@ -419,12 +406,18 @@ impl fmt::Display for EncodeError {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		match self {
 			Self::MisplacedXMLDeclaration => f.write_str("misplaced XML declaration"),
-			Self::ElementStartNotAllowed => f.write_str("element start not allowed inside element headers"),
+			Self::ElementStartNotAllowed => {
+				f.write_str("element start not allowed inside element headers")
+			}
 			Self::NoOpenElement => f.write_str("no open element"),
 			Self::EndOfDocument => f.write_str("no content allowed after end of root element"),
 			Self::TextNotAllowed => f.write_str("text not allowed inside element headers"),
-			Self::AttributeNotAllowed => f.write_str("attributes not allowed outside element headers"),
-			Self::ElementFootNotAllowed => f.write_str("cannot close element while writing the header or before the root element"),
+			Self::AttributeNotAllowed => {
+				f.write_str("attributes not allowed outside element headers")
+			}
+			Self::ElementFootNotAllowed => f.write_str(
+				"cannot close element while writing the header or before the root element",
+			),
 		}
 	}
 }
@@ -468,7 +461,7 @@ impl Encoder<SimpleNamespaces> {
 	/// optimal with respect to the number of bytes written, but has reduced
 	/// memory cost.
 	pub fn new() -> Self {
-		Self{
+		Self {
 			state: EncoderState::Start,
 			qname_stack: Vec::new(),
 			ns: SimpleNamespaces::new(),
@@ -477,7 +470,11 @@ impl Encoder<SimpleNamespaces> {
 }
 
 impl<T: TrackNamespace> Encoder<T> {
-	fn encode_nsdecl<O: BufMut>(prefix: Option<&NCNameStr>, nsuri: Option<&CDataStr>, output: &mut O) {
+	fn encode_nsdecl<O: BufMut>(
+		prefix: Option<&NCNameStr>,
+		nsuri: Option<&CDataStr>,
+		output: &mut O,
+	) {
 		match prefix {
 			Some(prefix) => {
 				output.put_slice(b" xmlns:");
@@ -502,7 +499,7 @@ impl<T: TrackNamespace> Encoder<T> {
 	/// network, for instance.
 	pub fn encode<O: BufMut>(&mut self, item: Item<'_>, output: &mut O) -> Result<(), EncodeError> {
 		if self.state == EncoderState::EndOfDocument {
-			return Err(EncodeError::EndOfDocument)
+			return Err(EncodeError::EndOfDocument);
 		}
 
 		match item {
@@ -513,7 +510,7 @@ impl<T: TrackNamespace> Encoder<T> {
 					Ok(())
 				}
 				_ => Err(EncodeError::MisplacedXMLDeclaration),
-			}
+			},
 			Item::ElementHeadStart(nsuri, local_name) => match self.state {
 				EncoderState::Start | EncoderState::Declared | EncoderState::Content => {
 					output.put_u8(b'<');
@@ -538,7 +535,7 @@ impl<T: TrackNamespace> Encoder<T> {
 					Ok(())
 				}
 				_ => Err(EncodeError::ElementStartNotAllowed),
-			}
+			},
 			Item::Attribute(nsuri, local_name, value) => match self.state {
 				EncoderState::ElementHead => {
 					match nsuri {
@@ -564,7 +561,7 @@ impl<T: TrackNamespace> Encoder<T> {
 					Ok(())
 				}
 				_ => Err(EncodeError::AttributeNotAllowed),
-			}
+			},
 			Item::ElementHeadEnd => match self.state {
 				EncoderState::ElementHead => {
 					output.put_u8(b'>');
@@ -572,15 +569,15 @@ impl<T: TrackNamespace> Encoder<T> {
 					self.state = EncoderState::Content;
 					Ok(())
 				}
-				_ => Err(EncodeError::NoOpenElement)
-			}
+				_ => Err(EncodeError::NoOpenElement),
+			},
 			Item::Text(cdata) => match self.state {
 				EncoderState::Content => {
 					escape(output, cdata.as_bytes(), &CDATA_SPECIALS);
 					Ok(())
 				}
 				_ => Err(EncodeError::TextNotAllowed),
-			}
+			},
 			Item::ElementFoot => match self.state {
 				EncoderState::Content => {
 					self.ns.pop();
@@ -592,8 +589,8 @@ impl<T: TrackNamespace> Encoder<T> {
 					}
 					Ok(())
 				}
-				_ => Err(EncodeError::ElementFootNotAllowed)
-			}
+				_ => Err(EncodeError::ElementFootNotAllowed),
+			},
 		}
 	}
 
@@ -610,7 +607,11 @@ impl<T: TrackNamespace> Encoder<T> {
 	/// network, for instance.
 	///
 	///   [`encode_into_bytes`]: Self::encode_into_bytes
-	pub fn encode_into_bytes(&mut self, item: Item<'_>, output: &mut BytesMut) -> Result<(), EncodeError> {
+	pub fn encode_into_bytes(
+		&mut self,
+		item: Item<'_>,
+		output: &mut BytesMut,
+	) -> Result<(), EncodeError> {
 		self.encode(item, output)
 	}
 
@@ -620,25 +621,25 @@ impl<T: TrackNamespace> Encoder<T> {
 	/// encodes these into the given buffer using [`encode`].
 	///
 	///    [`encode`]: Self::encode.
-	pub fn encode_event<O: BufMut>(&mut self, ev: &Event, output: &mut O) -> Result<(), EncodeError> {
+	pub fn encode_event<O: BufMut>(
+		&mut self,
+		ev: &Event,
+		output: &mut O,
+	) -> Result<(), EncodeError> {
 		match ev {
 			Event::XMLDeclaration(_, version) => {
 				self.encode(Item::XMLDeclaration(*version), output)?;
-			},
+			}
 			Event::StartElement(_, (ns, name), attrs) => {
 				self.encode(Item::ElementHeadStart(ns.clone(), name.as_ref()), output)?;
 				for ((ns, name), v) in attrs.iter() {
 					self.encode(
-						Item::Attribute(
-							ns.clone(),
-							name.as_ref(),
-							v.as_ref(),
-						),
+						Item::Attribute(ns.clone(), name.as_ref(), v.as_ref()),
 						output,
 					)?
 				}
 				self.encode(Item::ElementHeadEnd, output)?;
-			},
+			}
 			Event::EndElement(_) => self.encode(Item::ElementFoot, output)?,
 			Event::Text(_, text) => self.encode(Item::Text(text.as_ref()), output)?,
 		}
@@ -651,7 +652,11 @@ impl<T: TrackNamespace> Encoder<T> {
 	/// encodes these into the given buffer using [`encode_into_bytes`].
 	///
 	///    [`encode_into_bytes`]: Self::encode_into_bytes.
-	pub fn encode_event_into_bytes(&mut self, ev: &Event, output: &mut BytesMut) -> Result<(), EncodeError> {
+	pub fn encode_event_into_bytes(
+		&mut self,
+		ev: &Event,
+		output: &mut BytesMut,
+	) -> Result<(), EncodeError> {
 		self.encode_event(ev, output)
 	}
 }
@@ -758,14 +763,20 @@ mod tests_simple_namespaces {
 	#[should_panic(expected = "must be bound to xml prefix")]
 	fn reject_xml_namespace_with_other_prefix() {
 		let mut ns = mk();
-		ns.declare_fixed(Some("foo".try_into().unwrap()), Some(RcPtr::new(XMLNS_XML.to_cdata())));
+		ns.declare_fixed(
+			Some("foo".try_into().unwrap()),
+			Some(RcPtr::new(XMLNS_XML.to_cdata())),
+		);
 	}
 
 	#[test]
 	#[should_panic(expected = "must be bound to xmlns prefix")]
 	fn reject_xmlns_namespace_with_other_prefix() {
 		let mut ns = mk();
-		ns.declare_fixed(Some("foo".try_into().unwrap()), Some(RcPtr::new(XMLNS_XMLNS.to_cdata())));
+		ns.declare_fixed(
+			Some("foo".try_into().unwrap()),
+			Some(RcPtr::new(XMLNS_XMLNS.to_cdata())),
+		);
 	}
 
 	#[test]
@@ -803,7 +814,7 @@ mod tests_simple_namespaces {
 		match ns.get_prefix_or_default(Some(ns1())) {
 			Ok(Some(v)) => {
 				assert_eq!(v, prefix);
-			},
+			}
 			other => panic!("unexpected get_prefix_or_default result: {:?}", other),
 		};
 	}
@@ -843,13 +854,13 @@ mod tests_simple_namespaces {
 		match ns.get_prefix(Some(ns1())) {
 			Ok(v) => {
 				assert_eq!(v, "stream");
-			},
+			}
 			other => panic!("unexpected get_prefix result: {:?}", other),
 		}
 		match ns.get_prefix_or_default(Some(ns1())) {
 			Ok(Some(v)) => {
 				assert_eq!(v, "stream");
-			},
+			}
 			other => panic!("unexpected get_prefix result: {:?}", other),
 		}
 	}
@@ -877,13 +888,13 @@ mod tests_simple_namespaces {
 		match ns.get_prefix(Some(ns1())) {
 			Ok(v) => {
 				assert_eq!(v, "stream");
-			},
+			}
 			other => panic!("unexpected get_prefix result: {:?}", other),
 		}
 		match ns.get_prefix_or_default(Some(ns1())) {
 			Ok(Some(v)) => {
 				assert_eq!(v, "stream");
-			},
+			}
 			other => panic!("unexpected get_prefix result: {:?}", other),
 		}
 		match ns.get_prefix_or_default(Some(ns2())) {
@@ -977,13 +988,13 @@ mod tests_encoder {
 	fn collapse_cdata(evs: &mut Vec<Event>) {
 		let mut buf = Vec::new();
 		std::mem::swap(&mut buf, evs);
-		let mut cdata_hold  = None;
+		let mut cdata_hold = None;
 		for event in buf.drain(..) {
 			match event {
 				Event::Text(_, txt) => match cdata_hold.take() {
 					None => cdata_hold = Some(txt),
 					Some(existing) => cdata_hold = Some(existing + &*txt),
-				}
+				},
 				_ => {
 					match cdata_hold.take() {
 						Some(txt) => evs.push(Event::Text(EventMetrics::new(0), txt)),
@@ -1022,24 +1033,46 @@ mod tests_encoder {
 			assert_event_eq(a, b);
 		}
 		if initial.len() > reparsed.len() {
-			panic!("missing {} events in reparsed version", initial.len() - reparsed.len())
+			panic!(
+				"missing {} events in reparsed version",
+				initial.len() - reparsed.len()
+			)
 		}
 		if reparsed.len() > initial.len() {
-			panic!("{} additional events in reparsed version: {:?}", reparsed.len() - initial.len(), &reparsed[initial.len()..])
+			panic!(
+				"{} additional events in reparsed version: {:?}",
+				reparsed.len() - initial.len(),
+				&reparsed[initial.len()..]
+			)
 		}
 	}
 
-	fn check_reserialized(input: &[u8], initial: &[Event], initial_eof: bool, reserialized: &[u8], via: &'static str) {
+	fn check_reserialized(
+		input: &[u8],
+		initial: &[Event],
+		initial_eof: bool,
+		reserialized: &[u8],
+		via: &'static str,
+	) {
 		let (mut reparsed, reparsed_result) = parse(&reserialized[..]);
 		collapse_cdata(&mut reparsed);
 		let reparsed_eof = match reparsed_result {
 			Ok(eof) => eof,
 			Err(e) => {
-				panic!("reserialized (via {}) XML\n\n{:?}\n\n  of\n\n{:?}\n\nfails to parse: {}", via, String::from_utf8_lossy(&reserialized[..]), String::from_utf8_lossy(input), e)
-			},
+				panic!(
+					"reserialized (via {}) XML\n\n{:?}\n\n  of\n\n{:?}\n\nfails to parse: {}",
+					via,
+					String::from_utf8_lossy(&reserialized[..]),
+					String::from_utf8_lossy(input),
+					e
+				)
+			}
 		};
 		println!("checking (via {})", via);
-		println!("reserialized: {:?}", String::from_utf8_lossy(&reserialized[..]));
+		println!(
+			"reserialized: {:?}",
+			String::from_utf8_lossy(&reserialized[..])
+		);
 		assert_events_eq(initial, &reparsed);
 		assert_eq!(initial_eof, reparsed_eof);
 	}
@@ -1049,10 +1082,24 @@ mod tests_encoder {
 		let (mut initial, initial_result) = parse(input);
 		collapse_cdata(&mut initial);
 		let initial_eof = initial_result.expect("test input must parse correctly");
-		let reserialized_via_buf = encode_events(&initial[..]).expect("parsed input must be encodable");
-		let reserialized_via_bytes = encode_events_via_into_bytes(&initial[..]).expect("parsed input must be encodable");
-		check_reserialized(input, &initial, initial_eof, &reserialized_via_buf[..], "buf");
-		check_reserialized(input, &initial, initial_eof, &reserialized_via_bytes[..], "bytes");
+		let reserialized_via_buf =
+			encode_events(&initial[..]).expect("parsed input must be encodable");
+		let reserialized_via_bytes =
+			encode_events_via_into_bytes(&initial[..]).expect("parsed input must be encodable");
+		check_reserialized(
+			input,
+			&initial,
+			initial_eof,
+			&reserialized_via_buf[..],
+			"buf",
+		);
+		check_reserialized(
+			input,
+			&initial,
+			initial_eof,
+			&reserialized_via_bytes[..],
+			"bytes",
+		);
 	}
 
 	#[test]
@@ -1083,7 +1130,10 @@ mod tests_encoder {
 	fn reject_attribute_at_global_level() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::Attribute(None, "x".try_into().unwrap(), "".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::Attribute(None, "x".try_into().unwrap(), "".try_into().unwrap()),
+			&mut buf,
+		) {
 			Err(EncodeError::AttributeNotAllowed) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1093,7 +1143,10 @@ mod tests_encoder {
 	fn allow_element_before_decl() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::ElementHeadStart(None, "x".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1103,7 +1156,10 @@ mod tests_encoder {
 	fn reject_xml_decl_in_element() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::ElementHeadStart(None, "x".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1117,7 +1173,10 @@ mod tests_encoder {
 	fn reject_element_after_end_of_document() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::ElementHeadStart(None, "x".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1129,7 +1188,10 @@ mod tests_encoder {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
-		match enc.encode(Item::ElementHeadStart(None, "x".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
 			Err(EncodeError::EndOfDocument) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1149,7 +1211,10 @@ mod tests_encoder {
 	fn reject_element_foot_within_heading() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::ElementHeadStart(None, "x".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1167,7 +1232,10 @@ mod tests_encoder {
 			Err(EncodeError::NoOpenElement) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
-		match enc.encode(Item::ElementHeadStart(None, "x".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1185,7 +1253,10 @@ mod tests_encoder {
 	fn reject_text_after_end_of_document() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::ElementHeadStart(None, "x".try_into().unwrap()), &mut buf) {
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1265,7 +1336,9 @@ mod tests_encoder {
 
 	#[test]
 	fn namespace_roundtrip_with_prefixes() {
-		roundtrip_test(b"<?xml version='1.0'?>\n<a xmlns='uri:foo' xmlns:b='uri:bar'><b:b><c/></b:b></a>")
+		roundtrip_test(
+			b"<?xml version='1.0'?>\n<a xmlns='uri:foo' xmlns:b='uri:bar'><b:b><c/></b:b></a>",
+		)
 	}
 
 	#[test]
@@ -1275,6 +1348,8 @@ mod tests_encoder {
 
 	#[test]
 	fn prefixed_attribute_roundtrip() {
-		roundtrip_test(b"<?xml version='1.0'?>\n<a xmlns:b='uri:foo' b:a1='baz' a2='fnord' b:a3='foobar'/>")
+		roundtrip_test(
+			b"<?xml version='1.0'?>\n<a xmlns:b='uri:foo' b:a1='baz' a2='fnord' b:a3='foobar'/>",
+		)
 	}
 }

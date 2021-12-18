@@ -4,14 +4,14 @@
 This module holds the error types returned by the various functions of this
 crate.
 */
-use std::io;
-use std::sync::Arc;
-use std::fmt;
 use std::error;
+use std::fmt;
+use std::io;
 use std::ops::Deref;
 use std::result::Result as StdResult;
+use std::sync::Arc;
 
-use rxml_validation::{Error as ValidationError};
+use rxml_validation::Error as ValidationError;
 
 pub use crate::errctx::*;
 
@@ -89,8 +89,14 @@ impl fmt::Display for WFError {
 		match self {
 			WFError::InvalidEof(ctx) => write!(f, "invalid eof {}", ctx),
 			WFError::UndeclaredEntity => write!(f, "use of undeclared entity"),
-			WFError::InvalidChar(ctx, cp, false) => write!(f, "invalid codepoint U+{:x} {}", cp, ctx),
-			WFError::InvalidChar(ctx, cp, true) => write!(f, "character reference expanded to invalid codepoint U+{:x} {}", cp, ctx),
+			WFError::InvalidChar(ctx, cp, false) => {
+				write!(f, "invalid codepoint U+{:x} {}", cp, ctx)
+			}
+			WFError::InvalidChar(ctx, cp, true) => write!(
+				f,
+				"character reference expanded to invalid codepoint U+{:x} {}",
+				cp, ctx
+			),
 			WFError::UnexpectedChar(ctx, ch, Some(opts)) if opts.len() > 0 => {
 				write!(f, "U+{:x} not allowed {} (expected ", *ch as u32, ctx)?;
 				if opts.len() == 1 {
@@ -106,7 +112,7 @@ impl fmt::Display for WFError {
 					}
 					f.write_str(")")
 				}
-			},
+			}
 			WFError::UnexpectedByte(ctx, b, Some(opts)) if opts.len() > 0 => {
 				write!(f, "0x{:x} not allowed {} (expected ", *b, ctx)?;
 				if opts.len() == 1 {
@@ -122,8 +128,10 @@ impl fmt::Display for WFError {
 					}
 					f.write_str(")")
 				}
-			},
-			WFError::UnexpectedChar(ctx, ch, _) => write!(f, "U+{:x} not allowed {}", *ch as u32, ctx),
+			}
+			WFError::UnexpectedChar(ctx, ch, _) => {
+				write!(f, "U+{:x} not allowed {}", *ch as u32, ctx)
+			}
 			WFError::UnexpectedByte(ctx, b, _) => write!(f, "0x{:x} not allowed {}", *b, ctx),
 			WFError::InvalidSyntax(msg) => write!(f, "invalid syntax: {}", msg),
 			WFError::UnexpectedToken(ctx, tok, Some(opts)) if opts.len() > 0 => {
@@ -141,7 +149,7 @@ impl fmt::Display for WFError {
 					}
 					f.write_str(")")
 				}
-			},
+			}
 			WFError::UnexpectedToken(ctx, tok, _) => write!(f, "unexpected {} token {}", tok, ctx),
 			WFError::DuplicateAttribute => f.write_str("duplicate attribute"),
 			WFError::ElementMismatch => f.write_str("start and end tag do not match"),
@@ -205,8 +213,12 @@ impl fmt::Display for NWFError {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		match self {
 			Self::MultiColonName(ctx) => write!(f, "more than one colon {} name", ctx),
-			Self::EmptyNamePart(ctx) => write!(f, "empty string on one side of the colon {} name", ctx),
-			Self::UndeclaredNamespacePrefix(ctx) => write!(f, "use of undeclared namespace prefix {} name", ctx),
+			Self::EmptyNamePart(ctx) => {
+				write!(f, "empty string on one side of the colon {} name", ctx)
+			}
+			Self::UndeclaredNamespacePrefix(ctx) => {
+				write!(f, "use of undeclared namespace prefix {} name", ctx)
+			}
 			Self::ReservedNamespacePrefix => f.write_str("reserved namespace prefix"),
 			Self::InvalidLocalName(ctx) => write!(f, "local name is invalid {} name", ctx),
 			Self::EmptyNamespaceUri => write!(f, "namespace URI is empty"),
@@ -311,7 +323,9 @@ impl ErrorWithContext for Error {
 	fn with_context(self, ctx: &'static str) -> Self {
 		match self {
 			Self::NotWellFormed(wf) => Self::NotWellFormed(wf.with_context(ctx)),
-			Self::NotNamespaceWellFormed(nwf) => Self::NotNamespaceWellFormed(nwf.with_context(ctx)),
+			Self::NotNamespaceWellFormed(nwf) => {
+				Self::NotNamespaceWellFormed(nwf.with_context(ctx))
+			}
 			other => other,
 		}
 	}
@@ -352,11 +366,11 @@ impl error::Error for Error {
 	fn source(&self) -> Option<&(dyn error::Error + 'static)> {
 		match self {
 			Error::IO(e) => Some(&**e),
-			Error::NotNamespaceWellFormed(_) |
-				Error::NotWellFormed(_) |
-				Error::RestrictedXml(_) |
-				Error::InvalidUtf8Byte(_) |
-				Error::InvalidChar(_) => None,
+			Error::NotNamespaceWellFormed(_)
+			| Error::NotWellFormed(_)
+			| Error::RestrictedXml(_)
+			| Error::InvalidUtf8Byte(_)
+			| Error::InvalidChar(_) => None,
 		}
 	}
 }

@@ -1,9 +1,9 @@
 use std::io;
 use std::io::Read;
 
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use bytes::{Bytes, Buf};
+use bytes::{Buf, Bytes};
 
 use rxml::BufferQueue;
 
@@ -51,7 +51,7 @@ fn read_perf(c: &mut Criterion) {
 			let mut buf = [0u8; 1];
 			loop {
 				match q.read(&mut buf[..]) {
-					Ok(1) => { nbytes += 1 },
+					Ok(1) => nbytes += 1,
 					Ok(0) => break,
 					other => panic!("oh no! {:?}", other),
 				}
@@ -71,7 +71,7 @@ fn read_perf(c: &mut Criterion) {
 			let mut buf = [0u8; 1];
 			loop {
 				match r.read(&mut buf[..]) {
-					Ok(1) => { nbytes += 1 },
+					Ok(1) => nbytes += 1,
 					Ok(0) => break,
 					other => panic!("oh no! {:?}", other),
 				}
@@ -88,7 +88,7 @@ fn read_perf(c: &mut Criterion) {
 			let mut buf = [0u8; 1];
 			loop {
 				match r.read(&mut buf[..]) {
-					Ok(1) => { nbytes += 1 },
+					Ok(1) => nbytes += 1,
 					Ok(0) => break,
 					other => panic!("oh no! {:?}", other),
 				}
@@ -106,7 +106,7 @@ fn read_perf(c: &mut Criterion) {
 			let mut buf = [0u8; 1];
 			loop {
 				match r.read(&mut buf[..]) {
-					Ok(1) => { nbytes += 1 },
+					Ok(1) => nbytes += 1,
 					Ok(0) => break,
 					other => panic!("oh no! {:?}", other),
 				}
@@ -124,7 +124,7 @@ fn read_perf(c: &mut Criterion) {
 			let mut buf = [0u8; 1];
 			loop {
 				match r.read(&mut buf[..]) {
-					Ok(1) => { nbytes += 1 },
+					Ok(1) => nbytes += 1,
 					Ok(0) => break,
 					other => panic!("oh no! {:?}", other),
 				}

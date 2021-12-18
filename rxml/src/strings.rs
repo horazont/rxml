@@ -50,16 +50,16 @@ are possible through `.into()`:
 The inverse directions are only available through `try_into`.
 */
 
-use std::ops::{Deref, Add};
-use std::cmp::{PartialOrd, Ordering};
-use std::fmt;
-use std::convert::{TryFrom, TryInto};
-use std::borrow::{Borrow, ToOwned, Cow};
 use crate::error::{NWFError, WFError, ERRCTX_UNKNOWN};
-use smartstring::alias::String as SmartString;
 use rxml_validation::selectors;
 use rxml_validation::selectors::CharSelector;
-pub use rxml_validation::{validate_name, validate_ncname, validate_cdata};
+pub use rxml_validation::{validate_cdata, validate_name, validate_ncname};
+use smartstring::alias::String as SmartString;
+use std::borrow::{Borrow, Cow, ToOwned};
+use std::cmp::{Ordering, PartialOrd};
+use std::convert::{TryFrom, TryInto};
+use std::fmt;
+use std::ops::{Add, Deref};
 
 macro_rules! rxml_unsafe_str_construct_doc {
 	($name:ident, $other:ident) => {
@@ -516,16 +516,16 @@ impl Name {
 			return Err(NWFError::EmptyNamePart(ERRCTX_UNKNOWN));
 		}
 
-		let localname = name.split_off(colon_pos+1);
+		let localname = name.split_off(colon_pos + 1);
 		let mut prefix = name;
 
 		if localname.find(':').is_some() {
 			// Namespaces in XML 1.0 (Third Edition) namespace-well-formed criterium 1
-			return Err(NWFError::MultiColonName(ERRCTX_UNKNOWN))
+			return Err(NWFError::MultiColonName(ERRCTX_UNKNOWN));
 		};
 		if !selectors::CLASS_XML_NAMESTART.select(localname.chars().next().unwrap()) {
 			// Namespaces in XML 1.0 (Third Edition) NCName production
-			return Err(NWFError::InvalidLocalName(ERRCTX_UNKNOWN))
+			return Err(NWFError::InvalidLocalName(ERRCTX_UNKNOWN));
 		}
 
 		prefix.pop();
@@ -766,7 +766,10 @@ mod tests {
 	fn split_name_rejects_localname_with_non_namestart_first_char() {
 		let nm: Name = "foo:-bar".try_into().unwrap();
 		let result = nm.split_name();
-		assert!(matches!(result.err().unwrap(), NWFError::InvalidLocalName(_)));
+		assert!(matches!(
+			result.err().unwrap(),
+			NWFError::InvalidLocalName(_)
+		));
 	}
 
 	#[test]
