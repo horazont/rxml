@@ -41,7 +41,3 @@ harness = false
 [[bench]]
 name = "q"
 harness = false
-
-[[bench]]
-name = "utf8dec"
-harness = false
