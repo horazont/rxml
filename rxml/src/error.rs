@@ -175,7 +175,7 @@ pub enum NWFError {
 	/// Use of an undeclared namespace prefix.
 	///
 	/// The contents are implementation details.
-	UndeclaredNamesacePrefix(&'static str),
+	UndeclaredNamespacePrefix(&'static str),
 
 	/// Attempt to redefine a reserved namespace prefix.
 	ReservedNamespacePrefix,
@@ -194,7 +194,7 @@ impl ErrorWithContext for NWFError {
 		match self {
 			Self::MultiColonName(_) => Self::MultiColonName(ctx),
 			Self::EmptyNamePart(_) => Self::EmptyNamePart(ctx),
-			Self::UndeclaredNamesacePrefix(_) => Self::UndeclaredNamesacePrefix(ctx),
+			Self::UndeclaredNamespacePrefix(_) => Self::UndeclaredNamespacePrefix(ctx),
 			Self::InvalidLocalName(_) => Self::InvalidLocalName(ctx),
 			other => other,
 		}
@@ -206,7 +206,7 @@ impl fmt::Display for NWFError {
 		match self {
 			Self::MultiColonName(ctx) => write!(f, "more than one colon {} name", ctx),
 			Self::EmptyNamePart(ctx) => write!(f, "empty string on one side of the colon {} name", ctx),
-			Self::UndeclaredNamesacePrefix(ctx) => write!(f, "use of undeclared namespace prefix {} name", ctx),
+			Self::UndeclaredNamespacePrefix(ctx) => write!(f, "use of undeclared namespace prefix {} name", ctx),
 			Self::ReservedNamespacePrefix => f.write_str("reserved namespace prefix"),
 			Self::InvalidLocalName(ctx) => write!(f, "local name is invalid {} name", ctx),
 			Self::EmptyNamespaceUri => write!(f, "namespace URI is empty"),

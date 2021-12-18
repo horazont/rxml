@@ -390,7 +390,7 @@ impl Parser {
 			None => (localname.clone().as_name(), self.lookup_namespace(None), localname),
 			Some(prefix) => {
 				let nsuri = self.lookup_namespace(Some(&prefix)).ok_or_else(|| {
-					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(ERRCTX_ELEMENT))
+					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(ERRCTX_ELEMENT))
 				})?;
 				let assembled = prefix.add_suffix(&localname);
 				(assembled, Some(nsuri), localname)
@@ -400,7 +400,7 @@ impl Parser {
 		for (prefix, localname, value) in attributes.drain(..) {
 			let nsuri = match prefix {
 				Some(prefix) => Some(self.lookup_namespace(Some(&prefix)).ok_or_else(|| {
-					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(ERRCTX_ATTNAME))
+					Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(ERRCTX_ATTNAME))
 				})?.clone()),
 				None => None,
 			};
@@ -1528,7 +1528,7 @@ mod tests {
 			Token::ElementHFEnd(DM),
 		];
 		let err = parse_err(toks).unwrap();
-		assert!(matches!(err, Error::NotNamespaceWellFormed(NWFError::UndeclaredNamesacePrefix(_))));
+		assert!(matches!(err, Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(_))));
 	}
 
 	#[test]
