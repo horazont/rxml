@@ -17,7 +17,7 @@ use crate::parser::{
 };
 
 
-static XML_DECL: &'static [u8] = b"<?xml version='1.0'?>\n";
+static XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
 pub const PREFIX_XML: &'static NCNameStr = unsafe { std::mem::transmute("xml") };
 pub const PREFIX_XMLNS: &'static NCNameStr = unsafe { std::mem::transmute("xmlns") };
 
