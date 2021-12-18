@@ -64,13 +64,38 @@ pub use rxml_validation::{validate_name, validate_ncname, validate_cdata};
 macro_rules! rxml_unsafe_str_construct_doc {
 	($name:ident, $other:ident) => {
 		concat!(
-			"Construct a ", stringify!($name), " without enforcing anything\n",
+			"Construct a `",
+			stringify!($name),
+			"` without enforcing anything\n",
 			"\n",
 			"# Safety\n",
 			"\n",
-			"The caller is responsible for ensuring that the passed ", stringify!($other), " is in fact a valid ", stringify!($name), ".\n",
+			"The caller is responsible for ensuring that the passed [`",
+			stringify!($other),
+			"`] is in fact a valid `",
+			stringify!($name),
+			"`.\n",
 		)
-	}
+	};
+}
+
+macro_rules! rxml_safe_str_construct_doc {
+	($name:ident, $other:ident, $more:expr) => {
+		concat!(
+			"Converts a [`",
+			stringify!($other),
+			"`] to a `",
+			stringify!($name),
+			"`.\n",
+			"\n",
+			"If the given `",
+			stringify!($other),
+			"` does not conform to the restrictions imposed by `",
+			stringify!($name),
+			"`, an error is returned.\n",
+			$more
+		)
+	};
 }
 
 macro_rules! rxml_custom_string_type {
@@ -85,24 +110,29 @@ macro_rules! rxml_custom_string_type {
 
 		impl $name {
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
 			pub fn from_str<T: AsRef<str>>(s: T) -> Result<Self, WFError> {
 				s.as_ref().try_into()
 			}
 
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+			#[doc = rxml_safe_str_construct_doc!($name, String, "")]
 			pub fn from_string<T: Into<String>>(s: T) -> Result<Self, WFError> {
 				s.into().try_into()
 			}
 
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
+			#[doc = rxml_safe_str_construct_doc!($name, SmartString, "")]
 			pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Self, WFError> {
 				s.into().try_into()
 			}
 
-			pub fn as_string(self) -> String {
-				self.0.into()
+			/// Extract the inner string and return it.
+			pub fn into_inner(self) -> $string {
+				self.0
 			}
 
+			/// Obtain a reference to the inner string slice.
 			pub fn as_str(&self) -> &str {
 				self.0.as_str()
 			}
@@ -260,6 +290,7 @@ macro_rules! rxml_custom_string_type {
 		impl TryFrom<SmartString> for $name {
 			type Error = WFError;
 
+			#[doc = rxml_safe_str_construct_doc!($name, SmartString, "")]
 			fn try_from(other: SmartString) -> Result<Self, Self::Error> {
 				$check(&other)?;
 				Ok($name(other.into()))
@@ -269,6 +300,7 @@ macro_rules! rxml_custom_string_type {
 		impl TryFrom<String> for $name {
 			type Error = WFError;
 
+			#[doc = rxml_safe_str_construct_doc!($name, String, "")]
 			fn try_from(other: String) -> Result<Self, Self::Error> {
 				$check(&other)?;
 				Ok($name(other.into()))
@@ -278,6 +310,7 @@ macro_rules! rxml_custom_string_type {
 		impl TryFrom<&str> for $name {
 			type Error = WFError;
 
+			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
 			fn try_from(other: &str) -> Result<Self, Self::Error> {
 				$check(other)?;
 				Ok($name(other.into()))
@@ -315,6 +348,7 @@ macro_rules! rxml_custom_str_type {
 		pub struct $name(str);
 
 		impl $name {
+			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
 			pub fn from_str<'x>(s: &'x str) -> Result<&'x Self, WFError> {
 				s.try_into()
 			}

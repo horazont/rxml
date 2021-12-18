@@ -16,8 +16,12 @@ use crate::error::*;
 use crate::strings::*;
 use crate::context;
 
-pub const XMLNS_XML: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
-pub const XMLNS_XMLNS: &'static CDataStr = unsafe { std::mem::transmute("http://www.w3.org/2000/xmlns/") };
+/// XML core namespace URI (for the `xml:` prefix)
+pub const XMLNS_XML: &'static CDataStr =
+	unsafe { std::mem::transmute("http://www.w3.org/XML/1998/namespace") };
+/// XML namespace URI (for the `xmlns:` prefix)
+pub const XMLNS_XMLNS: &'static CDataStr =
+	unsafe { std::mem::transmute("http://www.w3.org/2000/xmlns/") };
 
 pub type NamespaceName = RcPtr<CData>;
 pub type QName = (Option<NamespaceName>, NCName);

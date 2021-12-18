@@ -1,8 +1,8 @@
 /*!
-# Restricted XML parsing
+# Restricted XML parsing and encoding
 
-This crate provides "restricted" parsing of XML 1.0 documents with
-namespacing.
+This crate provides "restricted" parsing and encoding of XML 1.0 documents
+with namespacing.
 
 ## Features (some call them restrictions)
 
@@ -11,11 +11,12 @@ namespacing.
 * No DTD whatsoever
 * No processing instructions
 * No comments
-* UTF-8 input only
+* UTF-8 only
 * Namespacing-well-formedness enforced
 * XML 1.0 only
 * Streamed parsing (parser emits a subset of SAX events)
-* Can be driven push- and pull-based
+* Streamed encoding
+* Parser can be driven push- and pull-based
 * Tokio-based asynchronicity supported via the `async` feature and [`AsyncParser`].
 
 ## Example
@@ -33,7 +34,7 @@ let result = fp.read_all_eof(|ev| {
 assert_eq!(result.unwrap(), true);
 ```
 
-## High-level usage
+## High-level parser usage
 
 ### Push-based usage
 
@@ -82,14 +83,18 @@ pub use strings::{NCName, Name, NCNameStr, NameStr, CData, CDataStr};
 pub use context::Context;
 
 #[cfg(feature = "macros")]
-pub use rxml_proc::{xml_cdata, xml_ncname, xml_name};
+#[doc(inline)]
+#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
+pub use rxml_proc::{xml_cdata, xml_name, xml_ncname};
 
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 use {
 	tokio::io::{AsyncBufRead, AsyncBufReadExt},
 	async_trait::async_trait,
 };
 
+/// Package version
 pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 /**
@@ -367,6 +372,7 @@ This trait is implemented by the different parser frontends. It is analogous
 to the [`tokio::io::AsyncRead`] trait, but for [`Event`]s instead of bytes.
 */
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 #[async_trait]
 pub trait AsyncEventRead {
 	/// Read a single event from the parser.
@@ -460,6 +466,7 @@ assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0
 # })
 */
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub struct AsyncParser<T: AsyncBufRead + Unpin> {
 	reader: T,
 	lexer: Lexer,
@@ -468,6 +475,7 @@ pub struct AsyncParser<T: AsyncBufRead + Unpin> {
 }
 
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 struct AsyncLexerAdapter<'x, 'y> {
 	lexer: &'x mut Lexer,
 	buf: &'x mut &'y [u8],
@@ -475,6 +483,7 @@ struct AsyncLexerAdapter<'x, 'y> {
 }
 
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 impl<'x, 'y> parser::TokenRead for AsyncLexerAdapter<'x, 'y> {
 	fn read(&mut self) -> Result<Option<lexer::Token>> {
 		match self.lexer.lex_bytes(self.buf, false) {
@@ -491,11 +500,13 @@ impl<'x, 'y> parser::TokenRead for AsyncLexerAdapter<'x, 'y> {
 }
 
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 struct EofLexerAdapter<'x> {
 	lexer: &'x mut Lexer,
 }
 
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 impl<'x> parser::TokenRead for EofLexerAdapter<'x> {
 	fn read(&mut self) -> Result<Option<lexer::Token>> {
 		let mut buf: &'static [u8] = &[];
@@ -504,6 +515,7 @@ impl<'x> parser::TokenRead for EofLexerAdapter<'x> {
 }
 
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 impl<T: AsyncBufRead + Unpin + Send> AsyncParser<T> {
 	pub fn new(r: T) -> Self {
 		Self{
@@ -533,6 +545,7 @@ impl<T: AsyncBufRead + Unpin + Send> AsyncParser<T> {
 }
 
 #[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 #[async_trait]
 impl<T: AsyncBufRead + Unpin + Send> AsyncEventRead for AsyncParser<T> {
 	async fn read(&mut self) -> Result<Option<Event>> {

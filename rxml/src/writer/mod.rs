@@ -1,3 +1,6 @@
+/*!
+# Writer for restricted XML 1.0
+*/
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::hash_map::Entry;
@@ -76,15 +79,31 @@ pub enum Item<'x> {
 	/// XML declaration
 	XMLDeclaration(XMLVersion),
 
-	/// Opener of an element
-	ElementHeadStart(Option<RcPtr<CData>>, &'x NCNameStr),
+	/// Start of an element header
+	ElementHeadStart(
+		/// Namespace URI or None, for unnamespaced elements
+		Option<RcPtr<CData>>,
+		/// Local name of the attribute
+		&'x NCNameStr,
+	),
 
-	Attribute(Option<RcPtr<CData>>, &'x NCNameStr, &'x CDataStr),
+	/// An attribute key/value pair
+	Attribute(
+		/// Namespace URI or None, for unnamespaced attributes
+		Option<RcPtr<CData>>,
+		/// Local name of the attribute
+		&'x NCNameStr,
+		/// Value of the attribute
+		&'x CDataStr,
+	),
 
+	/// End of an element header
 	ElementHeadEnd,
 
+	/// A piece of text (in element content, not attributes)
 	Text(&'x CDataStr),
 
+	/// Footer of an element
 	ElementFoot,
 }
 
@@ -421,10 +440,21 @@ enum EncoderState {
 	EndOfDocument,
 }
 
-/// Encodes XML into buffers.
-///
-/// Encoders are stateful. They can only be used to encode a single XML
-/// document and have then to be disposed.
+/**
+Encodes XML into buffers.
+
+Encoders are stateful. They can only be used to encode a single XML document and have then to be disposed.
+
+```rust
+use rxml::{Encoder, Item, XMLVersion};
+use bytes::BytesMut;
+
+let mut enc = Encoder::new();
+let mut buf = BytesMut::new();
+enc.encode(Item::XMLDeclaration(XMLVersion::V1_0), &mut buf);
+assert_eq!(&buf[..], b"<?xml version='1.0' encoding='utf-8'?>\n");
+```
+*/
 pub struct Encoder<T> {
 	state: EncoderState,
 	qname_stack: Vec<Name>,
@@ -432,7 +462,11 @@ pub struct Encoder<T> {
 }
 
 impl Encoder<SimpleNamespaces> {
-	/// Create a new encoder using [`SimpleNamespaces`].
+	/// Create a new default encoder.
+	///
+	/// This encoder uses the [`SimpleNamespaces`] strategy, which is not
+	/// optimal with respect to the number of bytes written, but has reduced
+	/// memory cost.
 	pub fn new() -> Self {
 		Self{
 			state: EncoderState::Start,
