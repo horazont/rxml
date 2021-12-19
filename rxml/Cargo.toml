@@ -21,6 +21,7 @@ tokio = { version = "^1", features = ["io-util"], optional = true }
 bytes = { version = "^1" }
 rxml_proc = { path = "../rxml_proc", version = "0.6.0-alpha.0", optional = true }
 pin-project-lite = { version = "^0.2", optional = true }
+futures-core = { version = "^0.3", optional = true}
 
 [features]
 mt = []
@@ -28,6 +29,7 @@ shared_ns = ["weak-table"]
 default = ["async"]
 async = ["tokio", "mt", "pin-project-lite"]
 macros = ["rxml_proc"]
+stream = ["async", "futures-core"]
 
 [dev-dependencies]
 tokio = { version = "^1", features = ["rt", "macros"] }

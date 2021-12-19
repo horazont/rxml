@@ -5,6 +5,9 @@ use std::task::{Context, Poll};
 
 use tokio::io::AsyncBufRead;
 
+#[cfg(feature = "stream")]
+use futures_core::stream::Stream;
+
 use crate::lexer::Lexer;
 use crate::parser::{Event, Parser};
 use crate::{Error, Result};
@@ -70,6 +73,21 @@ impl<T: AsyncEventRead + Unpin + ?Sized> AsyncEventRead for &mut T {
 		let this: &mut T = *this;
 		let this = Pin::new(this);
 		this.poll_read(cx)
+	}
+}
+
+#[cfg(feature = "stream")]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "stream", feature = "async"))))]
+impl<T: AsyncBufRead> Stream for AsyncParser<T> {
+	type Item = Result<Event>;
+
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		match self.poll_read(cx) {
+			Poll::Pending => Poll::Pending,
+			Poll::Ready(Ok(Some(v))) => Poll::Ready(Some(Ok(v))),
+			Poll::Ready(Ok(None)) => Poll::Ready(None),
+			Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
+		}
 	}
 }
 
