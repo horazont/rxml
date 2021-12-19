@@ -334,10 +334,6 @@ pub struct PullParser<T: io::BufRead> {
 
 impl<T: io::BufRead> PullParser<T> {
 	/// Create a new PullParser, wrapping the given reader.
-	///
-	/// **Note:** It is highly recommended to wrap a common reader into
-	/// [`std::io::BufReader`] as the implementation will do lots of small
-	/// `read()` calls. Those would be terribly inefficient without buffering.
 	pub fn new(r: T) -> Self {
 		PullParser {
 			token_source: LexerAdapter::new(Lexer::new(), r),
