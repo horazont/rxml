@@ -333,11 +333,22 @@ pub struct PullParser<T: io::BufRead> {
 }
 
 impl<T: io::BufRead> PullParser<T> {
-	/// Create a new PullParser, wrapping the given reader.
-	pub fn new(r: T) -> Self {
-		PullParser {
-			token_source: LexerAdapter::new(Lexer::new(), r),
-			parser: Parser::new(),
+	/// Create a new parser with default options, wrapping the given reader.
+	pub fn new(inner: T) -> Self {
+		Self::with_options(inner, LexerOptions::default())
+	}
+
+	/// Create a new parser while configuring the lexer with the given
+	/// options.
+	pub fn with_options(inner: T, options: LexerOptions) -> Self {
+		Self::wrap(inner, Lexer::with_options(options), Parser::new())
+	}
+
+	/// Create a fully customized parser from a lexer and a parser component.
+	pub fn wrap(inner: T, lexer: Lexer, parser: Parser) -> Self {
+		Self {
+			token_source: LexerAdapter::new(lexer, inner),
+			parser,
 		}
 	}
 }

@@ -8,7 +8,7 @@ use tokio::io::AsyncBufRead;
 #[cfg(feature = "stream")]
 use futures_core::stream::Stream;
 
-use crate::lexer::Lexer;
+use crate::lexer::{Lexer, LexerOptions};
 use crate::parser::{Event, Parser};
 use crate::{Error, Result};
 
@@ -185,11 +185,23 @@ pin_project! {
 }
 
 impl<T: AsyncBufRead> AsyncParser<T> {
+	/// Create a new parser with default options, wrapping the given reader.
 	pub fn new(inner: T) -> Self {
+		Self::with_options(inner, LexerOptions::default())
+	}
+
+	/// Create a new parser while configuring the lexer with the given
+	/// options.
+	pub fn with_options(inner: T, options: LexerOptions) -> Self {
+		Self::wrap(inner, Lexer::with_options(options), Parser::new())
+	}
+
+	/// Create a fully customized parser from a lexer and a parser component.
+	pub fn wrap(inner: T, lexer: Lexer, parser: Parser) -> Self {
 		Self {
 			inner,
-			lexer: Lexer::new(),
-			parser: Parser::new(),
+			lexer,
+			parser,
 		}
 	}
 }
