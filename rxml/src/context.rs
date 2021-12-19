@@ -122,7 +122,7 @@ impl Context {
 	pub fn cdatas(&self) -> usize {
 		#[cfg(feature = "shared_ns")]
 		{
-			let mut nss = self.lock_nss();
+			let nss = self.lock_nss();
 			nss.len()
 		}
 		#[cfg(not(feature = "shared_ns"))]
@@ -135,7 +135,7 @@ impl Context {
 	pub fn cdata_capacity(&self) -> usize {
 		#[cfg(feature = "shared_ns")]
 		{
-			let mut nss = self.lock_nss();
+			let nss = self.lock_nss();
 			nss.capacity()
 		}
 		#[cfg(not(feature = "shared_ns"))]
