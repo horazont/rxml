@@ -270,11 +270,11 @@ async fn asyncparser_can_read_xml_document() {
 	let mut ap = AsyncParser::new(&mut r);
 	let mut out = Vec::<Event>::new();
 	let result = ap
-		.read_all_eof(|ev| {
+		.read_all(|ev| {
 			out.push(ev);
 		})
 		.await;
-	assert_eq!(result.unwrap(), true);
+	result.unwrap();
 
 	{
 		let mut iter = out.iter();
@@ -349,11 +349,11 @@ async fn asyncparser_can_handle_chunked_input() {
 	let mut ap = AsyncParser::new(&mut r);
 	let mut out = Vec::<Event>::new();
 	let result = ap
-		.read_all_eof(|ev| {
+		.read_all(|ev| {
 			out.push(ev);
 		})
 		.await;
-	assert_eq!(result.unwrap(), true);
+	result.unwrap();
 
 	{
 		let mut iter = out.iter();
