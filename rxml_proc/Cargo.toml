@@ -12,11 +12,11 @@ readme = true
 
 [dependencies]
 syn = { version = "^1" }
-rxml_validation = { path = "../rxml_validation", version = "0.6.0-alpha.0" }
+rxml_validation = { version = "0.6.0-alpha.0" }
 quote = { version = "^1" }
 
 [lib]
 proc-macro = true
 
 [dev-dependencies]
-rxml = { path = "../rxml" }
+rxml = { version = "0.6.0-alpha.0" }

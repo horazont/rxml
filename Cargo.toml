@@ -4,3 +4,7 @@ members = [
   "rxml_proc",
   "rxml_validation",
 ]
+
+[patch.crates-io]
+rxml_validation = { path = "rxml_validation" }
+rxml_proc = { path = "rxml_proc" }
