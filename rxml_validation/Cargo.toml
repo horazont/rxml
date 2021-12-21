@@ -10,7 +10,10 @@ keywords = ["xml"]
 readme = true
 
 [dependencies]
+smartstring = { version = "^0.2", optional = true }
+
+[features]
+inline = ["smartstring"]
 
 [dev-dependencies]
-rxml = { pversion = "0.6.0-alpha.0" }
-rxml_proc = { version = "0.6.0-alpha.0" }
+rxml_proc = { path = "../rxml_proc", version = "0.6.0-alpha.0" }

@@ -16,7 +16,7 @@ exclude = ["/fuzz", "/util", "/target"]
 [dependencies]
 weak-table = { version = "^0.3", optional = true }
 smartstring = { version = "^0.2" }
-rxml_validation = { path = "../rxml_validation", version = "0.6.0-alpha.0" }
+rxml_validation = { path = "../rxml_validation", version = "0.6.0-alpha.0", features = ["inline"] }
 tokio = { version = "^1", features = ["io-util"], optional = true }
 bytes = { version = "^1" }
 rxml_proc = { version = "0.6.0-alpha.0", optional = true }

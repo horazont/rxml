@@ -63,7 +63,6 @@ mod errctx;
 pub mod error;
 pub mod lexer;
 pub mod parser;
-pub mod strings;
 pub mod writer;
 
 #[cfg(test)]
@@ -78,7 +77,8 @@ pub use error::{Error, Result};
 pub use lexer::{Lexer, LexerOptions};
 #[doc(inline)]
 pub use parser::{Event, LexerAdapter, Parser, QName, XMLVersion, XMLNS_XML};
-pub use strings::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
+pub use rxml_validation::strings as strings;
+pub use rxml_validation::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
 #[doc(inline)]
 pub use writer::{Encoder, Item};
 

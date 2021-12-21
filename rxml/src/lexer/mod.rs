@@ -11,10 +11,10 @@ mod read;
 
 use crate::errctx::*;
 use crate::error::{Error as CrateError, ErrorWithContext, Result as CrateResult, WFError};
-use crate::strings::*;
 use ranges::*;
 use read::Endbyte;
 use rxml_validation::selectors::*;
+use rxml_validation::strings::*;
 use rxml_validation::Error as ValidationError;
 
 /// Carry information about where in the stream the token was observed
@@ -513,7 +513,9 @@ impl From<WFError> for Error {
 
 impl From<ValidationError> for Error {
 	fn from(other: ValidationError) -> Self {
-		let e: WFError = other.into();
+		let e: WFError = other
+			.try_into()
+			.expect("unexpected namespace-related validation error in Lexer");
 		e.into()
 	}
 }

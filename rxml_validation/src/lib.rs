@@ -9,8 +9,10 @@ compile-time validation and typing of XML strings.
 use std::fmt;
 
 pub mod selectors;
+pub mod strings;
 
 use selectors::CharSelector;
+pub use strings::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
 
 /**
 Error condition from validating an XML string.
@@ -19,17 +21,32 @@ Error condition from validating an XML string.
 pub enum Error {
 	/// A Name or NCName was empty.
 	EmptyName,
+
 	/// An invalid character was encountered.
 	///
 	/// This variant contains the character as data.
 	InvalidChar(char),
+
+	/// A part of a colon-delimited Name was empty.
+	EmptyNamePart,
+
+	/// A name had multiple colons.
+	MultiColonName,
+
+	/// The local name of a Name is invalid.
+	InvalidLocalName,
 }
 
 impl fmt::Display for Error {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::EmptyName => f.write_str("Name and NCName must not be empty"),
+			Self::EmptyName => f.write_str("Name or NCName is empty"),
 			Self::InvalidChar(c) => write!(f, "character U+{:04x} is not allowed", *c as u32),
+			Self::MultiColonName => f.write_str("Name containes multiple colons"),
+			Self::EmptyNamePart => f.write_str("either side of a colon-delimited Name is empty"),
+			Self::InvalidLocalName => {
+				f.write_str("right-hand-side of colon-delimited Name is not valid NCName")
+			}
 		}
 	}
 }

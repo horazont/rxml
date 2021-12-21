@@ -9,7 +9,7 @@ use std::rc::Weak;
 use std::sync::{Mutex, MutexGuard, Weak};
 
 use crate::parser::RcPtr;
-use crate::strings;
+use rxml_validation::strings;
 
 #[cfg(feature = "shared_ns")]
 use weak_table;
