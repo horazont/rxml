@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use rxml_validation::Error as ValidationError;
 
-pub use crate::errctx::*;
+pub(crate) use crate::errctx::*;
 
 /// Violation of a well-formedness constraint or the XML 1.0 grammar.
 #[derive(Debug, Clone, PartialEq, Copy)]
