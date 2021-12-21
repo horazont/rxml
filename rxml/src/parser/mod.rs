@@ -14,8 +14,7 @@ use std::sync::Arc;
 use crate::context;
 use crate::error::*;
 use crate::lexer::{Lexer, Token, TokenMetrics};
-use rxml_validation::strings::*;
-use rxml_validation::Error as ValidationError;
+use crate::strings::*;
 
 /// XML core namespace URI (for the `xml:` prefix)
 pub const XMLNS_XML: &'static CDataStr =
@@ -183,8 +182,8 @@ enum State {
 	Eof,
 }
 
-fn add_context<T>(r: StdResult<T, ValidationError>, ctx: &'static str) -> Result<T> {
-	r.or_else(|e| Err(Error::strerr_with_context(e, ctx)))
+fn add_context<T, E: ErrorWithContext>(r: StdResult<T, E>, ctx: &'static str) -> StdResult<T, E> {
+	r.or_else(|e| Err(e.with_context(ctx)))
 }
 
 /**

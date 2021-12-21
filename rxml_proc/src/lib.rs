@@ -38,7 +38,7 @@ pub fn xml_cdata(input: TokenStream) -> TokenStream {
 	let data = parse_macro_input!(input as LitStr);
 	let s = data.value();
 	let tokens = match validate_cdata(&s) {
-		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml_validation::CDataStr>(#s) } },
+		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::CDataStr>(#s) } },
 		Err(e) => {
 			let err = format!("invalid CData string {:?}: {}", s, e);
 			quote! { compile_error!(#err) }
@@ -62,7 +62,7 @@ pub fn xml_name(input: TokenStream) -> TokenStream {
 	let data = parse_macro_input!(input as LitStr);
 	let s = data.value();
 	let tokens = match validate_name(&s) {
-		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml_validation::NameStr>(#s) } },
+		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::NameStr>(#s) } },
 		Err(e) => {
 			let err = format!("invalid Name string {:?}: {}", s, e);
 			quote! { compile_error!(#err) }
@@ -86,7 +86,7 @@ pub fn xml_ncname(input: TokenStream) -> TokenStream {
 	let data = parse_macro_input!(input as LitStr);
 	let s = data.value();
 	let tokens = match validate_ncname(&s) {
-		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml_validation::NCNameStr>(#s) } },
+		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::NCNameStr>(#s) } },
 		Err(e) => {
 			let err = format!("invalid NCName string {:?}: {}", s, e);
 			quote! { compile_error!(#err) }

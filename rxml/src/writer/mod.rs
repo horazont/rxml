@@ -10,7 +10,7 @@ use std::fmt;
 use bytes::{BufMut, BytesMut};
 
 use crate::parser::{Event, NamespaceName, RcPtr, XMLVersion, XMLNS_XML, XMLNS_XMLNS};
-use rxml_validation::strings::*;
+use crate::strings::{CData, CDataStr, NCName, NCNameStr, Name};
 
 static XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
 pub const PREFIX_XML: &'static NCNameStr = unsafe { std::mem::transmute("xml") };

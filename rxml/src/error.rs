@@ -4,7 +4,6 @@
 This module holds the error types returned by the various functions of this
 crate.
 */
-use std::convert::TryFrom;
 use std::error;
 use std::fmt;
 use std::io;
@@ -69,20 +68,6 @@ pub enum WFError {
 
 	/// Ending tag name does not match opening tag.
 	ElementMismatch,
-}
-
-impl TryFrom<ValidationError> for WFError {
-	type Error = ValidationError;
-
-	fn try_from(other: ValidationError) -> StdResult<Self, Self::Error> {
-		match other {
-			ValidationError::EmptyName => {
-				Ok(Self::InvalidSyntax("Name must have at least one Char"))
-			}
-			ValidationError::InvalidChar(ch) => Ok(Self::UnexpectedChar(ERRCTX_UNKNOWN, ch, None)),
-			other => Err(other),
-		}
-	}
 }
 
 impl error::Error for WFError {}
@@ -168,6 +153,15 @@ impl fmt::Display for WFError {
 			WFError::UnexpectedToken(ctx, tok, _) => write!(f, "unexpected {} token {}", tok, ctx),
 			WFError::DuplicateAttribute => f.write_str("duplicate attribute"),
 			WFError::ElementMismatch => f.write_str("start and end tag do not match"),
+		}
+	}
+}
+
+impl From<ValidationError> for WFError {
+	fn from(other: ValidationError) -> Self {
+		match other {
+			ValidationError::EmptyName => Self::InvalidSyntax("Name must have at least one Char"),
+			ValidationError::InvalidChar(ch) => Self::UnexpectedChar(ERRCTX_UNKNOWN, ch, None),
 		}
 	}
 }
@@ -322,20 +316,6 @@ impl Error {
 
 	pub(crate) fn wfeof(ctx: &'static str) -> Error {
 		Error::NotWellFormed(WFError::InvalidEof(ctx))
-	}
-
-	pub(crate) fn strerr_with_context(inner: ValidationError, ctx: &'static str) -> Error {
-		match inner {
-			ValidationError::EmptyName => {
-				WFError::InvalidSyntax("Name must have at least one Char").into()
-			}
-			ValidationError::InvalidChar(ch) => {
-				WFError::UnexpectedChar(ERRCTX_UNKNOWN, ch, None).into()
-			}
-			ValidationError::EmptyNamePart => NWFError::EmptyNamePart(ctx).into(),
-			ValidationError::MultiColonName => NWFError::MultiColonName(ctx).into(),
-			ValidationError::InvalidLocalName => NWFError::InvalidLocalName(ctx).into(),
-		}
 	}
 }
 

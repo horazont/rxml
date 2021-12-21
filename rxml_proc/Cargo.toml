@@ -17,3 +17,6 @@ quote = { version = "^1" }
 
 [lib]
 proc-macro = true
+
+[dev-dependencies]
+rxml = { version = "0.6.0-alpha.0" }

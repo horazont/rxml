@@ -50,31 +50,16 @@ are possible through `.into()`:
 The inverse directions are only available through `try_into`.
 */
 
-use super::selectors;
-use super::selectors::CharSelector;
-use super::Error;
-use super::{validate_cdata, validate_name, validate_ncname};
-#[cfg(feature = "inline")]
+use crate::error::{NWFError, WFError, ERRCTX_UNKNOWN};
+use rxml_validation::selectors;
+use rxml_validation::selectors::CharSelector;
+pub use rxml_validation::{validate_cdata, validate_name, validate_ncname};
 use smartstring::alias::String as SmartString;
 use std::borrow::{Borrow, Cow, ToOwned};
 use std::cmp::{Ordering, PartialOrd};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::ops::{Add, Deref};
-
-#[cfg(feature = "inline")]
-macro_rules! maybe_inline_str {
-	() => {
-		SmartString
-	};
-}
-
-#[cfg(not(feature = "inline"))]
-macro_rules! maybe_inline_str {
-	() => {
-		String
-	};
-}
 
 macro_rules! rxml_unsafe_str_construct_doc {
 	($name:ident, $other:ident) => {
@@ -126,20 +111,19 @@ macro_rules! rxml_custom_string_type {
 		impl $name {
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
-			pub fn from_str<T: AsRef<str>>(s: T) -> Result<Self, Error> {
+			pub fn from_str<T: AsRef<str>>(s: T) -> Result<Self, WFError> {
 				s.as_ref().try_into()
 			}
 
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 			#[doc = rxml_safe_str_construct_doc!($name, String, "")]
-			pub fn from_string<T: Into<String>>(s: T) -> Result<Self, Error> {
+			pub fn from_string<T: Into<String>>(s: T) -> Result<Self, WFError> {
 				s.into().try_into()
 			}
 
-			#[cfg(feature = "inline")]
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 			#[doc = rxml_safe_str_construct_doc!($name, SmartString, "")]
-			pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Self, Error> {
+			pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Self, WFError> {
 				s.into().try_into()
 			}
 
@@ -163,7 +147,6 @@ macro_rules! rxml_custom_string_type {
 				Self(s.into().into())
 			}
 
-			#[cfg(feature = "inline")]
 			#[doc = rxml_unsafe_str_construct_doc!($name, SmartString)]
 			pub unsafe fn from_smartstring_unchecked<T: Into<SmartString>>(s: T) -> Self {
 				Self(s.into().into())
@@ -286,7 +269,6 @@ macro_rules! rxml_custom_string_type {
 			}
 		}
 
-		#[cfg(feature = "inline")]
 		impl From<$name> for SmartString {
 			fn from(other: $name) -> Self {
 				other.0.into()
@@ -305,9 +287,8 @@ macro_rules! rxml_custom_string_type {
 			}
 		}
 
-		#[cfg(feature = "inline")]
 		impl TryFrom<SmartString> for $name {
-			type Error = Error;
+			type Error = WFError;
 
 			#[doc = rxml_safe_str_construct_doc!($name, SmartString, "")]
 			fn try_from(other: SmartString) -> Result<Self, Self::Error> {
@@ -317,7 +298,7 @@ macro_rules! rxml_custom_string_type {
 		}
 
 		impl TryFrom<String> for $name {
-			type Error = Error;
+			type Error = WFError;
 
 			#[doc = rxml_safe_str_construct_doc!($name, String, "")]
 			fn try_from(other: String) -> Result<Self, Self::Error> {
@@ -327,7 +308,7 @@ macro_rules! rxml_custom_string_type {
 		}
 
 		impl TryFrom<&str> for $name {
-			type Error = Error;
+			type Error = WFError;
 
 			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
 			fn try_from(other: &str) -> Result<Self, Self::Error> {
@@ -368,7 +349,7 @@ macro_rules! rxml_custom_str_type {
 
 		impl $name {
 			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
-			pub fn from_str<'x>(s: &'x str) -> Result<&'x Self, Error> {
+			pub fn from_str<'x>(s: &'x str) -> Result<&'x Self, WFError> {
 				s.try_into()
 			}
 
@@ -433,7 +414,7 @@ macro_rules! rxml_custom_str_type {
 		}
 
 		impl<'x> TryFrom<&'x str> for &'x $name {
-			type Error = Error;
+			type Error = WFError;
 
 			fn try_from(other: &'x str) -> Result<Self, Self::Error> {
 				$check(other)?;
@@ -499,7 +480,7 @@ rxml_custom_string_type_pair! {
 	///                        | [#x0300-#x036F] | [#x203F-#x2040]
 	/// [5]  Name          ::= NameStartChar (NameChar)*
 	/// ```
-	pub struct Name(maybe_inline_str!()) use validate_name;
+	pub struct Name(SmartString) use validate_name;
 
 	/// str which conforms to the Name production of XML 1.0.
 	///
@@ -525,14 +506,14 @@ impl Name {
 	///
 	/// If neither of the two cases apply or the string on either side of the
 	/// colon is empty, an error is returned.
-	pub fn split_name(self) -> Result<(Option<NCName>, NCName), Error> {
+	pub fn split_name(self) -> Result<(Option<NCName>, NCName), NWFError> {
 		let mut name = self.0;
 		let colon_pos = match name.find(':') {
-			None => return Ok((None, unsafe { NCName::from_native_unchecked(name) })),
+			None => return Ok((None, unsafe { NCName::from_smartstring_unchecked(name) })),
 			Some(pos) => pos,
 		};
 		if colon_pos == 0 || colon_pos == name.len() - 1 {
-			return Err(Error::EmptyNamePart);
+			return Err(NWFError::EmptyNamePart(ERRCTX_UNKNOWN));
 		}
 
 		let localname = name.split_off(colon_pos + 1);
@@ -540,11 +521,11 @@ impl Name {
 
 		if localname.find(':').is_some() {
 			// Namespaces in XML 1.0 (Third Edition) namespace-well-formed criterium 1
-			return Err(Error::MultiColonName);
+			return Err(NWFError::MultiColonName(ERRCTX_UNKNOWN));
 		};
 		if !selectors::CLASS_XML_NAMESTART.select(localname.chars().next().unwrap()) {
 			// Namespaces in XML 1.0 (Third Edition) NCName production
-			return Err(Error::InvalidLocalName);
+			return Err(NWFError::InvalidLocalName(ERRCTX_UNKNOWN));
 		}
 
 		prefix.pop();
@@ -555,8 +536,8 @@ impl Name {
 		debug_assert!(prefix.len() > 0);
 		debug_assert!(localname.len() > 0);
 		Ok((
-			Some(unsafe { NCName::from_native_unchecked(prefix) }),
-			unsafe { NCName::from_native_unchecked(localname) },
+			Some(unsafe { NCName::from_smartstring_unchecked(prefix) }),
+			unsafe { NCName::from_smartstring_unchecked(localname) },
 		))
 	}
 }
@@ -599,7 +580,7 @@ rxml_custom_string_type_pair! {
 	/// ```text
 	/// [4] NCName ::= Name - (Char* ':' Char*)  /* An XML Name, minus the ":" */
 	/// ```
-	pub struct NCName(maybe_inline_str!()) use validate_ncname;
+	pub struct NCName(SmartString) use validate_ncname;
 
 	/// str which conforms to the NCName production of Namespaces in XML 1.0.
 	///
@@ -644,7 +625,7 @@ impl NCName {
 
 	pub fn as_name(self) -> Name {
 		// SAFETY: NCName is a strict subset of Name
-		unsafe { Name::from_native_unchecked(self.0) }
+		unsafe { Name::from_smartstring_unchecked(self.0) }
 	}
 }
 
@@ -749,7 +730,7 @@ impl From<NCName> for CData {
 	fn from(other: NCName) -> Self {
 		// SAFETY: NCNames can only consist of valid XML 1.0 chars, so they
 		// are also valid CData
-		unsafe { CData::from_native_unchecked(other.0.into()) }
+		unsafe { CData::from_smartstring_unchecked(other.0) }
 	}
 }
 
@@ -757,7 +738,7 @@ impl From<Name> for CData {
 	fn from(other: Name) -> Self {
 		// SAFETY: Names can only consist of valid XML 1.0 chars, so they
 		// are also valid CData
-		unsafe { CData::from_native_unchecked(other.0.into()) }
+		unsafe { CData::from_smartstring_unchecked(other.0) }
 	}
 }
 
@@ -787,7 +768,7 @@ mod tests {
 		let result = nm.split_name();
 		assert!(matches!(
 			result.err().unwrap(),
-			NamespacingError::InvalidLocalName,
+			NWFError::InvalidLocalName(_)
 		));
 	}
 
