@@ -5,7 +5,7 @@ This crate provides macros to check XML string syntax at compile time.
 
 ## Example
 
-```rust
+```rust,ignore
 use rxml::{CDataStr, NCNameStr};
 use rxml_proc::*;
 
@@ -27,7 +27,7 @@ use syn::{parse_macro_input, LitStr};
 
 # Example
 
-```rust
+```rust,ignore
 use rxml::CDataStr;
 use rxml_proc::xml_cdata;
 
@@ -51,7 +51,7 @@ pub fn xml_cdata(input: TokenStream) -> TokenStream {
 
 # Example
 
-```rust
+```rust,ignore
 use rxml::NameStr;
 use rxml_proc::xml_name;
 
@@ -75,7 +75,7 @@ pub fn xml_name(input: TokenStream) -> TokenStream {
 
 # Example
 
-```rust
+```rust,ignore
 use rxml::NCNameStr;
 use rxml_proc::xml_ncname;
 
