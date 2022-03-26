@@ -11,8 +11,8 @@ use tokio;
 fn feedparser_can_read_xml_document() {
 	let doc = b"<?xml version='1.0'?>\n<root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text</child></root>";
 
-	let mut fp = FeedParser::new();
-	let mut out = Vec::<Event>::new();
+	let mut fp = FeedParser::default();
+	let mut out = Vec::<ResolvedEvent>::new();
 	fp.feed(&doc[..]);
 	let result = fp.read_all_eof(|ev| {
 		out.push(ev);
@@ -22,13 +22,13 @@ fn feedparser_can_read_xml_document() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
 				assert_eq!(
@@ -49,7 +49,7 @@ fn feedparser_can_read_xml_document() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
 				assert_eq!(
 					nsuri.as_ref().unwrap().as_str(),
@@ -61,20 +61,20 @@ fn feedparser_can_read_xml_document() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::Text(em, cdata) => {
+			ResolvedEvent::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 8);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 7);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -90,8 +90,8 @@ fn feedparser_can_read_xml_document() {
 fn feedparser_can_handle_chunked_input() {
 	let doc = b"<?xml version='1.0'?><root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text</child></root>";
 
-	let mut fp = FeedParser::new();
-	let mut out = Vec::<Event>::new();
+	let mut fp = FeedParser::default();
+	let mut out = Vec::<ResolvedEvent>::new();
 	for chunk in doc.chunks(10) {
 		fp.feed(chunk.to_vec());
 		loop {
@@ -107,13 +107,13 @@ fn feedparser_can_handle_chunked_input() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 76);
 				assert_eq!(
 					nsuri.as_ref().unwrap().as_str(),
@@ -133,7 +133,7 @@ fn feedparser_can_handle_chunked_input() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
 				assert_eq!(
 					nsuri.as_ref().unwrap().as_str(),
@@ -145,20 +145,20 @@ fn feedparser_can_handle_chunked_input() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::Text(em, cdata) => {
+			ResolvedEvent::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 8);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 7);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -177,7 +177,7 @@ fn pullparser_can_read_xml_document() {
 	let mut doc = &b"<?xml version='1.0'?>\n<root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text</child></root>\n"[..];
 
 	let mut pp = PullParser::new(&mut doc);
-	let mut out = Vec::<Event>::new();
+	let mut out = Vec::<ResolvedEvent>::new();
 	let result = pp.read_all(|ev| {
 		out.push(ev);
 	});
@@ -186,13 +186,13 @@ fn pullparser_can_read_xml_document() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
 				assert_eq!(
@@ -213,7 +213,7 @@ fn pullparser_can_read_xml_document() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
 				assert_eq!(
 					nsuri.as_ref().unwrap().as_str(),
@@ -225,20 +225,20 @@ fn pullparser_can_read_xml_document() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::Text(em, cdata) => {
+			ResolvedEvent::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 8);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 7);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -249,7 +249,7 @@ fn pullparser_can_read_xml_document() {
 /// This is only used to drop-in tests with util/fuzz-to-test.py
 #[allow(dead_code)]
 fn run_fuzz_test(data: &[u8]) -> Result<()> {
-	let mut fp = FeedParser::new();
+	let mut fp = FeedParser::default();
 	fp.feed(data);
 	fp.feed_eof();
 	loop {
@@ -268,7 +268,7 @@ async fn asyncparser_can_read_xml_document() {
 
 	let mut r = &doc[..];
 	let mut ap = AsyncParser::new(&mut r);
-	let mut out = Vec::<Event>::new();
+	let mut out = Vec::<ResolvedEvent>::new();
 	let result = ap
 		.read_all(|ev| {
 			out.push(ev);
@@ -279,13 +279,13 @@ async fn asyncparser_can_read_xml_document() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
 				assert_eq!(
@@ -306,7 +306,7 @@ async fn asyncparser_can_read_xml_document() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
 				assert_eq!(
 					nsuri.as_ref().unwrap().as_str(),
@@ -318,20 +318,20 @@ async fn asyncparser_can_read_xml_document() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::Text(em, cdata) => {
+			ResolvedEvent::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 8);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 7);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -347,7 +347,7 @@ async fn asyncparser_can_handle_chunked_input() {
 	let mut r = &doc[..];
 	let mut r = tokio::io::BufReader::with_capacity(4, &mut r);
 	let mut ap = AsyncParser::new(&mut r);
-	let mut out = Vec::<Event>::new();
+	let mut out = Vec::<ResolvedEvent>::new();
 	let result = ap
 		.read_all(|ev| {
 			out.push(ev);
@@ -358,13 +358,13 @@ async fn asyncparser_can_handle_chunked_input() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			Event::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				// note: 77 because of the \n between xml decl and whitespace. see also comment on EventMetrics
 				assert_eq!(em.len(), 77);
 				assert_eq!(
@@ -385,7 +385,7 @@ async fn asyncparser_can_handle_chunked_input() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::StartElement(em, (nsuri, localname), attrs) => {
+			ResolvedEvent::StartElement(em, (nsuri, localname), attrs) => {
 				assert_eq!(em.len(), 7);
 				assert_eq!(
 					nsuri.as_ref().unwrap().as_str(),
@@ -397,20 +397,20 @@ async fn asyncparser_can_handle_chunked_input() {
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::Text(em, cdata) => {
+			ResolvedEvent::Text(em, cdata) => {
 				assert_eq!(em.len(), 14);
 				assert_eq!(cdata, "with some text");
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 8);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
 		match iter.next().unwrap() {
-			Event::EndElement(em) => {
+			ResolvedEvent::EndElement(em) => {
 				assert_eq!(em.len(), 7);
 			}
 			other => panic!("unexpected event: {:?}", other),

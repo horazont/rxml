@@ -188,6 +188,9 @@ pub enum NWFError {
 	/// Attempt to redefine a reserved namespace prefix.
 	ReservedNamespacePrefix,
 
+	/// Attempt to bind a reserved namespace name to the wrong prefix.
+	ReservedNamespaceName,
+
 	/// Local name does not conform to Name production (invalid start char)
 	InvalidLocalName(&'static str),
 
@@ -220,6 +223,7 @@ impl fmt::Display for NWFError {
 				write!(f, "use of undeclared namespace prefix {} name", ctx)
 			}
 			Self::ReservedNamespacePrefix => f.write_str("reserved namespace prefix"),
+			Self::ReservedNamespaceName => f.write_str("reserved namespace URI"),
 			Self::InvalidLocalName(ctx) => write!(f, "local name is invalid {} name", ctx),
 			Self::EmptyNamespaceUri => write!(f, "namespace URI is empty"),
 		}
@@ -373,4 +377,11 @@ impl error::Error for Error {
 			| Error::InvalidChar(_) => None,
 		}
 	}
+}
+
+pub(crate) fn add_context<T, E: ErrorWithContext>(
+	r: StdResult<T, E>,
+	ctx: &'static str,
+) -> StdResult<T, E> {
+	r.or_else(|e| Err(e.with_context(ctx)))
 }

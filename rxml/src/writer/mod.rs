@@ -9,7 +9,7 @@ use std::fmt;
 
 use bytes::{BufMut, BytesMut};
 
-use crate::parser::{Event, NamespaceName, RcPtr, XMLVersion, XMLNS_XML, XMLNS_XMLNS};
+use crate::parser::{NamespaceName, RcPtr, ResolvedEvent, XMLVersion, XMLNS_XML, XMLNS_XMLNS};
 use crate::strings::{CData, CDataStr, NCName, NCNameStr, Name};
 
 static XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
@@ -48,11 +48,11 @@ fn escape<'a, B: BufMut>(out: &'a mut B, data: &'a [u8], specials: &'static [u8]
 
 /// An encodable item.
 ///
-/// This is separate from [`Event`], because events are owned, while
+/// This is separate from [`ResolvedEvent`], because events are owned, while
 /// items can be borrowed to improve efficiency (as a copy will have to take
 /// place anyway).
 ///
-///   [`Event`]: crate::parser::Event
+///   [`ResolvedEvent`]: crate::parser::ResolvedEvent
 pub enum Item<'x> {
 	/// XML declaration
 	XMLDeclaration(XMLVersion),
@@ -623,14 +623,14 @@ impl<T: TrackNamespace> Encoder<T> {
 	///    [`encode`]: Self::encode.
 	pub fn encode_event<O: BufMut>(
 		&mut self,
-		ev: &Event,
+		ev: &ResolvedEvent,
 		output: &mut O,
 	) -> Result<(), EncodeError> {
 		match ev {
-			Event::XMLDeclaration(_, version) => {
+			ResolvedEvent::XMLDeclaration(_, version) => {
 				self.encode(Item::XMLDeclaration(*version), output)?;
 			}
-			Event::StartElement(_, (ns, name), attrs) => {
+			ResolvedEvent::StartElement(_, (ns, name), attrs) => {
 				self.encode(Item::ElementHeadStart(ns.clone(), name.as_ref()), output)?;
 				for ((ns, name), v) in attrs.iter() {
 					self.encode(
@@ -640,8 +640,8 @@ impl<T: TrackNamespace> Encoder<T> {
 				}
 				self.encode(Item::ElementHeadEnd, output)?;
 			}
-			Event::EndElement(_) => self.encode(Item::ElementFoot, output)?,
-			Event::Text(_, text) => self.encode(Item::Text(text.as_ref()), output)?,
+			ResolvedEvent::EndElement(_) => self.encode(Item::ElementFoot, output)?,
+			ResolvedEvent::Text(_, text) => self.encode(Item::Text(text.as_ref()), output)?,
 		}
 		Ok(())
 	}
@@ -654,7 +654,7 @@ impl<T: TrackNamespace> Encoder<T> {
 	///    [`encode_into_bytes`]: Self::encode_into_bytes.
 	pub fn encode_event_into_bytes(
 		&mut self,
-		ev: &Event,
+		ev: &ResolvedEvent,
 		output: &mut BytesMut,
 	) -> Result<(), EncodeError> {
 		self.encode_event(ev, output)
@@ -960,14 +960,14 @@ mod tests_encoder {
 		Encoder::new()
 	}
 
-	fn parse(mut input: &[u8]) -> (Vec<Event>, crate::Result<bool>) {
+	fn parse(mut input: &[u8]) -> (Vec<ResolvedEvent>, crate::Result<bool>) {
 		let mut parser = crate::PullParser::new(&mut input);
 		let mut events = Vec::new();
 		let result = parser.read_all_eof(|ev| events.push(ev));
 		(events, result)
 	}
 
-	fn encode_events(evs: &[Event]) -> Result<BytesMut, EncodeError> {
+	fn encode_events(evs: &[ResolvedEvent]) -> Result<BytesMut, EncodeError> {
 		let mut out = BytesMut::new();
 		let mut encoder = mkencoder();
 		for ev in evs {
@@ -976,7 +976,7 @@ mod tests_encoder {
 		Ok(out)
 	}
 
-	fn encode_events_via_into_bytes(evs: &[Event]) -> Result<BytesMut, EncodeError> {
+	fn encode_events_via_into_bytes(evs: &[ResolvedEvent]) -> Result<BytesMut, EncodeError> {
 		let mut out = BytesMut::new();
 		let mut encoder = mkencoder();
 		for ev in evs {
@@ -985,19 +985,19 @@ mod tests_encoder {
 		Ok(out)
 	}
 
-	fn collapse_cdata(evs: &mut Vec<Event>) {
+	fn collapse_cdata(evs: &mut Vec<ResolvedEvent>) {
 		let mut buf = Vec::new();
 		std::mem::swap(&mut buf, evs);
 		let mut cdata_hold = None;
 		for event in buf.drain(..) {
 			match event {
-				Event::Text(_, txt) => match cdata_hold.take() {
+				ResolvedEvent::Text(_, txt) => match cdata_hold.take() {
 					None => cdata_hold = Some(txt),
 					Some(existing) => cdata_hold = Some(existing + &*txt),
 				},
 				_ => {
 					match cdata_hold.take() {
-						Some(txt) => evs.push(Event::Text(EventMetrics::new(0), txt)),
+						Some(txt) => evs.push(ResolvedEvent::Text(EventMetrics::new(0), txt)),
 						None => (),
 					};
 					evs.push(event);
@@ -1005,22 +1005,25 @@ mod tests_encoder {
 			}
 		}
 		match cdata_hold.take() {
-			Some(txt) => evs.push(Event::Text(EventMetrics::new(0), txt)),
+			Some(txt) => evs.push(ResolvedEvent::Text(EventMetrics::new(0), txt)),
 			None => (),
 		};
 	}
 
-	fn assert_event_eq(a: &Event, b: &Event) {
+	fn assert_event_eq(a: &ResolvedEvent, b: &ResolvedEvent) {
 		match (a, b) {
-			(Event::XMLDeclaration(_, v1), Event::XMLDeclaration(_, v2)) => {
+			(ResolvedEvent::XMLDeclaration(_, v1), ResolvedEvent::XMLDeclaration(_, v2)) => {
 				assert_eq!(v1, v2);
 			}
-			(Event::StartElement(_, name1, attrs1), Event::StartElement(_, name2, attrs2)) => {
+			(
+				ResolvedEvent::StartElement(_, name1, attrs1),
+				ResolvedEvent::StartElement(_, name2, attrs2),
+			) => {
 				assert_eq!(name1, name2);
 				assert_eq!(attrs1, attrs2);
 			}
-			(Event::EndElement(_), Event::EndElement(_)) => {}
-			(Event::Text(_, text1), Event::Text(_, text2)) => {
+			(ResolvedEvent::EndElement(_), ResolvedEvent::EndElement(_)) => {}
+			(ResolvedEvent::Text(_, text1), ResolvedEvent::Text(_, text2)) => {
 				assert_eq!(text1, text2);
 			}
 			// will always raise
@@ -1028,7 +1031,7 @@ mod tests_encoder {
 		}
 	}
 
-	fn assert_events_eq(initial: &[Event], reparsed: &[Event]) {
+	fn assert_events_eq(initial: &[ResolvedEvent], reparsed: &[ResolvedEvent]) {
 		for (a, b) in initial.iter().zip(reparsed.iter()) {
 			assert_event_eq(a, b);
 		}
@@ -1049,7 +1052,7 @@ mod tests_encoder {
 
 	fn check_reserialized(
 		input: &[u8],
-		initial: &[Event],
+		initial: &[ResolvedEvent],
 		initial_eof: bool,
 		reserialized: &[u8],
 		via: &'static str,

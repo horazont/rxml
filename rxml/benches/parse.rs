@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use rxml::{Event, EventRead, FeedParser, PullParser};
+use rxml::{EventRead, FeedParser, PullParser};
 
 static HUGE_STANZA: &'static [u8] =  br#"<iq to='loadtest0@conference.example.com/63653b5f'
 id='b3JhE-1363385' type='set'><jingle xmlns='urn:xmpp:jingle:1' action='session-initiate'
@@ -2923,7 +2923,7 @@ fn huge_document(c: &mut Criterion) {
 	let mut group = c.benchmark_group("huge_document");
 
 	group.bench_function("singleuse_pull", |b| {
-		let mut evs = Vec::<Event>::with_capacity(1024);
+		let mut evs = Vec::with_capacity(1024);
 
 		b.iter(|| {
 			evs.clear();
@@ -2938,11 +2938,11 @@ fn huge_document(c: &mut Criterion) {
 	});
 
 	group.bench_function("singleuse_feed", |b| {
-		let mut evs = Vec::<Event>::with_capacity(1024);
+		let mut evs = Vec::with_capacity(1024);
 
 		b.iter(|| {
 			evs.clear();
-			let mut p = FeedParser::new();
+			let mut p = FeedParser::default();
 			p.feed(&HUGE_STANZA[..]);
 			p.feed_eof();
 			assert!(p
@@ -2954,8 +2954,8 @@ fn huge_document(c: &mut Criterion) {
 	});
 
 	group.bench_function("streamed", |b| {
-		let mut evs = Vec::<Event>::with_capacity(1024);
-		let mut p = FeedParser::new();
+		let mut evs = Vec::with_capacity(1024);
+		let mut p = FeedParser::default();
 		p.feed(&b"<?xml version='1.0'?><root>"[..]);
 
 		b.iter(|| {

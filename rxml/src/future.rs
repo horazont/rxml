@@ -9,7 +9,7 @@ use tokio::io::AsyncBufRead;
 use futures_core::stream::Stream;
 
 use crate::lexer::{Lexer, LexerOptions};
-use crate::parser::{Event, Parser};
+use crate::parser::{Parse, Parser};
 use crate::{Error, Result};
 
 use pin_project_lite::pin_project;
@@ -22,9 +22,9 @@ pin_project! {
 }
 
 impl<T: AsyncEventRead + Unpin> Future for ReadEvent<T> {
-	type Output = Result<Option<Event>>;
+	type Output = Result<Option<T::Output>>;
 
-	fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Option<Event>>> {
+	fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
 		self.project().inner.poll_read(cx)
 	}
 }
@@ -37,7 +37,7 @@ pin_project! {
 	}
 }
 
-impl<T: AsyncEventRead + Unpin, F: FnMut(Event) -> () + Send> Future for ReadAll<T, F> {
+impl<T: AsyncEventRead + Unpin, F: FnMut(T::Output) -> () + Send> Future for ReadAll<T, F> {
 	type Output = Result<()>;
 
 	fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
@@ -58,17 +58,23 @@ impl<T: AsyncEventRead + Unpin, F: FnMut(Event) -> () + Send> Future for ReadAll
 /**
 Asynchronous source of individual XML events
 
-This trait is implemented by the different parser frontends. It is analogous to the [`tokio::io::AsyncRead`] trait, but for [`Event`]s instead of bytes.
+This trait is implemented by the different parser frontends. It is analogous to the [`tokio::io::AsyncRead`] trait, but for [`ResolvedEvent`]s instead of bytes.
 
 Usually, one interacts with this trait through the helpers available in [`AsyncEventReadExt`]
+
+   [`ResolvedEvent`]: crate::ResolvedEvent
 */
 pub trait AsyncEventRead {
+	type Output;
+
 	/// Poll for a single event from the parser.
-	fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Option<Event>>>;
+	fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Option<Self::Output>>>;
 }
 
 impl<T: AsyncEventRead + Unpin + ?Sized> AsyncEventRead for &mut T {
-	fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Option<Event>>> {
+	type Output = T::Output;
+
+	fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Option<Self::Output>>> {
 		let this: &mut &mut T = Pin::into_inner(self);
 		let this: &mut T = *this;
 		let this = Pin::new(this);
@@ -79,7 +85,7 @@ impl<T: AsyncEventRead + Unpin + ?Sized> AsyncEventRead for &mut T {
 #[cfg(feature = "stream")]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "stream", feature = "async"))))]
 impl<T: AsyncBufRead> Stream for AsyncParser<T> {
-	type Item = Result<Event>;
+	type Item = Result<ResolvedEvent>;
 
 	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 		match self.poll_read(cx) {
@@ -108,7 +114,7 @@ pub trait AsyncEventReadExt: AsyncEventRead {
 	/// Equivalent to:
 	///
 	/// ```ignore
-	/// async fn read(&mut self) -> Result<Option<Event>>;
+	/// async fn read(&mut self) -> Result<Option<ResolvedEvent>>;
 	/// ```
 	fn read(&mut self) -> ReadEvent<&mut Self> {
 		ReadEvent { inner: self }
@@ -127,7 +133,7 @@ pub trait AsyncEventReadExt: AsyncEventRead {
 	///
 	/// ```ignore
 	///     async fn read_all<F>(&mut self, mut cb: F) -> Result<()>
-	///            where F: FnMut(Event) -> () + Send
+	///            where F: FnMut(ResolvedEvent) -> () + Send
 	/// ```
 	fn read_all<F>(&mut self, cb: F) -> ReadAll<&mut Self, F> {
 		ReadAll { inner: self, cb }
@@ -150,41 +156,23 @@ impl<'x, 'y> crate::parser::TokenRead for AsyncLexerAdapter<'x, 'y> {
 
 pin_project! {
 	/**
-	Tokio-compatible asynchronous parser
+	# Asynchronous driver for parsers
 
-	The [`AsyncParser`] allows parsing XML documents from a [`tokio::io::AsyncBufRead`], asynchronously. It operates similarly as the [`PullParser`] does, but instead of blocking the task, it will yield control to other tasks if the backend is not able to supply data immediately.
+	This is a generic asynchronous driver for objects implementing the
+	[`Parse`] trait.
 
-	Interaction with a `AsyncParser` should happen exclusively via the [`AsyncEventReadExt`] trait.
-
-	## Example
-
-	The example is a bit pointless because it does not really demonstrate the asynchronicity.
-
-	```
-	use rxml::{AsyncParser, Error, Event, XMLVersion, AsyncEventReadExt};
-	use tokio::io::AsyncRead;
-	# tokio_test::block_on(async {
-	let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
-	// this converts the doc into an tokio::io::AsyncRead
-	let mut pp = AsyncParser::new(&mut doc);
-	// we expect the first event to be the XML declaration
-	let ev = pp.read().await;
-	assert!(matches!(ev.unwrap().unwrap(), Event::XMLDeclaration(_, XMLVersion::V1_0)));
-	# })
-	```
-
-	   [`PullParser`]: crate::PullParser
+	In general, it is advised to use the [`AsyncParser`] alias which
+	specializes this struct for use with the default [`Parser`].
 	*/
-	#[project = AsyncParserProj]
-	pub struct AsyncParser<T>{
+	pub struct AsyncDriver<T, P>{
 		#[pin]
 		inner: T,
 		lexer: Lexer,
-		parser: Parser,
+		parser: P,
 	}
 }
 
-impl<T: AsyncBufRead> AsyncParser<T> {
+impl<T: AsyncBufRead, P: Parse + Default> AsyncDriver<T, P> {
 	/// Create a new parser with default options, wrapping the given reader.
 	pub fn new(inner: T) -> Self {
 		Self::with_options(inner, LexerOptions::default())
@@ -193,11 +181,13 @@ impl<T: AsyncBufRead> AsyncParser<T> {
 	/// Create a new parser while configuring the lexer with the given
 	/// options.
 	pub fn with_options(inner: T, options: LexerOptions) -> Self {
-		Self::wrap(inner, Lexer::with_options(options), Parser::new())
+		Self::wrap(inner, Lexer::with_options(options), P::default())
 	}
+}
 
+impl<T: AsyncBufRead, P: Parse> AsyncDriver<T, P> {
 	/// Create a fully customized parser from a lexer and a parser component.
-	pub fn wrap(inner: T, lexer: Lexer, parser: Parser) -> Self {
+	pub fn wrap(inner: T, lexer: Lexer, parser: P) -> Self {
 		Self {
 			inner,
 			lexer,
@@ -206,13 +196,13 @@ impl<T: AsyncBufRead> AsyncParser<T> {
 	}
 }
 
-impl<T> AsyncParser<T> {
+impl<T, P: Parse> AsyncDriver<T, P> {
 	fn parse_step(
 		lexer: &mut Lexer,
-		parser: &mut Parser,
+		parser: &mut P,
 		buf: &mut &[u8],
 		may_eof: bool,
-	) -> (usize, Poll<Result<Option<Event>>>) {
+	) -> (usize, Poll<Result<Option<P::Output>>>) {
 		let old_len = buf.len();
 		let result = parser.parse(&mut AsyncLexerAdapter {
 			lexer,
@@ -232,8 +222,10 @@ impl<T> AsyncParser<T> {
 	}
 }
 
-impl<T: AsyncBufRead> AsyncEventRead for AsyncParser<T> {
-	fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Option<Event>>> {
+impl<T: AsyncBufRead, P: Parse> AsyncEventRead for AsyncDriver<T, P> {
+	type Output = P::Output;
+
+	fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Option<P::Output>>> {
 		let mut this = self.project();
 		loop {
 			let mut buf = match this.inner.as_mut().poll_fill_buf(cx) {
@@ -255,3 +247,41 @@ impl<T: AsyncBufRead> AsyncEventRead for AsyncParser<T> {
 		}
 	}
 }
+
+/**
+Tokio-compatible asynchronous parser
+
+The [`AsyncParser`] allows parsing XML documents from a [`tokio::io::AsyncBufRead`], asynchronously. It operates similarly as the [`PullParser`] does, but instead of blocking the task, it will yield control to other tasks if the backend is not able to supply data immediately.
+
+This is a type alias around a [`AsyncDriver`] and documentation for the API is
+found there.
+
+Interaction with a `AsyncParser` should happen exclusively via the [`AsyncEventReadExt`] trait.
+
+## Example
+
+The example is a bit pointless because it does not really demonstrate the asynchronicity.
+
+```
+use rxml::{AsyncParser, Error, ResolvedEvent, XMLVersion, AsyncEventReadExt};
+use tokio::io::AsyncRead;
+# tokio_test::block_on(async {
+let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
+// this converts the doc into an tokio::io::AsyncRead
+let mut pp = AsyncParser::new(&mut doc);
+// we expect the first event to be the XML declaration
+let ev = pp.read().await;
+assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XMLVersion::V1_0)));
+# })
+```
+
+## Parsing without namespace expansion
+
+To parse an XML document without namespace expansion in blocking mode,
+one can use the [`AsyncDriver`] with a [`RawParser`]. Note the caveats in the
+[`RawParser`] documentation before using it!
+
+   [`RawParser`]: crate::parser::RawParser
+   [`PullParser`]: crate::PullParser
+*/
+pub type AsyncParser<T> = AsyncDriver<T, Parser>;
