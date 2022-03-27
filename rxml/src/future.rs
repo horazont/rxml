@@ -194,6 +194,51 @@ impl<T: AsyncBufRead, P: Parse> AsyncDriver<T, P> {
 			parser,
 		}
 	}
+
+	/// Decompose the AsyncDriver into its parts
+	pub fn into_inner(self) -> (T, Lexer, P) {
+		(self.inner, self.lexer, self.parser)
+	}
+
+	/// Access the inner AsyncBufRead
+	pub fn get_inner(&self) -> &T {
+		&self.inner
+	}
+
+	/// Access the inner AsyncBufRead, mutably
+	pub fn get_inner_mut(&mut self) -> &mut T {
+		&mut self.inner
+	}
+
+	/// Access the lexer
+	pub fn get_lexer(&self) -> &Lexer {
+		&self.lexer
+	}
+
+	/// Access the lexer, mutably
+	pub fn get_lexer_mut(&mut self) -> &mut Lexer {
+		&mut self.lexer
+	}
+
+	/// Access the parser
+	pub fn get_parser(&self) -> &P {
+		&self.parser
+	}
+
+	/// Access the parser, mutably
+	pub fn get_parser_mut(&mut self) -> &mut P {
+		&mut self.parser
+	}
+
+	/// Release temporary buffers and other ephemeral allocations.
+	///
+	/// This is sensible to call when it is expected that no more data will be
+	/// processed by the parser for a while and the memory is better used
+	/// elsewhere.
+	pub fn release_temporaries(&mut self) {
+		self.lexer.release_temporaries();
+		self.parser.release_temporaries();
+	}
 }
 
 impl<T, P: Parse> AsyncDriver<T, P> {

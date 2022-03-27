@@ -267,6 +267,15 @@ impl<T: io::BufRead, P: Parse> PullDriver<T, P> {
 			parser,
 		}
 	}
+	/// Access the inner BufRead
+	pub fn get_inner(&self) -> &T {
+		self.token_source.get_ref()
+	}
+
+	/// Access the inner BufRead, mutably
+	pub fn get_inner_mut(&mut self) -> &mut T {
+		self.token_source.get_mut()
+	}
 
 	/// Access the lexer
 	pub fn get_lexer(&self) -> &Lexer {
