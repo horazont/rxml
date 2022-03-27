@@ -526,6 +526,12 @@ impl RawParser {
 					return Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri));
 				}
 			}
+		} else if localpart == "xmlns" && val == XMLNS_XML {
+			// Namespaces for XML 1.0
+			// Namespace constraint: Reserved Prefixes and Namespace Names
+			return Err(Error::NotNamespaceWellFormed(
+				NWFError::ReservedNamespaceName,
+			));
 		}
 		Ok(RawEvent::Attribute(
 			self.finish_event(),
@@ -1276,6 +1282,30 @@ mod tests {
 		let (mut evs, r) = parse(&[
 			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
 			Token::Name(DM, "xmlns:fnord".try_into().unwrap()),
+			Token::Eq(DM),
+			Token::AttributeValue(DM, XMLNS_XML.try_into().unwrap()),
+			Token::ElementHeadClose(DM),
+		]);
+		match evs.remove(0) {
+			RawEvent::ElementHeadOpen(em, (prefix, localname)) => {
+				assert_eq!(em.len(), 0);
+				assert!(prefix.is_none());
+				assert_eq!(localname, "root");
+			}
+			ev => panic!("unexpected event: {:?}", ev),
+		}
+		match r {
+			Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespaceName)) => (),
+			other => panic!("unexpected result: {:?}", other),
+		}
+		assert_eq!(evs.len(), 0);
+	}
+
+	#[test]
+	fn parser_parse_reject_binding_xml_namespace_name_to_the_default_ns() {
+		let (mut evs, r) = parse(&[
+			Token::ElementHeadStart(DM, "root".try_into().unwrap()),
+			Token::Name(DM, "xmlns".try_into().unwrap()),
 			Token::Eq(DM),
 			Token::AttributeValue(DM, XMLNS_XML.try_into().unwrap()),
 			Token::ElementHeadClose(DM),
