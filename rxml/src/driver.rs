@@ -84,9 +84,9 @@ This is a generic non-blocking push-based driver for objects implementing the
 In general, it is advised to use the [`FeedParser`] alias which specializes
 this struct for use with the default [`Parser`].
 */
+#[repr(transparent)]
 pub struct PushDriver<'x, P: Parse> {
-	token_source: LexerAdapter<BufferQueue<'x>>,
-	parser: P,
+	inner: PullDriver<BufferQueue<'x>, P>,
 }
 
 /// Convert end-of-file-ness of a result to a boolean flag.
@@ -128,10 +128,7 @@ impl<'x, P: Parse + parser::WithContext> parser::WithContext for PushDriver<'x, 
 impl<'x, P: Parse> PushDriver<'x, P> {
 	/// Compose a new PushDriver from parts
 	pub fn wrap(lexer: Lexer, parser: P) -> Self {
-		Self {
-			token_source: LexerAdapter::new(lexer, BufferQueue::new()),
-			parser,
-		}
+		Self{inner: PullDriver::wrap(BufferQueue::new(), lexer, parser)}
 	}
 
 	/// Feed a chunck of data to the parser.
@@ -149,7 +146,7 @@ impl<'x, P: Parse> PushDriver<'x, P> {
 	///    [`read_all()`]: Self::read_all()
 	///    [`feed_eof()`]: Self::feed_eof()
 	pub fn feed<'a: 'x, T: Into<std::borrow::Cow<'a, [u8]>>>(&mut self, data: T) {
-		self.token_source.get_mut().push(data);
+		self.inner.get_inner_mut().push(data);
 	}
 
 	/// Feed the eof marker to the parser.
@@ -161,7 +158,7 @@ impl<'x, P: Parse> PushDriver<'x, P> {
 	/// After the eof marker has been fed to the parser, no further data can
 	/// be fed.
 	pub fn feed_eof(&mut self) {
-		self.token_source.get_mut().push_eof();
+		self.inner.get_inner_mut().push_eof();
 	}
 
 	/// Return the amount of bytes which have not been read from the buffer
@@ -172,7 +169,7 @@ impl<'x, P: Parse> PushDriver<'x, P> {
 	/// to `feed()`) has been processed (and only if that chunk is owned by
 	/// the parser).
 	pub fn buffered(&self) -> usize {
-		self.token_source.get_ref().len()
+		self.inner.get_inner().len()
 	}
 
 	/// Return a reference to the internal buffer BufferQueue
@@ -180,27 +177,27 @@ impl<'x, P: Parse> PushDriver<'x, P> {
 	/// This can be used to force dropping of all memory in case of error
 	/// conditions.
 	pub fn get_buffer_mut(&mut self) -> &mut BufferQueue<'x> {
-		self.token_source.get_mut()
+		self.inner.get_inner_mut()
 	}
 
 	/// Access the lexer
 	pub fn get_lexer(&self) -> &Lexer {
-		self.token_source.get_lexer()
+		self.inner.get_lexer()
 	}
 
 	/// Access the lexer, mutably
 	pub fn get_lexer_mut(&mut self) -> &mut Lexer {
-		self.token_source.get_lexer_mut()
+		self.inner.get_lexer_mut()
 	}
 
 	/// Access the parser
 	pub fn get_parser(&self) -> &P {
-		&self.parser
+		self.inner.get_parser()
 	}
 
 	/// Access the parser, mutably
 	pub fn get_parser_mut(&mut self) -> &mut P {
-		&mut self.parser
+		self.inner.get_parser_mut()
 	}
 
 	/// Release all temporary buffers
@@ -209,8 +206,8 @@ impl<'x, P: Parse> PushDriver<'x, P> {
 	/// processed by the parser for a while and the memory is better used
 	/// elsewhere.
 	pub fn release_temporaries(&mut self) {
-		self.token_source.get_lexer_mut().release_temporaries();
-		self.parser.release_temporaries();
+		self.inner.get_lexer_mut().release_temporaries();
+		self.inner.get_parser_mut().release_temporaries();
 	}
 }
 
@@ -228,7 +225,7 @@ impl<P: Parse> EventRead for PushDriver<'_, P> {
 	/// returned again by the parser on the next invocation without reading
 	/// further data from the source).
 	fn read(&mut self) -> Result<Option<Self::Output>> {
-		self.parser.parse(&mut self.token_source)
+		self.inner.read()
 	}
 }
 
