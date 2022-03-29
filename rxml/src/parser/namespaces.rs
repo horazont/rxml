@@ -132,7 +132,6 @@ enum State {
 
 struct ElementScratchpad {
 	phyqname: RawQName,
-	attributes: Vec<(RawQName, CData)>,
 	default_decl: Option<NamespaceName>,
 	nsdecl: HashMap<NCName, NamespaceName>,
 }
@@ -141,7 +140,6 @@ impl ElementScratchpad {
 	fn new(phyqname: RawQName) -> Self {
 		Self {
 			phyqname,
-			attributes: Vec::new(),
 			default_decl: None,
 			nsdecl: HashMap::new(),
 		}
@@ -167,6 +165,7 @@ pub struct NamespaceResolver {
 	fixed_xml_namespace: NamespaceName,
 	namespace_stack: Vec<(Option<NamespaceName>, HashMap<NCName, NamespaceName>)>,
 	scratchpad: Option<ElementScratchpad>,
+	phyattributes: Vec<(RawQName, CData)>,
 	event_length_accum: usize,
 	state: State,
 	poison: Option<Error>,
@@ -186,6 +185,7 @@ impl NamespaceResolver {
 			ctx,
 			fixed_xml_namespace,
 			namespace_stack: Vec::new(),
+			phyattributes: Vec::new(),
 			scratchpad: None,
 			event_length_accum: 0,
 			state: State::Initial,
@@ -201,7 +201,8 @@ impl NamespaceResolver {
 	}
 
 	fn start_element(&mut self, phyqn: RawQName) -> Result<()> {
-		assert!(self.scratchpad.is_none());
+		debug_assert!(self.scratchpad.is_none());
+		debug_assert_eq!(self.phyattributes.len(), 0);
 		self.scratchpad = Some(ElementScratchpad::new(phyqn));
 		Ok(())
 	}
@@ -224,14 +225,14 @@ impl NamespaceResolver {
 			scratchpad.default_decl = Some(self.ctx.intern_cdata(value));
 			return Ok(());
 		}
-		scratchpad.attributes.push((phyqn, value));
+		self.phyattributes.push((phyqn, value));
 		Ok(())
 	}
 
-	fn lookup_prefix<'x>(&self, prefix: Option<&'x str>) -> Result<Option<&NamespaceName>> {
+	fn lookup_prefix<'x>(namespace_stack: &'x Vec<(Option<NamespaceName>, HashMap<NCName, NamespaceName>)>, fixed_xml_namespace: &'x NamespaceName, prefix: Option<&str>) -> Result<Option<&'x NamespaceName>> {
 		match prefix {
 			None => {
-				for (default_decl, _) in self.namespace_stack.iter().rev() {
+				for (default_decl, _) in namespace_stack.iter().rev() {
 					if let Some(nsuri) = default_decl.as_ref() {
 						if nsuri.len() > 0 {
 							return Ok(Some(nsuri));
@@ -244,9 +245,9 @@ impl NamespaceResolver {
 			}
 			Some(prefix) => {
 				if prefix == "xml" {
-					return Ok(Some(&self.fixed_xml_namespace));
+					return Ok(Some(fixed_xml_namespace));
 				} else {
-					for (_, decls) in self.namespace_stack.iter().rev() {
+					for (_, decls) in namespace_stack.iter().rev() {
 						if let Some(nsuri) = decls.get(prefix) {
 							return Ok(Some(nsuri));
 						}
@@ -264,7 +265,6 @@ impl NamespaceResolver {
 	fn finish_element(&mut self) -> Result<ResolvedEvent> {
 		let ElementScratchpad {
 			phyqname,
-			attributes: mut phyattributes,
 			default_decl,
 			nsdecl,
 		} = self.scratchpad.take().unwrap();
@@ -273,11 +273,11 @@ impl NamespaceResolver {
 
 		self.namespace_stack.push((default_decl, nsdecl));
 
-		let mut attributes = HashMap::with_capacity(phyattributes.len());
-		for (phyqn, value) in phyattributes.drain(..) {
+		let mut attributes = HashMap::with_capacity(self.phyattributes.len());
+		for (phyqn, value) in self.phyattributes.drain(..) {
 			let nsuri = match phyqn.0 {
 				Some(prefix) => {
-					add_context(self.lookup_prefix(Some(&prefix)), errctx::ERRCTX_ATTNAME)?.cloned()
+					add_context(Self::lookup_prefix(&self.namespace_stack, &self.fixed_xml_namespace, Some(&prefix)), errctx::ERRCTX_ATTNAME)?.cloned()
 				}
 				None => None,
 			};
@@ -297,7 +297,7 @@ impl NamespaceResolver {
 
 		let qname = (
 			add_context(
-				self.lookup_prefix(phyqname.0.as_ref().map(|x| x.as_str())),
+				Self::lookup_prefix(&self.namespace_stack, &self.fixed_xml_namespace, phyqname.0.as_ref().map(|x| x.as_str())),
 				errctx::ERRCTX_NAME,
 			)?
 			.cloned(),
