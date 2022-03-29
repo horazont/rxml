@@ -5,132 +5,96 @@ pub trait ByteSelect {
 	fn select(&self, b: u8) -> bool;
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct ByteRange(u8, u8);
-
-impl ByteSelect for ByteRange {
+impl<T: Fn(u8) -> bool> ByteSelect for T {
 	fn select(&self, b: u8) -> bool {
-		self.0 <= b && b <= self.1
+		self(b)
 	}
 }
-
-impl ByteSelect for u8 {
-	fn select(&self, b: u8) -> bool {
-		b == *self
-	}
-}
-
-impl ByteSelect for &'_ [u8] {
-	fn select(&self, b: u8) -> bool {
-		for r in *self {
-			if *r == b {
-				return true;
-			}
-		}
-		false
-	}
-}
-
-pub struct AnyByte();
-
-impl ByteSelect for AnyByte {
-	fn select(&self, _b: u8) -> bool {
-		true
-	}
-}
-
-impl ByteSelect for &'_ [ByteRange] {
-	fn select(&self, b: u8) -> bool {
-		for r in *self {
-			if r.select(b) {
-				return true;
-			}
-		}
-		false
-	}
-}
-
-pub static CLASS_XML_NAMESTART_BYTE: &'static [ByteRange] = &[
-	ByteRange(b':', b':'),
-	ByteRange(b'A', b'Z'),
-	ByteRange(b'_', b'_'),
-	ByteRange(b'a', b'z'),
-	// and now essentially all utf8 start bytes
-	ByteRange(b'\xc3', b'\xf7'),
-];
-
-pub static CLASS_XML_NAME_BYTE: &'static [ByteRange] = &[
-	ByteRange(b':', b':'),
-	ByteRange(b'-', b'-'),
-	ByteRange(b'.', b'.'),
-	ByteRange(b'A', b'Z'),
-	ByteRange(b'_', b'_'),
-	ByteRange(b'0', b'9'),
-	ByteRange(b'a', b'z'),
-	ByteRange(b'\x80', b'\xff'),
-];
-
-pub static CLASS_XML_MAY_NONCHAR_BYTE: &'static [ByteRange] = &[
-	ByteRange(b'\x00', b'\x08'),
-	ByteRange(b'\x0b', b'\x0c'),
-	ByteRange(b'\x0e', b'\x1f'),
-];
-
-/// Valid bytes for XML character data minus delimiters (XML 1.0 § 2.4 [14])
-///
-/// This is like [`VALID_XML_CDATA_RANGES`], but the following chars are excluded:
-///
-/// - `'\r'`, because that gets folded into a line feed (`\n`) on input
-/// - `'&'`, because that may start an entity or character reference
-/// - `'<'`, because that may start an element or CDATA section
-/// - `']'`, because that may end a CDATA section and the sequence `]]>` is not allowed verbatimly in character data in XML documents
-pub static CLASS_XML_TEXT_DELIMITED_BYTE: &'static [ByteRange] = &[
-	ByteRange(b'\x09', b'\x0a'),
-	ByteRange(b'\x20', b'\x25'), // excludes &
-	ByteRange(b'\x27', b'\x3b'), // excludes <
-	ByteRange(b'\x3d', b'\x5c'), // excludes ]
-	ByteRange(b'\x5e', b'\x7f'),
-	ByteRange(b'\x80', b'\xff'),
-];
-
-// XML 1.0 § 2.4 [14]
-pub static CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE: &'static [ByteRange] = &[
-	ByteRange(b'\x09', b'\x0a'),
-	// excluding CR as that gets folded to LF
-	ByteRange(b'\x20', b'\x5c'), // excludes ]
-	ByteRange(b'\x5e', b'\x7f'),
-	ByteRange(b'\x80', b'\xff'),
-];
 
 /// XML whitespace
-pub static CLASS_XML_SPACE_BYTE: &'static [u8] = b" \t\r\n";
+pub fn is_space(b: u8) -> bool {
+	b == b' ' || b == b'\n' || b == b'\t' || b == b'\r'
+}
+
+/// Bytes not valid for XML character data (XML 1.0 § 2.4 [14])
+fn is_text_delimiter(b: u8) -> bool {
+	// - `'\r'`, because that gets folded into a line feed (`\n`) on input
+	// - `'&'`, because that may start an entity or character reference
+	// - `'<'`, because that may start an element or CDATA section
+	// - `']'`, because that may end a CDATA section and the sequence `]]>` is not allowed verbatimly in character data in XML documents
+	// - < 0x09, 0x0b..0x20, because XML forbids ASCII control characters except whitespace
+	b == b'\r' || b == b'&' || b == b'<' || b == b']' || b < 0x09 || (b > 0x0a && b < 0x20)
+}
+
+pub fn maybe_text(b: u8) -> bool {
+	!is_text_delimiter(b)
+}
+
+// XML 1.0 § 2.4 [14]
+fn is_cdata_content_delimiter(b: u8) -> bool {
+	b == b'\r' || b == b']' || b < 0x09 || (b > 0x0a && b < 0x20)
+}
+
+pub fn maybe_cdata_content(b: u8) -> bool {
+	!is_cdata_content_delimiter(b)
+}
+
+fn is_name_delimiter(b: u8) -> bool {
+	if b == b':' || b == b'-' || b == b'.' || b == b'_' {
+		return false
+	}
+	if b >= b'a' && b <= b'z' {
+		return false
+	}
+	if b >= b'0' && b <= b'9' {
+		return false
+	}
+	if b >= b'A' && b <= b'Z' {
+		return false
+	}
+	if b >= 0x80 {
+		return false
+	}
+	true
+}
+
+pub fn maybe_name(b: u8) -> bool {
+	!is_name_delimiter(b)
+}
 
 // XML 1.0 § 2.3 [10]
-pub const CLASS_XML_CDATA_ATT_APOS_DELIMITED_BYTE: &'static [ByteRange] = &[
+fn is_attval_apos_delimiter(b: u8) -> bool {
 	// exclude all whitespace except normal space because those get converted into spaces
-	ByteRange(b'\x20', b'\x25'), // excludes &, '
-	ByteRange(b'\x28', b'\x3b'), // excludes <
-	ByteRange(b'\x3d', b'\xff'),
-];
+	b < 0x20 || b == b'&' || b == b'\'' || b == b'<'
+}
+
+pub fn maybe_attval_apos(b: u8) -> bool {
+	!is_attval_apos_delimiter(b)
+}
 
 // XML 1.0 § 2.3 [10]
-pub const CLASS_XML_CDATA_ATT_QUOT_DELIMITED_BYTE: &'static [ByteRange] = &[
+fn is_attval_quot_delimiter(b: u8) -> bool {
 	// exclude all whitespace except normal space because those get converted into spaces
-	ByteRange(b'\x20', b'\x21'), // excludes "
-	ByteRange(b'\x23', b'\x25'), // excludes &
-	ByteRange(b'\x27', b'\x3b'), // excludes <
-	ByteRange(b'\x3d', b'\xff'),
-];
+	b < 0x20 || b == b'&' || b == b'"' || b == b'<'
+}
+
+pub fn maybe_attval_quot(b: u8) -> bool {
+	!is_attval_quot_delimiter(b)
+}
+
+pub fn is_nonchar_byte(b: u8) -> bool {
+	b <= 0x08 || b == 0x0b || b == 0x0c || (b >= 0x0e && b <= 0x1f)
+}
 
 /// Valid XML decimal characters (for character references)
-pub static CLASS_XML_DECIMAL_DIGIT_BYTE: ByteRange = ByteRange(b'0', b'9');
+pub fn is_decimal_digit(b: u8) -> bool {
+	b >= b'0' && b <= b'9'
+}
 
 /// Valid XML hexadecimal characters (for character references)
-pub static CLASS_XML_HEXADECIMAL_DIGIT_BYTE: &'static [ByteRange] = &[
-	CLASS_XML_DECIMAL_DIGIT_BYTE,
-	ByteRange(b'a', b'f'),
-	ByteRange(b'A', b'F'),
-];
+pub fn is_hexadecimal_digit(b: u8) -> bool {
+	(b >= b'0' && b <= b'9') || (b >= b'a' && b <= b'f') || (b >= b'A' && b <= b'F')
+}
 
 /// Valid codepoints for XML character data minus delimiters (XML 1.0 § 2.4 [14])
 ///
@@ -196,60 +160,20 @@ mod tests {
 	use rxml_validation::selectors::*;
 
 	#[test]
-	fn test_namestart_byte_range_is_superset_of_namestart_codepoint_range() {
-		let mut buf = [0u8; 4];
-		for cp in 0x0..=0x10ffffu32 {
-			if let Some(ch) = std::char::from_u32(cp) {
-				let s = ch.encode_utf8(&mut buf[..]);
-				if CLASS_XML_NAMESTART.select(ch)
-					&& !CLASS_XML_NAMESTART_BYTE.select(s.as_bytes()[0])
-				{
-					panic!(
-						"byte selector rejects byte 0x{:02x}, which is the start byte of U+{:04x}",
-						s.as_bytes()[0],
-						cp
-					);
-				}
-			}
-		}
-	}
-
-	#[test]
-	fn test_namestart_byte_range_rejects_invalid_utf8_start_bytes() {
-		assert!(!CLASS_XML_NAMESTART_BYTE.select(b'\xc0'));
-		for b in 0x80..0xc2u8 {
-			if CLASS_XML_NAMESTART_BYTE.select(b) {
-				panic!(
-					"accepts byte 0x{:02x}, which is not a valid UTF-8 start byte",
-					b
-				);
-			}
-		}
-		for b in 0xf8..0xffu8 {
-			if CLASS_XML_NAMESTART_BYTE.select(b) {
-				panic!(
-					"accepts byte 0x{:02x}, which is not a valid UTF-8 start byte",
-					b
-				);
-			}
-		}
-	}
-
-	#[test]
 	fn test_nonchar_byte_range_is_superset_of_nonchar_codepoint_range() {
 		let mut buf = [0u8; 4];
 		for cp in 0x0..=0x10ffffu32 {
 			if let Some(ch) = std::char::from_u32(cp) {
 				let s = ch.encode_utf8(&mut buf[..]);
 				if !CLASS_XML_NONCHAR.select(ch) {
-					let mut ok = false;
+					let mut ok = true;
 					for b in s.as_bytes() {
-						if !CLASS_XML_MAY_NONCHAR_BYTE.select(*b) {
-							ok = true;
+						if is_nonchar_byte(*b) {
+							ok = false;
 						}
 					}
 					if !ok {
-						panic!("byte selector accepts all bytes of U+{:04x}", cp);
+						panic!("byte selector rejects any byte of U+{:04x}", cp);
 					}
 				}
 			}
@@ -264,7 +188,7 @@ mod tests {
 			if let Some(ch) = std::char::from_u32(cp) {
 				let s = ch.encode_utf8(&mut buf[..]);
 				for b in s.as_bytes() {
-					if class.select(ch) && !CLASS_XML_TEXT_DELIMITED_BYTE.select(*b) {
+					if class.select(ch) && is_text_delimiter(*b) {
 						panic!("byte selector rejects byte 0x{:02x}, which is a utf-8 byte of U+{:04x}", *b, cp);
 					}
 				}
@@ -280,7 +204,7 @@ mod tests {
 				let s = ch.encode_utf8(&mut buf[..]);
 				for b in s.as_bytes() {
 					if CLASS_XML_CDATA_SECTION_CONTENTS_DELIMITED.select(ch)
-						&& !CLASS_XML_CDATA_CDATASECTION_DELIMITED_BYTE.select(*b)
+						&& is_cdata_content_delimiter(*b)
 					{
 						panic!("byte selector rejects byte 0x{:02x}, which is a utf-8 byte of U+{:04x}", *b, cp);
 					}
@@ -296,7 +220,7 @@ mod tests {
 			if let Some(ch) = std::char::from_u32(cp) {
 				let s = ch.encode_utf8(&mut buf[..]);
 				for b in s.as_bytes() {
-					if CLASS_XML_NAME.select(ch) && !CLASS_XML_NAME_BYTE.select(*b) {
+					if CLASS_XML_NAME.select(ch) && is_name_delimiter(*b) {
 						panic!("byte selector rejects byte 0x{:02x}, which is a utf-8 byte of U+{:04x}", *b, cp);
 					}
 				}
@@ -312,7 +236,7 @@ mod tests {
 			if let Some(ch) = std::char::from_u32(cp) {
 				let s = ch.encode_utf8(&mut buf[..]);
 				for b in s.as_bytes() {
-					if class.select(ch) && !CLASS_XML_CDATA_ATT_APOS_DELIMITED_BYTE.select(*b) {
+					if class.select(ch) && is_attval_apos_delimiter(*b) {
 						panic!("byte selector rejects byte 0x{:02x}, which is a utf-8 byte of U+{:04x}", *b, cp);
 					}
 				}
@@ -328,7 +252,7 @@ mod tests {
 			if let Some(ch) = std::char::from_u32(cp) {
 				let s = ch.encode_utf8(&mut buf[..]);
 				for b in s.as_bytes() {
-					if class.select(ch) && !CLASS_XML_CDATA_ATT_QUOT_DELIMITED_BYTE.select(*b) {
+					if class.select(ch) && is_attval_quot_delimiter(*b) {
 						panic!("byte selector rejects byte 0x{:02x}, which is a utf-8 byte of U+{:04x}", *b, cp);
 					}
 				}

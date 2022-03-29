@@ -7,7 +7,7 @@ pub enum Endbyte {
 	Delimiter(u8),
 }
 
-fn find_first_not<B: ByteSelect>(src: &[u8], s: &B) -> Option<usize> {
+fn find_first_not<B: ByteSelect + ?Sized>(src: &[u8], s: &B) -> Option<usize> {
 	for i in 0..src.len() {
 		// range check via for loop
 		let b = {
@@ -25,7 +25,7 @@ fn find_first_not<B: ByteSelect>(src: &[u8], s: &B) -> Option<usize> {
 	None
 }
 
-pub fn read_validated_bytes<B: ByteSelect>(
+pub fn read_validated_bytes<B: ByteSelect + ?Sized>(
 	r: &mut &[u8],
 	selector: &B,
 	limit: usize,
@@ -54,7 +54,7 @@ pub fn read_validated_bytes<B: ByteSelect>(
 	}
 }
 
-pub fn skip_matching_bytes<B: ByteSelect>(r: &mut &[u8], selector: &B) -> (usize, Endbyte) {
+pub fn skip_matching_bytes<B: ByteSelect + ?Sized>(r: &mut &[u8], selector: &B) -> (usize, Endbyte) {
 	let end_pos = match find_first_not(*r, selector) {
 		None => r.len(),
 		Some(p) => p,
