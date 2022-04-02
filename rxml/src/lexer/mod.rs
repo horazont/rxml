@@ -1348,8 +1348,13 @@ impl Lexer {
 			}
 			// XML 1.0 §2.3 [10] AttValue
 			ElementState::AttributeValue(delim, false) => {
-				let selector = if delim == b'\'' { &maybe_attval_apos as &dyn Fn(_) -> _} else { &maybe_attval_quot as &dyn Fn(_) -> _};
-				match self.read_validated(r, &selector, self.opts.max_token_length)? {
+				// let selector = if delim == b'\'' { &maybe_attval_apos as &dyn Fn(_) -> _} else { &maybe_attval_quot as &dyn Fn(_) -> _};
+				let result = if delim == b'\'' {
+					self.read_validated(r, &maybe_attval_apos, self.opts.max_token_length)?
+				} else {
+					self.read_validated(r, &maybe_attval_quot, self.opts.max_token_length)?
+				};
+				match result {
 					Endbyte::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
 					Endbyte::Limit => Err(Self::token_length_error()),
 					Endbyte::Delimiter(utf8ch) => {
