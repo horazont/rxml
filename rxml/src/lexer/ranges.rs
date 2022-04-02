@@ -1,8 +1,22 @@
 #[cfg(test)]
-use rxml_validation::selectors::{CodepointRange, CodepointRanges, CLASS_XML_NAMESTART};
+use rxml_validation::selectors::{CodepointRange, CodepointRanges};
 
 pub trait ByteSelect {
 	fn select(&self, b: u8) -> bool;
+}
+
+pub(crate) struct AnyByte();
+
+impl ByteSelect for AnyByte {
+	fn select(&self, _b: u8) -> bool {
+		true
+	}
+}
+
+impl ByteSelect for u8 {
+	fn select(&self, b: u8) -> bool {
+		*self == b
+	}
 }
 
 impl<T: Fn(u8) -> bool> ByteSelect for T {
