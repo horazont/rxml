@@ -83,8 +83,7 @@ pub use lexer::{Lexer, LexerOptions};
 #[doc(inline)]
 pub use parser::{
 	LexerAdapter, NamespaceResolver, Parse, Parser, RawEvent, RawParser, RawQName, ResolvedEvent,
-	ResolvedQName, XMLVersion, XMLNS_XML,
-	WithContext,
+	ResolvedQName, WithContext, XMLVersion, XMLNS_XML,
 };
 pub use strings::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
 #[doc(inline)]

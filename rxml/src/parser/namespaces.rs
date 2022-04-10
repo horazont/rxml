@@ -229,7 +229,11 @@ impl NamespaceResolver {
 		Ok(())
 	}
 
-	fn lookup_prefix<'x>(namespace_stack: &'x Vec<(Option<NamespaceName>, HashMap<NCName, NamespaceName>)>, fixed_xml_namespace: &'x NamespaceName, prefix: Option<&str>) -> Result<Option<&'x NamespaceName>> {
+	fn lookup_prefix<'x>(
+		namespace_stack: &'x Vec<(Option<NamespaceName>, HashMap<NCName, NamespaceName>)>,
+		fixed_xml_namespace: &'x NamespaceName,
+		prefix: Option<&str>,
+	) -> Result<Option<&'x NamespaceName>> {
 		match prefix {
 			None => {
 				for (default_decl, _) in namespace_stack.iter().rev() {
@@ -276,9 +280,15 @@ impl NamespaceResolver {
 		let mut attributes = HashMap::with_capacity(self.phyattributes.len());
 		for (phyqn, value) in self.phyattributes.drain(..) {
 			let nsuri = match phyqn.0 {
-				Some(prefix) => {
-					add_context(Self::lookup_prefix(&self.namespace_stack, &self.fixed_xml_namespace, Some(&prefix)), errctx::ERRCTX_ATTNAME)?.cloned()
-				}
+				Some(prefix) => add_context(
+					Self::lookup_prefix(
+						&self.namespace_stack,
+						&self.fixed_xml_namespace,
+						Some(&prefix),
+					),
+					errctx::ERRCTX_ATTNAME,
+				)?
+				.cloned(),
 				None => None,
 			};
 			let qn = (nsuri, phyqn.1);
@@ -297,7 +307,11 @@ impl NamespaceResolver {
 
 		let qname = (
 			add_context(
-				Self::lookup_prefix(&self.namespace_stack, &self.fixed_xml_namespace, phyqname.0.as_ref().map(|x| x.as_str())),
+				Self::lookup_prefix(
+					&self.namespace_stack,
+					&self.fixed_xml_namespace,
+					phyqname.0.as_ref().map(|x| x.as_str()),
+				),
 				errctx::ERRCTX_NAME,
 			)?
 			.cloned(),

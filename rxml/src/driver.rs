@@ -128,7 +128,9 @@ impl<'x, P: Parse + parser::WithContext> parser::WithContext for PushDriver<'x, 
 impl<'x, P: Parse> PushDriver<'x, P> {
 	/// Compose a new PushDriver from parts
 	pub fn wrap(lexer: Lexer, parser: P) -> Self {
-		Self{inner: PullDriver::wrap(BufferQueue::new(), lexer, parser)}
+		Self {
+			inner: PullDriver::wrap(BufferQueue::new(), lexer, parser),
+		}
 	}
 
 	/// Feed a chunck of data to the parser.

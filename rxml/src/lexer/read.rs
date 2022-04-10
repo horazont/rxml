@@ -54,7 +54,10 @@ pub fn read_validated_bytes<B: ByteSelect + ?Sized>(
 	}
 }
 
-pub fn skip_matching_bytes<B: ByteSelect + ?Sized>(r: &mut &[u8], selector: &B) -> (usize, Endbyte) {
+pub fn skip_matching_bytes<B: ByteSelect + ?Sized>(
+	r: &mut &[u8],
+	selector: &B,
+) -> (usize, Endbyte) {
 	let end_pos = match find_first_not(*r, selector) {
 		None => r.len(),
 		Some(p) => p,

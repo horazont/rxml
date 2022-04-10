@@ -1087,50 +1087,46 @@ impl Lexer {
 
 			// read until next `<` or `&`, which are the only things which
 			// can break us out of this state.
-			ContentState::Initial => match self.read_validated(
-				r,
-				&maybe_text,
-				self.opts.max_token_length,
-			)? {
-				Endbyte::Eof => Ok(ST(State::Eof, self.maybe_flush_scratchpad_as_text(0)?)),
-				Endbyte::Limit => Ok(ST(
-					State::Content(ContentState::Initial),
-					self.maybe_flush_scratchpad_as_text(0)?,
-				)),
-				Endbyte::Delimiter(b) => match self.lex_posttext_char(b)? {
-					Some(st) => Ok(st),
-					// not a "special" char but not text either -> error
-					None => Err(Error::NotWellFormed(WFError::InvalidChar(
-						ERRCTX_TEXT,
-						b as u32,
-						false,
-					))),
-				},
-			},
-			ContentState::CDataSection => match self.read_validated(
-				r,
-				&maybe_cdata_content,
-				self.opts.max_token_length,
-			)? {
-				Endbyte::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
-				Endbyte::Limit => Ok(ST(
-					State::Content(ContentState::CDataSection),
-					self.maybe_flush_scratchpad_as_text(0)?,
-				)),
-				// -> transition into the "first delimiter found" state
-				Endbyte::Delimiter(b) => match b {
-					b']' => Ok(ST(
-						State::Content(ContentState::MaybeCDataEnd(true, 1)),
-						None,
+			ContentState::Initial => {
+				match self.read_validated(r, &maybe_text, self.opts.max_token_length)? {
+					Endbyte::Eof => Ok(ST(State::Eof, self.maybe_flush_scratchpad_as_text(0)?)),
+					Endbyte::Limit => Ok(ST(
+						State::Content(ContentState::Initial),
+						self.maybe_flush_scratchpad_as_text(0)?,
 					)),
-					b'\r' => Ok(ST(State::Content(ContentState::MaybeCRLF(true)), None)),
-					_ => Err(Error::NotWellFormed(WFError::InvalidChar(
-						ERRCTX_CDATA_SECTION,
-						b as u32,
-						false,
-					))),
-				},
-			},
+					Endbyte::Delimiter(b) => match self.lex_posttext_char(b)? {
+						Some(st) => Ok(st),
+						// not a "special" char but not text either -> error
+						None => Err(Error::NotWellFormed(WFError::InvalidChar(
+							ERRCTX_TEXT,
+							b as u32,
+							false,
+						))),
+					},
+				}
+			}
+			ContentState::CDataSection => {
+				match self.read_validated(r, &maybe_cdata_content, self.opts.max_token_length)? {
+					Endbyte::Eof => Err(Error::wfeof(ERRCTX_CDATA_SECTION)),
+					Endbyte::Limit => Ok(ST(
+						State::Content(ContentState::CDataSection),
+						self.maybe_flush_scratchpad_as_text(0)?,
+					)),
+					// -> transition into the "first delimiter found" state
+					Endbyte::Delimiter(b) => match b {
+						b']' => Ok(ST(
+							State::Content(ContentState::MaybeCDataEnd(true, 1)),
+							None,
+						)),
+						b'\r' => Ok(ST(State::Content(ContentState::MaybeCRLF(true)), None)),
+						_ => Err(Error::NotWellFormed(WFError::InvalidChar(
+							ERRCTX_CDATA_SECTION,
+							b as u32,
+							false,
+						))),
+					},
+				}
+			}
 			ContentState::Whitespace => match self.skip_matching(r, &is_space) {
 				(_, Ok(Endbyte::Eof)) | (_, Ok(Endbyte::Limit)) => Ok(ST(State::Eof, None)),
 				(_, Ok(Endbyte::Delimiter(b))) => match b {
@@ -1152,14 +1148,8 @@ impl Lexer {
 	fn lex_element_postblank(&mut self, kind: ElementKind, b: u8) -> Result<ElementState> {
 		match b {
 			b' ' | b'\t' | b'\r' | b'\n' => Ok(ElementState::Blank),
-			b'"' => Ok(ElementState::AttributeValue(
-				b'"',
-				false,
-			)),
-			b'\'' => Ok(ElementState::AttributeValue(
-				b'\'',
-				false,
-			)),
+			b'"' => Ok(ElementState::AttributeValue(b'"', false)),
+			b'\'' => Ok(ElementState::AttributeValue(b'\'', false)),
 			b'=' => Ok(ElementState::Eq),
 			b'>' => match kind {
 				ElementKind::Footer | ElementKind::Header => Ok(ElementState::Close),
@@ -1207,12 +1197,7 @@ impl Lexer {
 		}
 	}
 
-	fn lex_attval_next(
-		&mut self,
-		delim: u8,
-		b: u8,
-		element_kind: ElementKind,
-	) -> Result<ST> {
+	fn lex_attval_next(&mut self, delim: u8, b: u8, element_kind: ElementKind) -> Result<ST> {
 		match b {
 			b'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(
 				ERRCTX_ATTVAL,
@@ -1272,11 +1257,7 @@ impl Lexer {
 	fn lex_element(&mut self, kind: ElementKind, state: ElementState, r: &mut &[u8]) -> Result<ST> {
 		match state {
 			ElementState::Start | ElementState::Name => {
-				match self.read_validated(
-					r,
-					&maybe_name,
-					self.opts.max_token_length,
-				)? {
+				match self.read_validated(r, &maybe_name, self.opts.max_token_length)? {
 					Endbyte::Eof => Err(Error::wfeof(ERRCTX_NAME)),
 					Endbyte::Limit => Err(Self::token_length_error()),
 					Endbyte::Delimiter(ch) => {
@@ -1292,12 +1273,8 @@ impl Lexer {
 								Token::Name(metrics, name)
 							} else {
 								match kind {
-									ElementKind::Header => {
-										Token::ElementHeadStart(metrics, name)
-									}
-									ElementKind::Footer => {
-										Token::ElementFootStart(metrics, name)
-									}
+									ElementKind::Header => Token::ElementHeadStart(metrics, name),
+									ElementKind::Footer => Token::ElementFootStart(metrics, name),
 									ElementKind::XMLDecl => panic!("invalid state"),
 								}
 							}),
@@ -1348,13 +1325,15 @@ impl Lexer {
 			}
 			// XML 1.0 §2.3 [10] AttValue
 			ElementState::AttributeValue(delim, false) => {
-				let selector = if delim == b'\'' { &maybe_attval_apos as &dyn Fn(_) -> _} else { &maybe_attval_quot as &dyn Fn(_) -> _};
+				let selector = if delim == b'\'' {
+					&maybe_attval_apos as &dyn Fn(_) -> _
+				} else {
+					&maybe_attval_quot as &dyn Fn(_) -> _
+				};
 				match self.read_validated(r, &selector, self.opts.max_token_length)? {
 					Endbyte::Eof => Err(Error::wfeof(ERRCTX_ATTVAL)),
 					Endbyte::Limit => Err(Self::token_length_error()),
-					Endbyte::Delimiter(utf8ch) => {
-						self.lex_attval_next(delim, utf8ch, kind)
-					}
+					Endbyte::Delimiter(utf8ch) => self.lex_attval_next(delim, utf8ch, kind),
 				}
 			}
 			// CRLF normalization for attributes; cannot reuse the element mechanism here because we have to carry around the delimiter and stuff
@@ -1433,9 +1412,7 @@ impl Lexer {
 		r: &mut &[u8],
 	) -> Result<ST> {
 		let result = match kind {
-			RefKind::Entity => {
-				self.read_validated(r, &maybe_name, MAX_REFERENCE_LENGTH)?
-			}
+			RefKind::Entity => self.read_validated(r, &maybe_name, MAX_REFERENCE_LENGTH)?,
 			RefKind::Char(CharRefRadix::Decimal) => {
 				self.read_validated(r, &is_decimal_digit, MAX_REFERENCE_LENGTH)?
 			}
@@ -2654,13 +2631,13 @@ mod tests {
 		let err = lex_err(b"<a foo='\x00'/>", 128).unwrap();
 		match err {
 			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false)) => (),
-			other => panic!("unexpected error: {:?}", other)
+			other => panic!("unexpected error: {:?}", other),
 		}
 
 		let err = lex_err(b"<a foo='\x1f'/>", 128).unwrap();
 		match err {
 			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false)) => (),
-			other => panic!("unexpected error: {:?}", other)
+			other => panic!("unexpected error: {:?}", other),
 		}
 	}
 

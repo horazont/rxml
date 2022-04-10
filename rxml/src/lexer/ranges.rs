@@ -55,19 +55,19 @@ pub fn maybe_cdata_content(b: u8) -> bool {
 
 fn is_name_delimiter(b: u8) -> bool {
 	if b == b':' || b == b'-' || b == b'.' || b == b'_' {
-		return false
+		return false;
 	}
 	if b >= b'a' && b <= b'z' {
-		return false
+		return false;
 	}
 	if b >= b'0' && b <= b'9' {
-		return false
+		return false;
 	}
 	if b >= b'A' && b <= b'Z' {
-		return false
+		return false;
 	}
 	if b >= 0x80 {
-		return false
+		return false;
 	}
 	true
 }

@@ -2970,7 +2970,7 @@ fn huge_document(c: &mut Criterion) {
 	});
 }
 
-criterion_group!{
+criterion_group! {
 	name = benches;
 	config = Criterion::default().sample_size(300);
 	targets = short_document, huge_document
