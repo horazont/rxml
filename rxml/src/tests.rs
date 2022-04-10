@@ -13,10 +13,10 @@ fn feedparser_can_read_xml_document() {
 
 	let mut fp = FeedParser::default();
 	let mut out = Vec::<ResolvedEvent>::new();
-	fp.feed(&doc[..]);
-	let result = fp.read_all_eof(|ev| {
+	let mut doc_buf = &doc[..];
+	let result = as_eof_flag(fp.parse_all(&mut doc_buf, false, |ev| {
 		out.push(ev);
-	});
+	}));
 	assert_eq!(result.unwrap(), false);
 
 	{
@@ -81,8 +81,9 @@ fn feedparser_can_read_xml_document() {
 		};
 	}
 
-	fp.feed_eof();
-	let result = fp.read_all_eof(|ev| panic!("unexpected event: {:?}", ev));
+	let result = as_eof_flag(fp.parse_all(&mut doc_buf, true, |ev| {
+		panic!("unexpected event: {:?}", ev)
+	}));
 	assert_eq!(result.unwrap(), true);
 }
 
@@ -92,16 +93,16 @@ fn feedparser_can_handle_chunked_input() {
 
 	let mut fp = FeedParser::default();
 	let mut out = Vec::<ResolvedEvent>::new();
-	for chunk in doc.chunks(10) {
-		fp.feed(chunk.to_vec());
+	for mut chunk in doc.chunks(10) {
 		loop {
-			match fp.read() {
+			match fp.parse(&mut chunk, false) {
 				Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => break,
 				Err(other) => panic!("unexpected error: {:?}", other),
 				Ok(Some(ev)) => out.push(ev),
 				Ok(None) => break,
 			}
 		}
+		assert_eq!(chunk.len(), 0);
 	}
 
 	{
@@ -165,8 +166,9 @@ fn feedparser_can_handle_chunked_input() {
 		};
 	}
 
-	fp.feed_eof();
-	let result = fp.read_all_eof(|ev| panic!("unexpected event: {:?}", ev));
+	let result = as_eof_flag(fp.parse_all(&mut &[][..], true, |ev| {
+		panic!("unexpected event: {:?}", ev)
+	}));
 	assert_eq!(result.unwrap(), true);
 }
 
@@ -248,12 +250,10 @@ fn pullparser_can_read_xml_document() {
 
 /// This is only used to drop-in tests with util/fuzz-to-test.py
 #[allow(dead_code)]
-fn run_fuzz_test(data: &[u8]) -> Result<()> {
+fn run_fuzz_test(mut data: &[u8]) -> Result<()> {
 	let mut fp = FeedParser::default();
-	fp.feed(data);
-	fp.feed_eof();
 	loop {
-		match fp.read() {
+		match fp.parse(&mut data, true) {
 			Ok(None) => return Ok(()),
 			Err(e) => return Err(e),
 			Ok(Some(_)) => (),

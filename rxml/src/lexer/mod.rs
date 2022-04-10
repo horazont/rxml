@@ -1583,10 +1583,45 @@ impl Lexer {
 	///
 	/// Returns `None` if a valid end of file is reached, a token if a valid
 	/// token is encountered or an error otherwise.
+	pub fn lex_buffer<T: bytes::Buf>(
+		&mut self,
+		r: &mut T,
+		at_eof: bool,
+	) -> CrateResult<Option<Token>> {
+		loop {
+			let mut chunk = r.chunk();
+			let prev_len = chunk.len();
+			// Only consider eof if the current chunk is truly the last one, which can be determined by checking that the chunk contains all remaining bytes.
+			self.has_eof = at_eof && prev_len == r.remaining();
+			let result = self.lex_bytes_raw(&mut chunk);
+			let new_len = chunk.len();
+			r.advance(prev_len - new_len);
+			match result {
+				Err(Error::EndOfBuffer) => {
+					if r.remaining() > 0 {
+						// more to read, but probably not in this chunk -> iterate
+						continue;
+					} else {
+						// nothing more to read, return wouldblock
+						return Ok(result?);
+					}
+				}
+				// any other result is to be returned immediately
+				other => return Ok(other?),
+			}
+		}
+	}
+
+	/// Alias of [`lex_buffer()`].
+	///
+	///    [`lex_buffer()`]: Self::lex_buffer
+	#[deprecated(
+		since = "0.7.0",
+		note = "use `lex_buffer` instead (`&[u8]` implements `Buf`)"
+	)]
 	#[inline]
 	pub fn lex_bytes(&mut self, r: &mut &[u8], at_eof: bool) -> CrateResult<Option<Token>> {
-		self.has_eof = at_eof;
-		Ok(self.lex_bytes_raw(r)?)
+		self.lex_buffer(r, at_eof)
 	}
 
 	/// Lex bytes from the reader until either an error occurs, a valid
@@ -1643,7 +1678,7 @@ impl Lexer {
 				Ok(b) => (b, b.len() == 0),
 			};
 			let orig_len = buf.len();
-			let result = self.lex_bytes(&mut buf, eof);
+			let result = self.lex_buffer(&mut buf, eof);
 			let new_len = buf.len();
 			assert!(new_len <= orig_len);
 			r.consume(orig_len - new_len);

@@ -9,7 +9,7 @@ use tokio::io::AsyncBufRead;
 use futures_core::stream::Stream;
 
 use crate::lexer::{Lexer, LexerOptions};
-use crate::parser::{Parse, Parser};
+use crate::parser::{BufferLexerAdapter, Parse, Parser};
 use crate::{Error, Result};
 
 use pin_project_lite::pin_project;
@@ -142,18 +142,6 @@ pub trait AsyncEventReadExt: AsyncEventRead {
 
 impl<T: AsyncEventRead> AsyncEventReadExt for T {}
 
-struct AsyncLexerAdapter<'x, 'y> {
-	lexer: &'x mut Lexer,
-	buf: &'x mut &'y [u8],
-	eof: bool,
-}
-
-impl<'x, 'y> crate::parser::TokenRead for AsyncLexerAdapter<'x, 'y> {
-	fn read(&mut self) -> Result<Option<crate::lexer::Token>> {
-		self.lexer.lex_bytes(self.buf, self.eof)
-	}
-}
-
 pin_project! {
 	/**
 	# Asynchronous driver for parsers
@@ -249,7 +237,7 @@ impl<T, P: Parse> AsyncDriver<T, P> {
 		may_eof: bool,
 	) -> (usize, Poll<Result<Option<P::Output>>>) {
 		let old_len = buf.len();
-		let result = parser.parse(&mut AsyncLexerAdapter {
+		let result = parser.parse(&mut BufferLexerAdapter {
 			lexer,
 			buf,
 			eof: may_eof && old_len == 0,
