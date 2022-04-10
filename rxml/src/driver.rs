@@ -204,6 +204,11 @@ impl<P: Parse> PushDriver<P> {
 		&mut self.parser
 	}
 
+	/// Decompose the driver into the inner lexer and the inner parser.
+	pub fn into_inner(self) -> (Lexer, P) {
+		(self.lexer, self.parser)
+	}
+
 	/// Release all temporary buffers
 	///
 	/// This is sensible to call when it is expected that no more data will be

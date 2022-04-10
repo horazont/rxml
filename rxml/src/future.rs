@@ -8,8 +8,9 @@ use tokio::io::AsyncBufRead;
 #[cfg(feature = "stream")]
 use futures_core::stream::Stream;
 
+use crate::driver::PushDriver;
 use crate::lexer::{Lexer, LexerOptions};
-use crate::parser::{BufferLexerAdapter, Parse, Parser};
+use crate::parser::{Parse, Parser};
 use crate::{Error, Result};
 
 use pin_project_lite::pin_project;
@@ -152,11 +153,11 @@ pin_project! {
 	In general, it is advised to use the [`AsyncParser`] alias which
 	specializes this struct for use with the default [`Parser`].
 	*/
-	pub struct AsyncDriver<T, P>{
+	#[project = AsyncDriverProj]
+	pub struct AsyncDriver<T, P: Parse>{
 		#[pin]
 		inner: T,
-		lexer: Lexer,
-		parser: P,
+		driver: PushDriver<P>,
 	}
 }
 
@@ -178,14 +179,14 @@ impl<T: AsyncBufRead, P: Parse> AsyncDriver<T, P> {
 	pub fn wrap(inner: T, lexer: Lexer, parser: P) -> Self {
 		Self {
 			inner,
-			lexer,
-			parser,
+			driver: PushDriver::wrap(lexer, parser),
 		}
 	}
 
 	/// Decompose the AsyncDriver into its parts
 	pub fn into_inner(self) -> (T, Lexer, P) {
-		(self.inner, self.lexer, self.parser)
+		let (lexer, parser) = self.driver.into_inner();
+		(self.inner, lexer, parser)
 	}
 
 	/// Access the inner AsyncBufRead
@@ -200,22 +201,22 @@ impl<T: AsyncBufRead, P: Parse> AsyncDriver<T, P> {
 
 	/// Access the lexer
 	pub fn get_lexer(&self) -> &Lexer {
-		&self.lexer
+		self.driver.get_lexer()
 	}
 
 	/// Access the lexer, mutably
 	pub fn get_lexer_mut(&mut self) -> &mut Lexer {
-		&mut self.lexer
+		self.driver.get_lexer_mut()
 	}
 
 	/// Access the parser
 	pub fn get_parser(&self) -> &P {
-		&self.parser
+		self.driver.get_parser()
 	}
 
 	/// Access the parser, mutably
 	pub fn get_parser_mut(&mut self) -> &mut P {
-		&mut self.parser
+		self.driver.get_parser_mut()
 	}
 
 	/// Release temporary buffers and other ephemeral allocations.
@@ -223,25 +224,21 @@ impl<T: AsyncBufRead, P: Parse> AsyncDriver<T, P> {
 	/// This is sensible to call when it is expected that no more data will be
 	/// processed by the parser for a while and the memory is better used
 	/// elsewhere.
+	#[inline(always)]
 	pub fn release_temporaries(&mut self) {
-		self.lexer.release_temporaries();
-		self.parser.release_temporaries();
+		self.driver.release_temporaries();
 	}
 }
 
 impl<T, P: Parse> AsyncDriver<T, P> {
 	fn parse_step(
-		lexer: &mut Lexer,
-		parser: &mut P,
+		driver: &mut PushDriver<P>,
 		buf: &mut &[u8],
 		may_eof: bool,
 	) -> (usize, Poll<Result<Option<P::Output>>>) {
 		let old_len = buf.len();
-		let result = parser.parse(&mut BufferLexerAdapter {
-			lexer,
-			buf,
-			eof: may_eof && old_len == 0,
-		});
+		// need to guard eof with the buf len here, because we only know that we are actually at eof by the fact that we see an empty buffer.
+		let result = driver.parse(buf, may_eof && buf.len() == 0);
 		let new_len = buf.len();
 		assert!(new_len <= old_len);
 		let read = old_len - new_len;
@@ -265,12 +262,12 @@ impl<T: AsyncBufRead, P: Parse> AsyncEventRead for AsyncDriver<T, P> {
 				Poll::Pending => {
 					// a.k.a. WouldBlock
 					// we always try an empty read here because the lexer needs that
-					return Self::parse_step(this.lexer, this.parser, &mut &[][..], false).1;
+					return Self::parse_step(this.driver, &mut &[][..], false).1;
 				}
 				Poll::Ready(Ok(buf)) => buf,
 				Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
 			};
-			let (consumed, result) = Self::parse_step(this.lexer, this.parser, &mut buf, true);
+			let (consumed, result) = Self::parse_step(this.driver, &mut buf, true);
 			this.inner.as_mut().consume(consumed);
 			match result {
 				// if we get a pending here, we need to ask the source for more data!
