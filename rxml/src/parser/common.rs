@@ -141,6 +141,20 @@ impl<R: io::BufRead> TokenRead for LexerAdapter<R> {
 	}
 }
 
+/// Ephemeral wrapper a [`Lexer`](crate::Lexer) and a generic buffer to
+/// provide a copy-free [`TokenRead`].
+pub(crate) struct BufferLexerAdapter<'x, T: bytes::Buf> {
+	pub(crate) lexer: &'x mut Lexer,
+	pub(crate) buf: &'x mut T,
+	pub(crate) eof: bool,
+}
+
+impl<'x, T: bytes::Buf> TokenRead for BufferLexerAdapter<'x, T> {
+	fn read(&mut self) -> Result<Option<Token>> {
+		self.lexer.lex_buffer(self.buf, self.eof)
+	}
+}
+
 /**
 Trait for parser-like structs.
 */

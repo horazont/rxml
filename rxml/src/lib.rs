@@ -24,12 +24,10 @@ with namespacing.
 ```
 use rxml::EventRead;
 let doc = b"<?xml version='1.0'?><hello>World!</hello>";
-let mut fp = rxml::FeedParser::new();
-fp.feed(doc.to_vec());
-fp.feed_eof();
-let result = fp.read_all_eof(|ev| {
+let mut fp = rxml::FeedParser::default();
+let result = rxml::as_eof_flag(fp.parse_all(&mut &doc[..], true, |ev| {
 	println!("got event: {:?}", ev);
-});
+}));
 // true indicates eof
 assert_eq!(result.unwrap(), true);
 ```
@@ -72,6 +70,7 @@ pub mod writer;
 mod tests;
 
 #[doc(inline)]
+#[allow(deprecated)]
 pub use bufq::BufferQueue;
 pub use context::Context;
 #[doc(inline)]

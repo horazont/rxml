@@ -10,12 +10,11 @@ top-level documentation.
 
 use std::io;
 
-use crate::bufq::BufferQueue;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::lexer::{Lexer, LexerOptions};
 use crate::parser;
-use crate::parser::{LexerAdapter, Parse, Parser};
+use crate::parser::{BufferLexerAdapter, LexerAdapter, Parse, Parser};
 
 /**
 # Source for individual XML events
@@ -84,9 +83,9 @@ This is a generic non-blocking push-based driver for objects implementing the
 In general, it is advised to use the [`FeedParser`] alias which specializes
 this struct for use with the default [`Parser`].
 */
-#[repr(transparent)]
-pub struct PushDriver<'x, P: Parse> {
-	inner: PullDriver<BufferQueue<'x>, P>,
+pub struct PushDriver<P: Parse> {
+	parser: P,
+	lexer: Lexer,
 }
 
 /// Convert end-of-file-ness of a result to a boolean flag.
@@ -104,102 +103,110 @@ pub fn as_eof_flag(r: Result<()>) -> Result<bool> {
 	}
 }
 
-impl<'x, P: Parse + Default> Default for PushDriver<'x, P> {
+impl<P: Parse + Default> Default for PushDriver<P> {
 	/// Create a new push driver using the defaults for its parser and lexer.
 	fn default() -> Self {
 		Self::wrap(Lexer::new(), P::default())
 	}
 }
 
-impl<'x, P: Parse + Default> PushDriver<'x, P> {
+impl<P: Parse + Default> PushDriver<P> {
 	#[deprecated(since = "0.7.0", note = "use the Default trait implementation instead")]
 	pub fn new() -> Self {
 		Self::default()
 	}
 }
 
-impl<'x, P: Parse + parser::WithContext> parser::WithContext for PushDriver<'x, P> {
+impl<P: Parse + parser::WithContext> parser::WithContext for PushDriver<P> {
 	/// Create a new PushDriver, using the given context for the parser.
 	fn with_context(ctx: parser::RcPtr<Context>) -> Self {
 		Self::wrap(Lexer::new(), P::with_context(ctx))
 	}
 }
 
-impl<'x, P: Parse> PushDriver<'x, P> {
+impl<P: Parse> PushDriver<P> {
 	/// Compose a new PushDriver from parts
 	pub fn wrap(lexer: Lexer, parser: P) -> Self {
-		Self {
-			inner: PullDriver::wrap(BufferQueue::new(), lexer, parser),
+		Self { parser, lexer }
+	}
+
+	/// Parse bytes from a buffer, until either an error occurs, a valid
+	/// event is emitted or EOF is reached.
+	///
+	/// This function is intended for parsing a document without keeping it
+	/// fully in memory and without blocking on the input. As it is fed
+	/// buffers, it is not possible to distinguish the case where the end of
+	/// a buffer is reached vs. the case where the end of the input overall
+	/// has been reached from just looking at the buffer itself.
+	///
+	/// The `at_eof` argument is thus required to signal to the parser whether
+	/// the end of the passed buffer is identical to the end of the complete
+	/// document.
+	///
+	/// If the end of the buffer is reached while `at_eof` is false, an I/O
+	/// error of kind [`std::io::ErrorKind::WouldBlock`] is emitted.
+	pub fn parse<T: bytes::Buf>(
+		&mut self,
+		data: &mut T,
+		at_eof: bool,
+	) -> Result<Option<P::Output>> {
+		self.parser.parse(&mut BufferLexerAdapter {
+			lexer: &mut self.lexer,
+			buf: data,
+			eof: at_eof,
+		})
+	}
+
+	/// Parse all data from the given buffer and pass the generated events to
+	/// a callback.
+	///
+	/// In contrast to [`parse()`], on success, this always consumes the
+	/// entire buffer. Events which are encountered while processing the
+	/// buffer are handed to the given callback.
+	///
+	/// The end-of-file behaviour is identical to [`parse()`].
+	///
+	/// To obtain a boolean flag instead of an I/O error on end of file, pass
+	/// the result through [`as_eof_flag`].
+	///
+	///    [`parse()`]: Self::parse
+	pub fn parse_all<T: bytes::Buf, F: FnMut(P::Output) -> ()>(
+		&mut self,
+		data: &mut T,
+		at_eof: bool,
+		mut f: F,
+	) -> Result<()> {
+		loop {
+			match self.parse(data, at_eof)? {
+				None => return Ok(()),
+				Some(ev) => f(ev),
+			}
 		}
-	}
-
-	/// Feed a chunck of data to the parser.
-	///
-	/// This enqueues the data for processing, but does not process it right
-	/// away.
-	///
-	/// To process data, call [`read()`] or [`read_all()`].
-	///
-	/// # Panics
-	///
-	/// If [`feed_eof()`] has been called before.
-	///
-	///    [`read()`]: Self::read()
-	///    [`read_all()`]: Self::read_all()
-	///    [`feed_eof()`]: Self::feed_eof()
-	pub fn feed<'a: 'x, T: Into<std::borrow::Cow<'a, [u8]>>>(&mut self, data: T) {
-		self.inner.get_inner_mut().push(data);
-	}
-
-	/// Feed the eof marker to the parser.
-	///
-	/// This is a prerequisite for parsing to terminate with an eof signal
-	/// (returning `true`). Otherwise, `false` will be returned indefinitely
-	/// without emitting any events.
-	///
-	/// After the eof marker has been fed to the parser, no further data can
-	/// be fed.
-	pub fn feed_eof(&mut self) {
-		self.inner.get_inner_mut().push_eof();
-	}
-
-	/// Return the amount of bytes which have not been read from the buffer
-	/// yet.
-	///
-	/// This may not reflect the amount of memory used by the buffer
-	/// accurately, as memory is only released when an entire chunk (as fed
-	/// to `feed()`) has been processed (and only if that chunk is owned by
-	/// the parser).
-	pub fn buffered(&self) -> usize {
-		self.inner.get_inner().len()
-	}
-
-	/// Return a reference to the internal buffer BufferQueue
-	///
-	/// This can be used to force dropping of all memory in case of error
-	/// conditions.
-	pub fn get_buffer_mut(&mut self) -> &mut BufferQueue<'x> {
-		self.inner.get_inner_mut()
 	}
 
 	/// Access the lexer
 	pub fn get_lexer(&self) -> &Lexer {
-		self.inner.get_lexer()
+		&self.lexer
 	}
 
 	/// Access the lexer, mutably
 	pub fn get_lexer_mut(&mut self) -> &mut Lexer {
-		self.inner.get_lexer_mut()
+		&mut self.lexer
 	}
 
 	/// Access the parser
 	pub fn get_parser(&self) -> &P {
-		self.inner.get_parser()
+		&self.parser
 	}
 
 	/// Access the parser, mutably
 	pub fn get_parser_mut(&mut self) -> &mut P {
-		self.inner.get_parser_mut()
+		&mut self.parser
+	}
+
+	/// Decompose the driver into the inner lexer and the inner parser.
+	pub fn into_inner(self) -> (Lexer, P) {
+		(self.lexer, self.parser)
 	}
 
 	/// Release all temporary buffers
@@ -208,26 +215,8 @@ impl<'x, P: Parse> PushDriver<'x, P> {
 	/// processed by the parser for a while and the memory is better used
 	/// elsewhere.
 	pub fn release_temporaries(&mut self) {
-		self.inner.get_lexer_mut().release_temporaries();
-		self.inner.get_parser_mut().release_temporaries();
-	}
-}
-
-impl<P: Parse> EventRead for PushDriver<'_, P> {
-	type Output = P::Output;
-
-	/// Read a single event from the parser.
-	///
-	/// If the EOF has been reached with a valid document, `None` is returned.
-	///
-	/// If the buffered data is not sufficient to create an event, an I/O
-	/// error of [`std::io::ErrorKind::WouldBlock`] is returned.
-	///
-	/// I/O errors may be retried, all other errors are fatal (and will be
-	/// returned again by the parser on the next invocation without reading
-	/// further data from the source).
-	fn read(&mut self) -> Result<Option<Self::Output>> {
-		self.inner.read()
+		self.get_lexer_mut().release_temporaries();
+		self.get_parser_mut().release_temporaries();
 	}
 }
 
@@ -335,18 +324,15 @@ use rxml::{FeedParser, Error, ResolvedEvent, XMLVersion, EventRead};
 use std::io;
 let doc = b"<?xml version='1.0'?><hello>World!</hello>";
 let mut fp = FeedParser::new();
-fp.feed(doc[..10].to_vec());
 // We expect a WouldBlock, because the XML declaration is not complete yet
-let ev = fp.read();
 assert!(matches!(
-	ev.err().unwrap(),
+	fp.parse(&mut &doc[..10], false).err().unwrap(),
 	Error::IO(e) if e.kind() == io::ErrorKind::WouldBlock
 ));
 
-fp.feed(doc[10..25].to_vec());
-// Now we passed the XML declaration (and some), so we expect a corresponding
+// Now we pass the XML declaration (and some), so we expect a corresponding
 // event
-let ev = fp.read();
+let ev = fp.parse(&mut &doc[10..25], false);
 assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XMLVersion::V1_0)));
 ```
 
@@ -358,7 +344,7 @@ one can use the [`PushDriver`] with a [`RawParser`]. Note the caveats in the
 
    [`RawParser`]: crate::parser::RawParser
 */
-pub type FeedParser<'x> = PushDriver<'x, Parser>;
+pub type FeedParser = PushDriver<Parser>;
 
 /**
 # Blocking parsing

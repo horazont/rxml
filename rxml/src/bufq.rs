@@ -7,6 +7,11 @@ pub const ERR_NODATA: &'static str = "no data in buffer";
 /**
 # Zero-copy buffered reader for a queue of byte slices.
 
+**Deprecation notice**: Due to the lifetime requirements of this zero-copy
+approach, it turned out to be non-viable. In version 0.7.0, the
+[`BufferQueue`] was deprecated in favour of recommending the use of
+[`bytes::Buf`] with the redesigned [`PushDriver`] / [`FeedParser`]. *End of deprecation notice.*
+
 The BufferQueue acts as a [`std::io::BufRead`] and [`std::io::Read`]. The
 data which is to be read from it must be provided using the
 [`BufferQueue::push()`] method.
@@ -43,7 +48,14 @@ assert_eq!(&buf[..4], b"2342");
 // zero-length read on eof
 assert_eq!(bq.read(&mut buf).unwrap(), 0);
 ```
+
+   [`PushDriver`]: crate::driver::PushDriver
+   [`FeedParser`]: crate::FeedParser
 */
+#[deprecated(
+	since = "0.7.0",
+	note = "no replacement, `bytes::Buf` and the `FeedParser`/`PushDriver` may be helpful in many cases"
+)]
 pub struct BufferQueue<'x> {
 	q: VecDeque<Cow<'x, [u8]>>,
 	offset: usize,
@@ -51,6 +63,7 @@ pub struct BufferQueue<'x> {
 	eof: bool,
 }
 
+#[allow(deprecated)]
 impl<'x> BufferQueue<'x> {
 	/// Create a new, empty buffer queue.
 	pub fn new() -> Self {
@@ -124,6 +137,7 @@ impl<'x> BufferQueue<'x> {
 	}
 }
 
+#[allow(deprecated)]
 impl io::Read for BufferQueue<'_> {
 	/// Read from the buffer queue.
 	///
@@ -163,6 +177,7 @@ impl io::Read for BufferQueue<'_> {
 	}
 }
 
+#[allow(deprecated)]
 impl io::BufRead for BufferQueue<'_> {
 	/// Return the current buffer contents
 	///
@@ -216,6 +231,7 @@ impl io::BufRead for BufferQueue<'_> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
 	use super::*;
 	use std::io::{BufRead, Read};
