@@ -88,7 +88,7 @@ fn feedparser_can_read_xml_document() {
 
 #[test]
 fn feedparser_can_handle_chunked_input() {
-	let doc = b"<?xml version='1.0'?><root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text</child></root>";
+	let doc = "<?xml version='1.0'?><root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text🐱😸😹😺😻😼😾😿🙀</child></root>".as_bytes();
 
 	let mut fp = FeedParser::default();
 	let mut out = Vec::<ResolvedEvent>::new();
@@ -146,8 +146,8 @@ fn feedparser_can_handle_chunked_input() {
 		};
 		match iter.next().unwrap() {
 			ResolvedEvent::Text(em, cdata) => {
-				assert_eq!(em.len(), 14);
-				assert_eq!(cdata, "with some text");
+				assert_eq!(em.len(), 50);
+				assert_eq!(cdata, "with some text🐱😸😹😺😻😼😾😿🙀");
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
@@ -342,7 +342,7 @@ async fn asyncparser_can_read_xml_document() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn asyncparser_can_handle_chunked_input() {
-	let doc = b"<?xml version='1.0'?>\n<root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text</child></root>";
+	let doc = "<?xml version='1.0'?>\n<root xmlns='urn:uuid:fab98e86-7c09-477c-889c-0313d9877bb4' a=\"foo\" b='bar'><child>with some text🐱😸😹😺😻😼😾😿🙀</child></root>".as_bytes();
 
 	let mut r = &doc[..];
 	let mut r = tokio::io::BufReader::with_capacity(4, &mut r);
@@ -398,8 +398,8 @@ async fn asyncparser_can_handle_chunked_input() {
 		};
 		match iter.next().unwrap() {
 			ResolvedEvent::Text(em, cdata) => {
-				assert_eq!(em.len(), 14);
-				assert_eq!(cdata, "with some text");
+				assert_eq!(em.len(), 50);
+				assert_eq!(cdata, "with some text🐱😸😹😺😻😼😾😿🙀");
 			}
 			other => panic!("unexpected event: {:?}", other),
 		};
