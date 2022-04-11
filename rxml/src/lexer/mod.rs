@@ -1724,42 +1724,39 @@ pub trait Sink {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::bufq::BufferQueue;
 	use crate::error::Error as CrateError;
 	use std::error;
 	use std::fmt;
 	use std::io;
 
 	/// Stream tokens to the sink until the end of stream is reached.
-	fn stream_to_sink<'r, 's, 'l, R: io::BufRead, S: Sink>(
-		l: &'l mut Lexer,
-		r: &'r mut R,
-		s: &'s mut S,
+	fn stream_to_sink<R: bytes::Buf, S: Sink>(
+		l: &mut Lexer,
+		r: &mut R,
+		s: &mut S,
+		at_eof: bool,
 	) -> CrateResult<()> {
 		loop {
-			match l.lex(r) {
-				Ok(Some(tok)) => s.token(tok),
-				Ok(None) => break,
-				Err(CrateError::IO(e)) if e.kind() == io::ErrorKind::WouldBlock => {
-					if let Ok(buf) = r.fill_buf() {
-						if buf.len() > 0 {
-							continue;
-						}
-					}
-					return Err(CrateError::IO(e));
-				}
-				Err(e) => return Err(e),
+			match l.lex_buffer(r, at_eof)? {
+				Some(tok) => s.token(tok),
+				None => break,
 			}
 		}
 		Ok(())
 	}
 
-	fn stream_to_sink_from_bytes<'r, 's, 'l, R: io::BufRead, S: Sink>(
-		l: &'l mut Lexer,
-		r: &'r mut R,
-		s: &'s mut S,
+	fn stream_to_sink_from_bytes<R: io::BufRead, S: Sink>(
+		l: &mut Lexer,
+		r: &mut R,
+		s: &mut S,
 	) -> CrateResult<()> {
-		stream_to_sink(l, r, s)
+		loop {
+			match l.lex(r)? {
+				Some(tok) => s.token(tok),
+				None => break,
+			}
+		}
+		Ok(())
 	}
 
 	struct VecSink {
@@ -1802,28 +1799,26 @@ mod tests {
 		}
 	}
 
-	fn lex(data: &[u8], token_limit: usize) -> (Vec<Token>, CrateResult<()>) {
-		let mut buff = io::BufReader::new(data);
+	fn lex(mut data: &[u8], token_limit: usize) -> (Vec<Token>, CrateResult<()>) {
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
-		let result = stream_to_sink(&mut lexer, &mut buff, &mut sink);
+		let result = stream_to_sink(&mut lexer, &mut data, &mut sink, true);
 		(sink.dest, result)
 	}
 
 	fn lex_chunked(data: &[&[u8]], token_limit: usize) -> (Vec<Token>, CrateResult<()>) {
-		let mut buff = BufferQueue::new();
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
 		for chunk in data.iter() {
-			buff.push(*chunk);
-			match stream_to_sink(&mut lexer, &mut buff, &mut sink) {
+			let mut chunk = *chunk;
+			match stream_to_sink(&mut lexer, &mut chunk, &mut sink, false) {
 				Ok(()) => panic!("unexpected end of tokens"),
 				Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
 				Err(e) => return (sink.dest, Err(e)),
 			}
+			assert_eq!(chunk.len(), 0);
 		}
-		buff.push_eof();
-		let result = stream_to_sink(&mut lexer, &mut buff, &mut sink);
+		let result = stream_to_sink(&mut lexer, &mut &[][..], &mut sink, true);
 		(sink.dest, result)
 	}
 
@@ -1832,11 +1827,10 @@ mod tests {
 		r.err()
 	}
 
-	fn run_fuzz_test(data: &[u8], token_limit: usize) -> CrateResult<Vec<Token>> {
-		let mut buff = io::BufReader::new(data);
+	fn run_fuzz_test(mut data: &[u8], token_limit: usize) -> CrateResult<Vec<Token>> {
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(token_limit);
-		stream_to_sink(&mut lexer, &mut buff, &mut sink)?;
+		stream_to_sink(&mut lexer, &mut data, &mut sink, true)?;
 		Ok(sink.dest)
 	}
 
@@ -2723,22 +2717,8 @@ mod tests {
 	#[test]
 	fn lexer_recovers_from_wouldblock() {
 		let seq = &b"<?xml version='1.0'?>"[..];
-		let mut r = BufferQueue::new();
-		let mut lexer = Lexer::new();
-		let mut sink: Vec<Token> = Vec::new();
-		for chunk in seq.chunks(5) {
-			r.push(std::borrow::Cow::from(chunk));
-			loop {
-				match lexer.lex(&mut r) {
-					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => {
-						break
-					}
-					Err(other) => panic!("unexpected error: {:?}", other),
-					Ok(None) => panic!("unexpected eof signal: {:?}", lexer),
-					Ok(Some(tok)) => sink.push(tok),
-				}
-			}
-		}
+		let (sink, result) = lex_chunked(&seq.chunks(5).collect::<Vec<_>>(), 128);
+		result.unwrap();
 
 		let mut iter = sink.iter();
 		assert_eq!(
@@ -2772,22 +2752,8 @@ mod tests {
 	#[test]
 	fn lexer_recovers_from_wouldblock_within_long_whitespace_with_correct_counting() {
 		let seq = &b"<?xml   version  =  '1.0'  ?>"[..];
-		let mut r = BufferQueue::new();
-		let mut lexer = Lexer::new();
-		let mut sink: Vec<Token> = Vec::new();
-		for chunk in seq.chunks(5) {
-			r.push(std::borrow::Cow::from(chunk));
-			loop {
-				match lexer.lex(&mut r) {
-					Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => {
-						break
-					}
-					Err(other) => panic!("unexpected error: {:?}", other),
-					Ok(None) => panic!("unexpected eof signal: {:?}", lexer),
-					Ok(Some(tok)) => sink.push(tok),
-				}
-			}
-		}
+		let (sink, result) = lex_chunked(&seq.chunks(5).collect::<Vec<_>>(), 128);
+		result.unwrap();
 
 		let mut iter = sink.iter();
 		assert_eq!(
@@ -3322,18 +3288,17 @@ mod tests {
 
 	#[test]
 	fn lexer_emits_close_tag_token_even_at_end_of_buffer() {
-		let mut buf = BufferQueue::new();
-		buf.push(&b"</foo>"[..]);
+		let mut buf = &b"</foo>"[..];
 		let mut lexer = Lexer::new();
-		match lexer.lex(&mut buf) {
+		match lexer.lex_buffer(&mut buf, false) {
 			Ok(Some(Token::ElementFootStart(_, _))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		};
-		match lexer.lex(&mut buf) {
+		match lexer.lex_buffer(&mut buf, false) {
 			Ok(Some(Token::ElementHFEnd(_))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		};
-		match lexer.lex(&mut buf) {
+		match lexer.lex_buffer(&mut buf, false) {
 			Err(CrateError::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => (),
 			other => panic!("unexpected result: {:?}", other),
 		};

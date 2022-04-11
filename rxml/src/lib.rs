@@ -70,6 +70,7 @@ pub mod writer;
 mod tests;
 
 #[doc(inline)]
+#[allow(deprecated)]
 pub use bufq::BufferQueue;
 pub use context::Context;
 #[doc(inline)]
