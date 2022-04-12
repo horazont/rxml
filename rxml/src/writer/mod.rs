@@ -469,6 +469,19 @@ impl Encoder<SimpleNamespaces> {
 	}
 }
 
+impl<T: TrackNamespace> From<T> for Encoder<T> {
+	/// Create an encoder from a [`TrackNamespace`] instance.
+	///
+	/// Use your own custom namespace strategy.
+	fn from(ns: T) -> Self {
+		Self {
+			state: EncoderState::Start,
+			qname_stack: Vec::new(),
+			ns,
+		}
+	}
+}
+
 impl<T: TrackNamespace> Encoder<T> {
 	fn encode_nsdecl<O: BufMut>(
 		prefix: Option<&NCNameStr>,
