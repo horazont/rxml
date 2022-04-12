@@ -85,7 +85,7 @@ impl<T: AsyncEventRead + Unpin + ?Sized> AsyncEventRead for &mut T {
 
 #[cfg(feature = "stream")]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "stream", feature = "async"))))]
-impl<T: AsyncBufRead, P: Parse + Default> Stream for AsyncDriver<T, P> {
+impl<T: AsyncBufRead, P: Parse> Stream for AsyncDriver<T, P> {
 	type Item = Result<P::Output>;
 
 	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
