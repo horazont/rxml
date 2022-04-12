@@ -630,7 +630,7 @@ impl<T: TrackNamespace> Encoder<T> {
 	/// Encode a single item into a BytesMut.
 	///
 	/// This might have a slight performance advantage over
-	/// [`encode_into_bytes`] in some scenarios, as it might be able to give
+	/// [`encode`] in some scenarios, as it might be able to give
 	/// the BytesMut a heads up about required space, thus avoiding frequent
 	/// reallocations.
 	///
@@ -639,7 +639,7 @@ impl<T: TrackNamespace> Encoder<T> {
 	/// long-lived, buffers for serialization before sending data over the
 	/// network, for instance.
 	///
-	///   [`encode_into_bytes`]: Self::encode_into_bytes
+	///   [`encode`]: Self::encode
 	pub fn encode_into_bytes(
 		&mut self,
 		item: Item<'_>,
