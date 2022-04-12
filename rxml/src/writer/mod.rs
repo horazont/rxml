@@ -82,6 +82,14 @@ pub enum Item<'x> {
 	Text(&'x CDataStr),
 
 	/// Footer of an element
+	///
+	/// This can be used either in places where [`Text`] could be used to
+	/// close the most recently opened unclosed element, or it can be used
+	/// instead of [`ElementHeadEnd`] to close the element using `/>`, without
+	/// any child content.
+	///
+	///   [`Text`]: Self::Text
+	///   [`ElementHeadEnd`]: Self::ElementHeadEnd
 	ElementFoot,
 }
 
@@ -395,7 +403,7 @@ pub enum EncodeError {
 	/// Emitted if element start is placed within element heading
 	ElementStartNotAllowed,
 
-	/// Emitted if element foot is placed within element heading
+	/// Emitted if element foot is placed before the first element
 	ElementFootNotAllowed,
 
 	/// Emitted on unbalanced element head start/end
@@ -586,6 +594,18 @@ impl<T: TrackNamespace> Encoder<T> {
 					output.put_u8(b'>');
 					if self.qname_stack.len() == 0 {
 						self.state = EncoderState::EndOfDocument
+					}
+					Ok(())
+				}
+				EncoderState::ElementHead => {
+					output.put_slice(b"/>");
+					self.ns.push();
+					self.ns.pop();
+					self.qname_stack.pop();
+					if self.qname_stack.len() == 0 {
+						self.state = EncoderState::EndOfDocument
+					} else {
+						self.state = EncoderState::Content;
 					}
 					Ok(())
 				}
@@ -1173,6 +1193,78 @@ mod tests_encoder {
 	}
 
 	#[test]
+	fn encode_self_closed_tag() {
+		let mut enc = mkencoder();
+		let mut buf = BytesMut::new();
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		assert_eq!(&buf, &b"<x/>"[..]);
+	}
+
+	#[test]
+	fn self_closed_tag_encoding_ends_document_if_it_closes_the_root() {
+		let mut enc = mkencoder();
+		let mut buf = BytesMut::new();
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::Text("".try_into().unwrap()), &mut buf) {
+			Err(EncodeError::EndOfDocument) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+	}
+
+	#[test]
+	fn self_closed_tag_encoding_allows_content_thereafter() {
+		let mut enc = mkencoder();
+		let mut buf = BytesMut::new();
+		match enc.encode(
+			Item::ElementHeadStart(None, "x".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementHeadEnd, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(
+			Item::ElementHeadStart(None, "y".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::Text("foo".try_into().unwrap()), &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		assert_eq!(&buf[..], b"<x><y/>foo");
+	}
+
+	#[test]
 	fn reject_element_after_end_of_document() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
@@ -1204,23 +1296,6 @@ mod tests_encoder {
 	fn reject_element_foot_before_start() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::ElementFoot, &mut buf) {
-			Err(EncodeError::ElementFootNotAllowed) => (),
-			other => panic!("unexpected encode result: {:?}", other),
-		};
-	}
-
-	#[test]
-	fn reject_element_foot_within_heading() {
-		let mut enc = mkencoder();
-		let mut buf = BytesMut::new();
-		match enc.encode(
-			Item::ElementHeadStart(None, "x".try_into().unwrap()),
-			&mut buf,
-		) {
-			Ok(()) => (),
-			other => panic!("unexpected encode result: {:?}", other),
-		};
 		match enc.encode(Item::ElementFoot, &mut buf) {
 			Err(EncodeError::ElementFootNotAllowed) => (),
 			other => panic!("unexpected encode result: {:?}", other),
