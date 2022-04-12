@@ -43,3 +43,6 @@ harness = false
 [[bench]]
 name = "q"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true
