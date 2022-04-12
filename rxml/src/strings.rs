@@ -460,8 +460,8 @@ rxml_custom_string_type_pair! {
 	/// from a string literal at compile time using the `xml_name` macro from
 	/// [`rxml_proc`](https://docs.rs/rxml_proc).
 	///
-	/// Since [`Name`] derefs to [`String`], all (non-mutable) methods from
-	/// [`String`] are available.
+	/// Since [`Name`] (indirectly) derefs to [`str`], all (non-mutable)
+	/// methods from [`str`] are available.
 	///
 	/// # Formal definition
 	///
@@ -568,8 +568,8 @@ rxml_custom_string_type_pair! {
 	/// created from a string literal at compile time using the `xml_ncname` macro
 	/// from [`rxml_proc`](https://docs.rs/rxml_proc).
 	///
-	/// Since [`NCName`] derefs to [`String`], all (non-mutable) methods from
-	/// [`String`] are available.
+	/// Since [`NCName`] (indirectly) derefs to [`str`], all (non-mutable)
+	/// methods from [`str`] are available.
 	///
 	/// # Formal definition
 	///
@@ -678,8 +678,8 @@ rxml_custom_string_type_pair! {
 	/// created from a string literal at compile time using the `xml_cdata` macro
 	/// from [`rxml_proc`](https://docs.rs/rxml_proc).
 	///
-	/// Since [`CData`] derefs to [`String`], all (non-mutable) methods from
-	/// [`String`] are available.
+	/// Since [`CData`] (indirectly) derefs to [`str`], all (non-mutable)
+	/// methods from [`str`] are available.
 	///
 	/// # Formal definition
 	///
