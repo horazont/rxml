@@ -9,7 +9,7 @@ use std::fmt;
 
 use bytes::{BufMut, BytesMut};
 
-use crate::parser::{NamespaceName, RcPtr, ResolvedEvent, XMLVersion, XMLNS_XML, XMLNS_XMLNS};
+use crate::parser::{NamespaceName, RcPtr, ResolvedEvent, XmlVersion, XMLNS_XML, XMLNS_XMLNS};
 use crate::strings::{CData, CDataStr, NCName, NCNameStr, Name};
 
 static XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
@@ -55,7 +55,7 @@ fn escape<'a, B: BufMut>(out: &'a mut B, data: &'a [u8], specials: &'static [u8]
 ///   [`ResolvedEvent`]: crate::parser::ResolvedEvent
 pub enum Item<'x> {
 	/// XML declaration
-	XMLDeclaration(XMLVersion),
+	XMLDeclaration(XmlVersion),
 
 	/// Start of an element header
 	ElementHeadStart(
@@ -447,12 +447,12 @@ Encodes XML into buffers.
 Encoders are stateful. They can only be used to encode a single XML document and have then to be disposed.
 
 ```rust
-use rxml::{Encoder, Item, XMLVersion};
+use rxml::{Encoder, Item, XmlVersion};
 use bytes::BytesMut;
 
 let mut enc = Encoder::new();
 let mut buf = BytesMut::new();
-enc.encode(Item::XMLDeclaration(XMLVersion::V1_0), &mut buf);
+enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf);
 assert_eq!(&buf[..], b"<?xml version='1.0' encoding='utf-8'?>\n");
 ```
 */
@@ -524,7 +524,7 @@ impl<T: TrackNamespace> Encoder<T> {
 		}
 
 		match item {
-			Item::XMLDeclaration(XMLVersion::V1_0) => match self.state {
+			Item::XMLDeclaration(XmlVersion::V1_0) => match self.state {
 				EncoderState::Start => {
 					output.put_slice(XML_DECL);
 					self.state = EncoderState::Declared;
@@ -1142,11 +1142,11 @@ mod tests_encoder {
 	fn reject_duplicate_xml_declaration() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::XMLDeclaration(XMLVersion::V1_0), &mut buf) {
+		match enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
-		match enc.encode(Item::XMLDeclaration(XMLVersion::V1_0), &mut buf) {
+		match enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf) {
 			Err(EncodeError::MisplacedXMLDeclaration) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
@@ -1199,7 +1199,7 @@ mod tests_encoder {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
-		match enc.encode(Item::XMLDeclaration(XMLVersion::V1_0), &mut buf) {
+		match enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf) {
 			Err(EncodeError::MisplacedXMLDeclaration) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};

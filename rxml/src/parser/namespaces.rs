@@ -11,7 +11,7 @@ use crate::errctx;
 use crate::error::{add_context, Error, Result, XmlError};
 use crate::strings::*;
 
-use super::common::{EventMetrics, XMLVersion, XMLNS_XML};
+use super::common::{EventMetrics, XmlVersion, XMLNS_XML};
 use super::raw::{RawEvent, RawQName};
 
 /// Shared namespace URI
@@ -62,7 +62,7 @@ pub enum ResolvedEvent {
 		/// the closing `?>`.
 		EventMetrics,
 		/// XML version number
-		XMLVersion,
+		XmlVersion,
 	),
 	/// The start of an XML element.
 	StartElement(
@@ -425,14 +425,14 @@ mod tests {
 	fn namespace_resolver_passes_xml_decl() {
 		let (evs, r) = resolve_all(vec![RawEvent::XMLDeclaration(
 			EventMetrics { len: 2342 },
-			XMLVersion::V1_0,
+			XmlVersion::V1_0,
 		)]);
 		r.unwrap();
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
 			ResolvedEvent::XMLDeclaration(em, v) => {
 				assert_eq!(em.len(), 2342);
-				assert_eq!(*v, XMLVersion::V1_0);
+				assert_eq!(*v, XmlVersion::V1_0);
 			}
 			other => panic!("unexpected event: {:?}", other),
 		}

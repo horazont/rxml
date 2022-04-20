@@ -15,7 +15,7 @@ use crate::strings::*;
 Only version 1.0 is supported.
 */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum XMLVersion {
+pub enum XmlVersion {
 	/// XML Version 1.0
 	V1_0,
 }

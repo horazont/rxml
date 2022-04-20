@@ -55,7 +55,7 @@ pub enum RawEvent {
 		/// the closing `?>`.
 		EventMetrics,
 		/// XML version number
-		XMLVersion,
+		XmlVersion,
 	),
 
 	/// Start of an XML element header
@@ -193,7 +193,7 @@ enum State {
 	Initial,
 	Decl {
 		substate: DeclSt,
-		version: Option<XMLVersion>,
+		version: Option<XmlVersion>,
 	},
 	Document(DocSt),
 	End,
@@ -382,7 +382,7 @@ impl RawParser {
 	fn parse_decl<'r, R: TokenRead>(
 		&mut self,
 		state: DeclSt,
-		version: Option<XMLVersion>,
+		version: Option<XmlVersion>,
 		r: &'r mut R,
 	) -> Result<State> {
 		match self.read_token(r)? {
@@ -446,7 +446,7 @@ impl RawParser {
 					if v == "1.0" {
 						Ok(State::Decl {
 							substate: DeclSt::EncodingName,
-							version: Some(XMLVersion::V1_0),
+							version: Some(XmlVersion::V1_0),
 						})
 					} else {
 						Err(Error::RestrictedXml("only XML version 1.0 is allowed"))
@@ -873,7 +873,7 @@ mod tests {
 		]);
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
-			RawEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
+			RawEvent::XMLDeclaration(em, XmlVersion::V1_0) => {
 				assert_eq!(em.len(), 7);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -930,7 +930,7 @@ mod tests {
 		}
 		assert!(matches!(
 			&evs[0],
-			RawEvent::XMLDeclaration(EventMetrics { len: 0 }, XMLVersion::V1_0)
+			RawEvent::XMLDeclaration(EventMetrics { len: 0 }, XmlVersion::V1_0)
 		));
 		assert_eq!(evs.len(), 1);
 	}
@@ -950,7 +950,7 @@ mod tests {
 		let r = parser.parse(&mut reader);
 		assert!(matches!(
 			r.unwrap().unwrap(),
-			RawEvent::XMLDeclaration(EventMetrics { len: 0 }, XMLVersion::V1_0)
+			RawEvent::XMLDeclaration(EventMetrics { len: 0 }, XmlVersion::V1_0)
 		));
 	}
 
@@ -967,7 +967,7 @@ mod tests {
 		]);
 		r.unwrap();
 		match evs.remove(0) {
-			RawEvent::XMLDeclaration(_, XMLVersion::V1_0) => (),
+			RawEvent::XMLDeclaration(_, XmlVersion::V1_0) => (),
 			other => panic!("unexpected event: {:?}", other),
 		}
 		match evs.remove(0) {

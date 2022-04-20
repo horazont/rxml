@@ -82,7 +82,7 @@ pub use lexer::{Lexer, LexerOptions};
 #[doc(inline)]
 pub use parser::{
 	LexerAdapter, NamespaceResolver, Parse, Parser, RawEvent, RawParser, RawQName, ResolvedEvent,
-	ResolvedQName, WithContext, XMLVersion, XMLNS_XML, XMLNS_XMLNS,
+	ResolvedQName, WithContext, XmlVersion, XMLNS_XML, XMLNS_XMLNS,
 };
 pub use strings::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
 #[doc(inline)]
@@ -200,3 +200,6 @@ pub type Event = ResolvedEvent;
 /// Compatibility alias, use [`ResolvedQName`] directly instead.
 #[deprecated(since = "0.7.0", note = "type was renamed to ResolvedQName")]
 pub type QName = ResolvedQName;
+/// Compatibility alias, use [`XmlVersion`] directly instead.
+#[deprecated(since = "0.8.0", note = "type was renamed to XmlVersion")]
+pub type XMLVersion = XmlVersion;
