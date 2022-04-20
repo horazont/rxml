@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::context;
 use crate::errctx;
-use crate::error::{add_context, Error, NWFError, Result, WFError};
+use crate::error::{add_context, Error, Result, XmlError};
 use crate::strings::*;
 
 use super::common::{EventMetrics, XMLVersion, XMLNS_XML};
@@ -214,9 +214,7 @@ impl NamespaceResolver {
 				match scratchpad.nsdecl.entry(phyqn.1) {
 					// XML 1.0
 					// Well-formedness constraint: Unique Att Spec
-					Entry::Occupied(_) => {
-						return Err(Error::NotWellFormed(WFError::DuplicateAttribute))
-					}
+					Entry::Occupied(_) => return Err(Error::Xml(XmlError::DuplicateAttribute)),
 					Entry::Vacant(e) => e.insert(self.ctx.intern_cdata(value)),
 				};
 				return Ok(());
@@ -259,9 +257,9 @@ impl NamespaceResolver {
 				}
 				// Namespaces for XML 1.0
 				// Namespace constraint: Prefix Declared
-				Err(Error::NotNamespaceWellFormed(
-					NWFError::UndeclaredNamespacePrefix(errctx::ERRCTX_UNKNOWN),
-				))
+				Err(Error::Xml(XmlError::UndeclaredNamespacePrefix(
+					errctx::ERRCTX_UNKNOWN,
+				)))
 			}
 		}
 	}
@@ -298,9 +296,7 @@ impl NamespaceResolver {
 				// Namespaces in XML 1.0
 				// Namespace constraint: Attributes Unique
 				// We cannot distinguish between the two violations at this point anymore, and the difference is in most cases irrelevant, so we don't.
-				Entry::Occupied(_) => {
-					return Err(Error::NotWellFormed(WFError::DuplicateAttribute))
-				}
+				Entry::Occupied(_) => return Err(Error::Xml(XmlError::DuplicateAttribute)),
 				Entry::Vacant(e) => e.insert(value),
 			};
 		}
@@ -578,7 +574,7 @@ mod tests {
 			RawEvent::ElementFoot(EventMetrics { len: 6 }),
 		]);
 		match r {
-			Err(Error::NotWellFormed(WFError::DuplicateAttribute)) => (),
+			Err(Error::Xml(XmlError::DuplicateAttribute)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		let mut iter = evs.iter();
@@ -619,14 +615,14 @@ mod tests {
 		{
 			let mut iter = pevs_invalid.iter();
 			match nsr.next(|| Ok(iter.next().cloned())) {
-				Err(Error::NotWellFormed(WFError::DuplicateAttribute)) => (),
+				Err(Error::Xml(XmlError::DuplicateAttribute)) => (),
 				other => panic!("unexpected result: {:?}", other),
 			}
 		}
 		{
 			let mut iter = pevs_valid.iter();
 			match nsr.next(|| Ok(iter.next().cloned())) {
-				Err(Error::NotWellFormed(WFError::DuplicateAttribute)) => (),
+				Err(Error::Xml(XmlError::DuplicateAttribute)) => (),
 				other => panic!("unexpected result: {:?}", other),
 			}
 		}
@@ -883,9 +879,7 @@ mod tests {
 			other => panic!("unexpected event: {:?}", other),
 		}
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(
-				errctx::ERRCTX_NAME,
-			))) => (),
+			Err(Error::Xml(XmlError::UndeclaredNamespacePrefix(errctx::ERRCTX_NAME))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		match iter.next() {
@@ -937,9 +931,7 @@ mod tests {
 			other => panic!("unexpected event: {:?}", other),
 		}
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::UndeclaredNamespacePrefix(
-				errctx::ERRCTX_ATTNAME,
-			))) => (),
+			Err(Error::Xml(XmlError::UndeclaredNamespacePrefix(errctx::ERRCTX_ATTNAME))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		match iter.next() {
@@ -988,7 +980,7 @@ mod tests {
 			other => panic!("unexpected event: {:?}", other),
 		}
 		match r {
-			Err(Error::NotWellFormed(WFError::DuplicateAttribute)) => (),
+			Err(Error::Xml(XmlError::DuplicateAttribute)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		match iter.next() {
@@ -1016,7 +1008,7 @@ mod tests {
 		]);
 		let mut iter = evs.iter();
 		match r {
-			Err(Error::NotWellFormed(WFError::DuplicateAttribute)) => (),
+			Err(Error::Xml(XmlError::DuplicateAttribute)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		match iter.next() {

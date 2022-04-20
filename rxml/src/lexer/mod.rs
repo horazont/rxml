@@ -10,7 +10,7 @@ mod ranges;
 mod read;
 
 use crate::errctx::*;
-use crate::error::{Error as CrateError, ErrorWithContext, Result as CrateResult, WFError};
+use crate::error::{Error as CrateError, ErrorWithContext, Result as CrateResult, XmlError};
 use crate::strings::*;
 use ranges::*;
 use read::Endbyte;
@@ -424,7 +424,7 @@ fn resolve_named_entity(name: &[u8]) -> Result<u8> {
 		b"gt" => Ok(b'>'),
 		b"apos" => Ok(b'\''),
 		b"quot" => Ok(b'"'),
-		_ => Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
+		_ => Err(Error::Xml(XmlError::UndeclaredEntity)),
 	}
 }
 
@@ -438,7 +438,7 @@ fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut Vec<u8>) -> R
 	let ch = match std::char::from_u32(codepoint) {
 		Some(ch) => ch,
 		None => {
-			return Err(Error::NotWellFormed(WFError::InvalidChar(
+			return Err(Error::Xml(XmlError::InvalidChar(
 				ERRCTX_UNKNOWN,
 				codepoint,
 				true,
@@ -451,7 +451,7 @@ fn resolve_char_reference(s: &str, radix: CharRefRadix, into: &mut Vec<u8>) -> R
 		into.extend_from_slice(s.as_bytes());
 		Ok(())
 	} else {
-		Err(Error::NotWellFormed(WFError::InvalidChar(
+		Err(Error::Xml(XmlError::InvalidChar(
 			ERRCTX_UNKNOWN,
 			codepoint,
 			true,
@@ -479,14 +479,14 @@ impl ST {
 #[derive(Debug, Clone, PartialEq, Copy)]
 enum Error {
 	EndOfBuffer,
-	NotWellFormed(WFError),
+	Xml(XmlError),
 	InvalidUtf8Byte(u8),
 	RestrictedXml(&'static str),
 }
 
 impl Error {
 	fn wfeof(ctx: &'static str) -> Error {
-		Error::NotWellFormed(WFError::InvalidEof(ctx))
+		Error::Xml(XmlError::InvalidEof(ctx))
 	}
 
 	fn utf8err(src: &[u8], e: &std::str::Utf8Error) -> Error {
@@ -498,22 +498,22 @@ impl ErrorWithContext for Error {
 	fn with_context(self, ctx: &'static str) -> Self {
 		match self {
 			Self::EndOfBuffer => Self::EndOfBuffer,
-			Self::NotWellFormed(e) => Self::NotWellFormed(e.with_context(ctx)),
+			Self::Xml(e) => Self::Xml(e.with_context(ctx)),
 			Self::InvalidUtf8Byte(b) => Self::InvalidUtf8Byte(b),
 			Self::RestrictedXml(what) => Self::RestrictedXml(what),
 		}
 	}
 }
 
-impl From<WFError> for Error {
-	fn from(other: WFError) -> Self {
-		Self::NotWellFormed(other)
+impl From<XmlError> for Error {
+	fn from(other: XmlError) -> Self {
+		Self::Xml(other)
 	}
 }
 
 impl From<ValidationError> for Error {
 	fn from(other: ValidationError) -> Self {
-		let e: WFError = other.into();
+		let e: XmlError = other.into();
 		e.into()
 	}
 }
@@ -524,7 +524,7 @@ impl From<Error> for crate::Error {
 			Error::EndOfBuffer => {
 				io::Error::new(io::ErrorKind::WouldBlock, "end of current buffer reached").into()
 			}
-			Error::NotWellFormed(e) => Self::NotWellFormed(e),
+			Error::Xml(e) => Self::Xml(e),
 			Error::RestrictedXml(what) => Self::RestrictedXml(what),
 			Error::InvalidUtf8Byte(b) => Self::InvalidUtf8Byte(b),
 		}
@@ -861,7 +861,7 @@ impl Lexer {
 							))
 						} else {
 							self.drop_scratchpad()?;
-							Err(Error::NotWellFormed(WFError::UnexpectedByte(
+							Err(Error::Xml(XmlError::UnexpectedByte(
 								ERRCTX_NAMESTART,
 								byte,
 								None,
@@ -904,7 +904,7 @@ impl Lexer {
 				if i == 1 && b == b'-' {
 					return Err(Error::RestrictedXml("comments"));
 				} else if b != TOK_XML_CDATA_START[i] {
-					return Err(Error::NotWellFormed(WFError::InvalidSyntax(
+					return Err(Error::Xml(XmlError::InvalidSyntax(
 						"malformed cdata section start",
 					)));
 				}
@@ -935,7 +935,7 @@ impl Lexer {
 			None => {
 				if is_nonchar_byte(b) {
 					// non-Char, error
-					Err(Error::NotWellFormed(WFError::InvalidChar(
+					Err(Error::Xml(XmlError::InvalidChar(
 						ERRCTX_TEXT,
 						b as u32,
 						false,
@@ -970,7 +970,7 @@ impl Lexer {
 				2 => {
 					if !in_cdata {
 						// ]]> is forbidden outside CDATA sections -> error
-						Err(Error::NotWellFormed(WFError::InvalidSyntax(
+						Err(Error::Xml(XmlError::InvalidSyntax(
 							"unescaped ']]>' forbidden in text",
 						)))
 					} else {
@@ -1002,7 +1002,7 @@ impl Lexer {
 			if in_cdata {
 				if is_nonchar_byte(b) {
 					// that’s a sneaky one!
-					Err(Error::NotWellFormed(WFError::InvalidChar(
+					Err(Error::Xml(XmlError::InvalidChar(
 						ERRCTX_CDATA_SECTION,
 						b as u32,
 						false,
@@ -1072,7 +1072,7 @@ impl Lexer {
 								self.scratchpad.push(b);
 								Ok(ST(State::Content(ContentState::CDataSection), None))
 							} else {
-								Err(Error::NotWellFormed(WFError::InvalidChar(
+								Err(Error::Xml(XmlError::InvalidChar(
 									ERRCTX_CDATA_SECTION,
 									b as u32,
 									false,
@@ -1097,7 +1097,7 @@ impl Lexer {
 					Endbyte::Delimiter(b) => match self.lex_posttext_char(b)? {
 						Some(st) => Ok(st),
 						// not a "special" char but not text either -> error
-						None => Err(Error::NotWellFormed(WFError::InvalidChar(
+						None => Err(Error::Xml(XmlError::InvalidChar(
 							ERRCTX_TEXT,
 							b as u32,
 							false,
@@ -1119,7 +1119,7 @@ impl Lexer {
 							None,
 						)),
 						b'\r' => Ok(ST(State::Content(ContentState::MaybeCRLF(true)), None)),
-						_ => Err(Error::NotWellFormed(WFError::InvalidChar(
+						_ => Err(Error::Xml(XmlError::InvalidChar(
 							ERRCTX_CDATA_SECTION,
 							b as u32,
 							false,
@@ -1134,7 +1134,7 @@ impl Lexer {
 						State::Content(ContentState::MaybeElement(MaybeElementState::Initial)),
 						None,
 					)),
-					_ => Err(Error::NotWellFormed(WFError::UnexpectedByte(
+					_ => Err(Error::Xml(XmlError::UnexpectedByte(
 						ERRCTX_XML_DECL_END,
 						b,
 						Some(&["Spaces", "<"]),
@@ -1153,7 +1153,7 @@ impl Lexer {
 			b'=' => Ok(ElementState::Eq),
 			b'>' => match kind {
 				ElementKind::Footer | ElementKind::Header => Ok(ElementState::Close),
-				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				ElementKind::XMLDecl => Err(Error::Xml(XmlError::UnexpectedChar(
 					ERRCTX_XML_DECL,
 					'>',
 					Some(&["?"]),
@@ -1161,7 +1161,7 @@ impl Lexer {
 			},
 			b'?' => match kind {
 				ElementKind::XMLDecl => Ok(ElementState::MaybeXMLDeclEnd),
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				_ => Err(Error::Xml(XmlError::UnexpectedChar(
 					ERRCTX_ELEMENT,
 					'?',
 					None,
@@ -1169,12 +1169,12 @@ impl Lexer {
 			},
 			b'/' => match kind {
 				ElementKind::Header => Ok(ElementState::MaybeHeadClose),
-				ElementKind::Footer => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				ElementKind::Footer => Err(Error::Xml(XmlError::UnexpectedChar(
 					ERRCTX_ELEMENT_FOOT,
 					'/',
 					None,
 				))),
-				ElementKind::XMLDecl => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+				ElementKind::XMLDecl => Err(Error::Xml(XmlError::UnexpectedChar(
 					ERRCTX_XML_DECL,
 					'/',
 					None,
@@ -1186,7 +1186,7 @@ impl Lexer {
 				self.scratchpad.push(b);
 				Ok(ElementState::Name)
 			}
-			_ => Err(Error::NotWellFormed(WFError::UnexpectedByte(
+			_ => Err(Error::Xml(XmlError::UnexpectedByte(
 				match kind {
 					ElementKind::XMLDecl => ERRCTX_XML_DECL,
 					_ => ERRCTX_ELEMENT,
@@ -1199,7 +1199,7 @@ impl Lexer {
 
 	fn lex_attval_next(&mut self, delim: u8, b: u8, element_kind: ElementKind) -> Result<ST> {
 		match b {
-			b'<' => Err(Error::NotWellFormed(WFError::UnexpectedChar(
+			b'<' => Err(Error::Xml(XmlError::UnexpectedChar(
 				ERRCTX_ATTVAL,
 				'<',
 				None,
@@ -1246,7 +1246,7 @@ impl Lexer {
 					self.flush_scratchpad_as_complete_cdata()?,
 				)),
 			)),
-			other => Err(Error::NotWellFormed(WFError::InvalidChar(
+			other => Err(Error::Xml(XmlError::InvalidChar(
 				ERRCTX_ATTVAL,
 				other as u32,
 				false,
@@ -1307,7 +1307,7 @@ impl Lexer {
 							&& state == ElementState::SpaceRequired
 							&& nmatching == 0
 						{
-							Err(Error::NotWellFormed(WFError::InvalidSyntax(
+							Err(Error::Xml(XmlError::InvalidSyntax(
 								"space required before attribute names",
 							)))
 						} else {
@@ -1363,7 +1363,7 @@ impl Lexer {
 						Some(Token::XMLDeclEnd(self.metrics(0))),
 					))
 				}
-				Some(b) => Err(Error::NotWellFormed(WFError::UnexpectedByte(
+				Some(b) => Err(Error::Xml(XmlError::UnexpectedByte(
 					ERRCTX_XML_DECL_END,
 					b,
 					Some(&[">"]),
@@ -1378,7 +1378,7 @@ impl Lexer {
 						Some(Token::ElementHeadClose(self.metrics(0))),
 					))
 				}
-				Some(b) => Err(Error::NotWellFormed(WFError::UnexpectedByte(
+				Some(b) => Err(Error::Xml(XmlError::UnexpectedByte(
 					ERRCTX_ELEMENT_CLOSE,
 					b,
 					Some(&[">"]),
@@ -1422,7 +1422,7 @@ impl Lexer {
 		};
 		let result = match result {
 			Endbyte::Eof => return Err(Error::wfeof(ERRCTX_REF)),
-			Endbyte::Limit => return Err(Error::NotWellFormed(WFError::UndeclaredEntity)),
+			Endbyte::Limit => return Err(Error::Xml(XmlError::UndeclaredEntity)),
 			Endbyte::Delimiter(b) => match b {
 				b'#' => {
 					if self.scratchpad.len() > 0 {
@@ -1464,9 +1464,7 @@ impl Lexer {
 				}
 				b';' => {
 					if self.scratchpad.len() == 0 {
-						return Err(Error::NotWellFormed(WFError::InvalidSyntax(
-							"empty reference",
-						)));
+						return Err(Error::Xml(XmlError::InvalidSyntax("empty reference")));
 					}
 					// return to main scratchpad
 					self.swap_scratchpad()?;
@@ -1494,7 +1492,7 @@ impl Lexer {
 		match result {
 			Ok(_) => Ok(ST(ret.to_state(), None)),
 			Err(b) => {
-				return Err(Error::NotWellFormed(WFError::UnexpectedByte(
+				return Err(Error::Xml(XmlError::UnexpectedByte(
 					ERRCTX_REF,
 					b,
 					Some(&[";"]),
@@ -1639,8 +1637,7 @@ impl Lexer {
 	///
 	/// If `fill_buf()` returns an empty buffer, it is treated as the end of
 	/// file. At end of file, either the return value `None` is produced or an
-	/// error (usually a
-	/// [`Error::NotWellFormed`][crate::Error::NotWellFormed]).
+	/// error (usually a [`Error::Xml`][crate::Error::Xml]).
 	///
 	/// # I/O error handling
 	///
@@ -1857,10 +1854,7 @@ mod tests {
 		let err = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink)
 			.err()
 			.unwrap();
-		assert!(!matches!(
-			err,
-			CrateError::NotWellFormed(WFError::InvalidEof(..))
-		));
+		assert!(!matches!(err, CrateError::Xml(XmlError::InvalidEof(..))));
 
 		assert_eq!(
 			sink.dest[0],
@@ -2303,7 +2297,7 @@ mod tests {
 		let mut lexer = Lexer::new();
 		let mut sink = VecSink::new(128);
 		let result = stream_to_sink_from_bytes(&mut lexer, &mut src, &mut sink);
-		assert!(matches!(result, Err(CrateError::NotWellFormed(_))));
+		assert!(matches!(result, Err(CrateError::Xml(_))));
 	}
 
 	#[test]
@@ -2548,19 +2542,19 @@ mod tests {
 	fn lexer_rejects_invalid_namestarts() {
 		let err = lex_err(b"<123/>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedChar(_, '1', None)) => (),
+			CrateError::Xml(XmlError::UnexpectedChar(_, '1', None)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 
 		let err = lex_err(b"<'foo/>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'\'', None)) => (),
+			CrateError::Xml(XmlError::UnexpectedByte(_, b'\'', None)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 
 		let err = lex_err(b"<.bar/>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedChar(_, '.', None)) => (),
+			CrateError::Xml(XmlError::UnexpectedChar(_, '.', None)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -2569,13 +2563,13 @@ mod tests {
 	fn lexer_rejects_invalid_names() {
 		let err = lex_err(b"<foo#/>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedByte(..)) => (),
+			CrateError::Xml(XmlError::UnexpectedByte(..)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 
 		let err = lex_err(b"<f\\a/>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedByte(..)) => (),
+			CrateError::Xml(XmlError::UnexpectedByte(..)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -2583,21 +2577,15 @@ mod tests {
 	#[test]
 	fn lexer_rejects_undeclared_or_invalid_references() {
 		let err = lex_err(b"&123;", 128).unwrap();
-		assert!(matches!(
-			err,
-			CrateError::NotWellFormed(WFError::UndeclaredEntity)
-		));
+		assert!(matches!(err, CrateError::Xml(XmlError::UndeclaredEntity)));
 
 		let err = lex_err(b"&foobar;", 128).unwrap();
-		assert!(matches!(
-			err,
-			CrateError::NotWellFormed(WFError::UndeclaredEntity)
-		));
+		assert!(matches!(err, CrateError::Xml(XmlError::UndeclaredEntity)));
 
 		let err = lex_err(b"&?;", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::UnexpectedByte(_, b'?', _))
+			CrateError::Xml(XmlError::UnexpectedByte(_, b'?', _))
 		));
 	}
 
@@ -2606,7 +2594,7 @@ mod tests {
 		let err = lex_err(b"&#x110000;", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+			CrateError::Xml(XmlError::InvalidChar(_, _, true))
 		));
 	}
 
@@ -2615,13 +2603,13 @@ mod tests {
 		let err = lex_err(b"&#x00;", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+			CrateError::Xml(XmlError::InvalidChar(_, _, true))
 		));
 
 		let err = lex_err(b"&#x1f;", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+			CrateError::Xml(XmlError::InvalidChar(_, _, true))
 		));
 	}
 
@@ -2630,13 +2618,13 @@ mod tests {
 		let err = lex_err(b"<a foo='&#x00;'/>", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+			CrateError::Xml(XmlError::InvalidChar(_, _, true))
 		));
 
 		let err = lex_err(b"<a foo='&#x1f;'/>", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, true))
+			CrateError::Xml(XmlError::InvalidChar(_, _, true))
 		));
 	}
 
@@ -2645,13 +2633,13 @@ mod tests {
 		let err = lex_err(b"\x00", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))
+			CrateError::Xml(XmlError::InvalidChar(_, _, false))
 		));
 
 		let err = lex_err(b"\x1f", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false))
+			CrateError::Xml(XmlError::InvalidChar(_, _, false))
 		));
 	}
 
@@ -2659,13 +2647,13 @@ mod tests {
 	fn lexer_rejects_non_xml_10_chars_verbatim_in_attrs() {
 		let err = lex_err(b"<a foo='\x00'/>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false)) => (),
+			CrateError::Xml(XmlError::InvalidChar(_, _, false)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 
 		let err = lex_err(b"<a foo='\x1f'/>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidChar(_, _, false)) => (),
+			CrateError::Xml(XmlError::InvalidChar(_, _, false)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -2787,10 +2775,7 @@ mod tests {
 	#[test]
 	fn lexer_rejects_missing_whitespace_between_attrvalue_and_attrname() {
 		let err = lex_err(b"<a a='x'b='y'/>", 128).unwrap();
-		assert!(matches!(
-			err,
-			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
-		));
+		assert!(matches!(err, CrateError::Xml(XmlError::InvalidSyntax(_))));
 	}
 
 	#[test]
@@ -2798,41 +2783,32 @@ mod tests {
 		let err = lex_err(b"<a><![CDATA[\x00]]></a>", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+			CrateError::Xml(XmlError::InvalidChar(_, 0u32, false))
 		));
 
 		let err = lex_err(b"<a><![CDATA[]\x00]]></a>", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+			CrateError::Xml(XmlError::InvalidChar(_, 0u32, false))
 		));
 
 		let err = lex_err(b"<a><![CDATA[]]\x00]]></a>", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+			CrateError::Xml(XmlError::InvalidChar(_, 0u32, false))
 		));
 	}
 
 	#[test]
 	fn lexer_rejects_cdata_end_in_text() {
 		let err = lex_err(b"<a>]]></a>", 128).unwrap();
-		assert!(matches!(
-			err,
-			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
-		));
+		assert!(matches!(err, CrateError::Xml(XmlError::InvalidSyntax(_))));
 
 		let err = lex_err(b"<a>]]]></a>", 128).unwrap();
-		assert!(matches!(
-			err,
-			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
-		));
+		assert!(matches!(err, CrateError::Xml(XmlError::InvalidSyntax(_))));
 
 		let err = lex_err(b"<a>]]]]></a>", 128).unwrap();
-		assert!(matches!(
-			err,
-			CrateError::NotWellFormed(WFError::InvalidSyntax(_))
-		));
+		assert!(matches!(err, CrateError::Xml(XmlError::InvalidSyntax(_))));
 	}
 
 	#[test]
@@ -2959,13 +2935,13 @@ mod tests {
 		let err = lex_err(b"<a>]\x00]></a>", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+			CrateError::Xml(XmlError::InvalidChar(_, 0u32, false))
 		));
 
 		let err = lex_err(b"<a>]]\x00></a>", 128).unwrap();
 		assert!(matches!(
 			err,
-			CrateError::NotWellFormed(WFError::InvalidChar(_, 0u32, false))
+			CrateError::Xml(XmlError::InvalidChar(_, 0u32, false))
 		));
 	}
 
@@ -2974,7 +2950,7 @@ mod tests {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"<4foo>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedChar(_, '4', None)) => (),
+			CrateError::Xml(XmlError::UnexpectedChar(_, '4', None)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -2984,7 +2960,7 @@ mod tests {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"</4foo>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedChar(_, '4', None)) => (),
+			CrateError::Xml(XmlError::UnexpectedChar(_, '4', None)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -2994,7 +2970,7 @@ mod tests {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"< >", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::UnexpectedByte(_, b' ', None)) => (),
+			CrateError::Xml(XmlError::UnexpectedByte(_, b' ', None)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3004,7 +2980,7 @@ mod tests {
 		// found via fuzzing by moparisthebest
 		let err = lex_err(b"</ >", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidSyntax(_)) => (),
+			CrateError::Xml(XmlError::InvalidSyntax(_)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3094,7 +3070,7 @@ mod tests {
 	fn lexer_rejects_nonchar_after_cr() {
 		let err = lex_err(b"<a>\r\x01</a>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
+			CrateError::Xml(XmlError::InvalidChar(_, 1, false)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3104,7 +3080,7 @@ mod tests {
 		// found with afl
 		let err = lex_err(b"<a><![CDATA[\r\x01]]></a>", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidChar(_, 1, false)) => (),
+			CrateError::Xml(XmlError::InvalidChar(_, 1, false)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3381,7 +3357,7 @@ mod tests {
 	fn lexer_detect_eof_in_name() {
 		let err = lex_err(b"<aa", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_NAME)) => (),
+			CrateError::Xml(XmlError::InvalidEof(ERRCTX_NAME)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3390,7 +3366,7 @@ mod tests {
 	fn lexer_detect_eof_in_element_head_whitespace() {
 		let err = lex_err(b"<aa  ", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ELEMENT)) => (),
+			CrateError::Xml(XmlError::InvalidEof(ERRCTX_ELEMENT)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3399,7 +3375,7 @@ mod tests {
 	fn lexer_detect_eof_in_attrname() {
 		let err = lex_err(b"<a xxxx", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_NAME)) => (),
+			CrateError::Xml(XmlError::InvalidEof(ERRCTX_NAME)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3408,7 +3384,7 @@ mod tests {
 	fn lexer_detect_eof_after_attrname() {
 		let err = lex_err(b"<a x=", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ELEMENT)) => (),
+			CrateError::Xml(XmlError::InvalidEof(ERRCTX_ELEMENT)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3417,7 +3393,7 @@ mod tests {
 	fn lexer_detect_eof_in_attrval() {
 		let err = lex_err(b"<a x='xyz", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ATTVAL)) => (),
+			CrateError::Xml(XmlError::InvalidEof(ERRCTX_ATTVAL)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -3426,7 +3402,7 @@ mod tests {
 	fn lexer_detect_eof_after_attr() {
 		let err = lex_err(b"<a x=''", 128).unwrap();
 		match err {
-			CrateError::NotWellFormed(WFError::InvalidEof(ERRCTX_ELEMENT)) => (),
+			CrateError::Xml(XmlError::InvalidEof(ERRCTX_ELEMENT)) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}

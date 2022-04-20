@@ -50,7 +50,7 @@ are possible through `.into()`:
 The inverse directions are only available through `try_into`.
 */
 
-use crate::error::{NWFError, WFError, ERRCTX_UNKNOWN};
+use crate::error::{XmlError, ERRCTX_UNKNOWN};
 use rxml_validation::selectors;
 use rxml_validation::selectors::CharSelector;
 pub use rxml_validation::{validate_cdata, validate_name, validate_ncname};
@@ -111,19 +111,19 @@ macro_rules! rxml_custom_string_type {
 		impl $name {
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
-			pub fn from_str<T: AsRef<str>>(s: T) -> Result<Self, WFError> {
+			pub fn from_str<T: AsRef<str>>(s: T) -> Result<Self, XmlError> {
 				s.as_ref().try_into()
 			}
 
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 			#[doc = rxml_safe_str_construct_doc!($name, String, "")]
-			pub fn from_string<T: Into<String>>(s: T) -> Result<Self, WFError> {
+			pub fn from_string<T: Into<String>>(s: T) -> Result<Self, XmlError> {
 				s.into().try_into()
 			}
 
 			#[deprecated(since = "0.4.0", note = "use the TryFrom<> trait implementation instead")]
 			#[doc = rxml_safe_str_construct_doc!($name, SmartString, "")]
-			pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Self, WFError> {
+			pub fn from_smartstring<T: Into<SmartString>>(s: T) -> Result<Self, XmlError> {
 				s.into().try_into()
 			}
 
@@ -288,7 +288,7 @@ macro_rules! rxml_custom_string_type {
 		}
 
 		impl TryFrom<SmartString> for $name {
-			type Error = WFError;
+			type Error = XmlError;
 
 			#[doc = rxml_safe_str_construct_doc!($name, SmartString, "")]
 			fn try_from(other: SmartString) -> Result<Self, Self::Error> {
@@ -298,7 +298,7 @@ macro_rules! rxml_custom_string_type {
 		}
 
 		impl TryFrom<String> for $name {
-			type Error = WFError;
+			type Error = XmlError;
 
 			#[doc = rxml_safe_str_construct_doc!($name, String, "")]
 			fn try_from(other: String) -> Result<Self, Self::Error> {
@@ -308,7 +308,7 @@ macro_rules! rxml_custom_string_type {
 		}
 
 		impl TryFrom<&str> for $name {
-			type Error = WFError;
+			type Error = XmlError;
 
 			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
 			fn try_from(other: &str) -> Result<Self, Self::Error> {
@@ -349,7 +349,7 @@ macro_rules! rxml_custom_str_type {
 
 		impl $name {
 			#[doc = rxml_safe_str_construct_doc!($name, str, "")]
-			pub fn from_str<'x>(s: &'x str) -> Result<&'x Self, WFError> {
+			pub fn from_str<'x>(s: &'x str) -> Result<&'x Self, XmlError> {
 				s.try_into()
 			}
 
@@ -414,7 +414,7 @@ macro_rules! rxml_custom_str_type {
 		}
 
 		impl<'x> TryFrom<&'x str> for &'x $name {
-			type Error = WFError;
+			type Error = XmlError;
 
 			fn try_from(other: &'x str) -> Result<Self, Self::Error> {
 				$check(other)?;
@@ -506,14 +506,14 @@ impl Name {
 	///
 	/// If neither of the two cases apply or the string on either side of the
 	/// colon is empty, an error is returned.
-	pub fn split_name(self) -> Result<(Option<NCName>, NCName), NWFError> {
+	pub fn split_name(self) -> Result<(Option<NCName>, NCName), XmlError> {
 		let mut name = self.0;
 		let colon_pos = match name.find(':') {
 			None => return Ok((None, unsafe { NCName::from_smartstring_unchecked(name) })),
 			Some(pos) => pos,
 		};
 		if colon_pos == 0 || colon_pos == name.len() - 1 {
-			return Err(NWFError::EmptyNamePart(ERRCTX_UNKNOWN));
+			return Err(XmlError::EmptyNamePart(ERRCTX_UNKNOWN));
 		}
 
 		let localname = name.split_off(colon_pos + 1);
@@ -521,11 +521,11 @@ impl Name {
 
 		if localname.find(':').is_some() {
 			// Namespaces in XML 1.0 (Third Edition) namespace-well-formed criterium 1
-			return Err(NWFError::MultiColonName(ERRCTX_UNKNOWN));
+			return Err(XmlError::MultiColonName(ERRCTX_UNKNOWN));
 		};
 		if !selectors::CLASS_XML_NAMESTART.select(localname.chars().next().unwrap()) {
 			// Namespaces in XML 1.0 (Third Edition) NCName production
-			return Err(NWFError::InvalidLocalName(ERRCTX_UNKNOWN));
+			return Err(XmlError::InvalidLocalName(ERRCTX_UNKNOWN));
 		}
 
 		prefix.pop();
@@ -768,7 +768,7 @@ mod tests {
 		let result = nm.split_name();
 		assert!(matches!(
 			result.err().unwrap(),
-			NWFError::InvalidLocalName(_)
+			XmlError::InvalidLocalName(_)
 		));
 	}
 

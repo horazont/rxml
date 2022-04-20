@@ -367,7 +367,7 @@ impl RawParser {
 				self.event_length = 0;
 				Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
 			}
-			Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+			Some(tok) => Err(Error::Xml(XmlError::UnexpectedToken(
 				ERRCTX_DOCBEGIN,
 				tok.name(),
 				Some(&[Token::NAME_ELEMENTHEADSTART, Token::NAME_XMLDECLSTART]),
@@ -396,7 +396,7 @@ impl RawParser {
 								version: version,
 							})
 						} else {
-							Err(Error::NotWellFormed(WFError::InvalidSyntax(
+							Err(Error::Xml(XmlError::InvalidSyntax(
 								"'<?xml' must be followed by version attribute",
 							)))
 						}
@@ -408,7 +408,7 @@ impl RawParser {
 								version: version,
 							})
 						} else {
-							Err(Error::NotWellFormed(WFError::InvalidSyntax("'version' attribute must be followed by '?>' or 'encoding' attribute")))
+							Err(Error::Xml(XmlError::InvalidSyntax("'version' attribute must be followed by '?>' or 'encoding' attribute")))
 						}
 					}
 					DeclSt::StandaloneName => {
@@ -418,10 +418,10 @@ impl RawParser {
 								version: version,
 							})
 						} else {
-							Err(Error::NotWellFormed(WFError::InvalidSyntax("'encoding' attribute must be followed by '?>' or 'standalone' attribute")))
+							Err(Error::Xml(XmlError::InvalidSyntax("'encoding' attribute must be followed by '?>' or 'standalone' attribute")))
 						}
 					}
-					_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+					_ => Err(Error::Xml(XmlError::UnexpectedToken(
 						ERRCTX_XML_DECL,
 						Token::NAME_NAME,
 						None, // TODO: add expected tokens here
@@ -433,7 +433,7 @@ impl RawParser {
 					DeclSt::VersionEq => Ok(DeclSt::VersionValue),
 					DeclSt::EncodingEq => Ok(DeclSt::EncodingValue),
 					DeclSt::StandaloneEq => Ok(DeclSt::StandaloneValue),
-					_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+					_ => Err(Error::Xml(XmlError::UnexpectedToken(
 						ERRCTX_XML_DECL,
 						Token::NAME_EQ,
 						None,
@@ -474,7 +474,7 @@ impl RawParser {
 						))
 					}
 				}
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				_ => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_XML_DECL,
 					Token::NAME_ATTRIBUTEVALUE,
 					None,
@@ -486,13 +486,13 @@ impl RawParser {
 					self.emit_event(ev);
 					Ok(State::Document(DocSt::Element(ElementSt::Expected)))
 				}
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				_ => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_XML_DECL,
 					Token::NAME_XMLDECLEND,
 					None,
 				))),
 			},
-			Some(other) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+			Some(other) => Err(Error::Xml(XmlError::UnexpectedToken(
 				ERRCTX_XML_DECL,
 				other.name(),
 				None,
@@ -509,29 +509,23 @@ impl RawParser {
 				// Namespace constraint: Reserved Prefixes and Namespace Names
 				if localpart == "xml" {
 					if val != XMLNS_XML {
-						return Err(Error::NotNamespaceWellFormed(
-							NWFError::ReservedNamespacePrefix,
-						));
+						return Err(Error::Xml(XmlError::ReservedNamespacePrefix));
 					}
 				} else {
 					if val == XMLNS_XML {
-						return Err(Error::NotNamespaceWellFormed(
-							NWFError::ReservedNamespaceName,
-						));
+						return Err(Error::Xml(XmlError::ReservedNamespaceName));
 					}
 				}
 				// Namespaces for XML 1.0
 				// Namespace constraint: No Prefix Undeclaring
 				if val.len() == 0 {
-					return Err(Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri));
+					return Err(Error::Xml(XmlError::EmptyNamespaceUri));
 				}
 			}
 		} else if localpart == "xmlns" && val == XMLNS_XML {
 			// Namespaces for XML 1.0
 			// Namespace constraint: Reserved Prefixes and Namespace Names
-			return Err(Error::NotNamespaceWellFormed(
-				NWFError::ReservedNamespaceName,
-			));
+			return Err(Error::Xml(XmlError::ReservedNamespaceName));
 		}
 		Ok(RawEvent::Attribute(
 			self.finish_event(),
@@ -569,7 +563,7 @@ impl RawParser {
 					self.emit_event(RawEvent::ElementHeadClose(em));
 					Ok(State::Document(DocSt::CData))
 				}
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				_ => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_ELEMENTHEADCLOSE,
 					None,
@@ -584,7 +578,7 @@ impl RawParser {
 					self.emit_event(RawEvent::ElementHeadClose(em));
 					Ok(self.pop_element(self.fixed_event(0))?)
 				}
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				_ => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_ELEMENTHEADCLOSE,
 					None,
@@ -598,15 +592,13 @@ impl RawParser {
 					let (prefix, localname) = add_context(name.split_name(), ERRCTX_ATTNAME)?;
 					if let Some(prefix) = prefix.as_ref() {
 						if prefix == "xmlns" && localname == "xmlns" {
-							return Err(Error::NotNamespaceWellFormed(
-								NWFError::ReservedNamespacePrefix,
-							));
+							return Err(Error::Xml(XmlError::ReservedNamespacePrefix));
 						}
 					}
 					self.attribute_scratchpad = Some((prefix, localname));
 					Ok(State::Document(DocSt::Element(ElementSt::AttrEq)))
 				}
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				_ => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_NAME,
 					None,
@@ -614,7 +606,7 @@ impl RawParser {
 			},
 			Some(Token::Eq(_)) => match state {
 				ElementSt::AttrEq => Ok(State::Document(DocSt::Element(ElementSt::AttrValue))),
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				_ => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_EQ,
 					None,
@@ -631,13 +623,13 @@ impl RawParser {
 					self.event_length = 0;
 					Ok(State::Document(DocSt::Element(ElementSt::AttrName)))
 				}
-				_ => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				_ => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_ELEMENT,
 					Token::NAME_EQ,
 					None,
 				))),
 			},
-			Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+			Some(tok) => Err(Error::Xml(XmlError::UnexpectedToken(
 				ERRCTX_ELEMENT,
 				tok.name(),
 				None,
@@ -672,12 +664,12 @@ impl RawParser {
 				Some(Token::ElementFootStart(tm, name)) => {
 					self.start_event(&tm);
 					if self.element_stack[self.element_stack.len() - 1] != name {
-						Err(Error::NotWellFormed(WFError::ElementMismatch))
+						Err(Error::Xml(XmlError::ElementMismatch))
 					} else {
 						Ok(State::Document(DocSt::ElementFoot))
 					}
 				}
-				Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				Some(tok) => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_TEXT,
 					tok.name(),
 					Some(&[
@@ -693,7 +685,7 @@ impl RawParser {
 					let ev = self.finish_event();
 					self.pop_element(ev)
 				}
-				Some(other) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+				Some(other) => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_ELEMENT_FOOT,
 					other.name(),
 					Some(&[Token::NAME_ELEMENTHFEND]),
@@ -728,7 +720,7 @@ impl Parse for RawParser {
 					{
 						Ok(State::End)
 					}
-					Some(tok) => Err(Error::NotWellFormed(WFError::UnexpectedToken(
+					Some(tok) => Err(Error::Xml(XmlError::UnexpectedToken(
 						ERRCTX_DOCEND,
 						tok.name(),
 						Some(&["end-of-file"]),
@@ -889,7 +881,7 @@ mod tests {
 		assert!(iter.next().is_none());
 		assert!(matches!(
 			r.err().unwrap(),
-			Error::NotWellFormed(WFError::InvalidEof(ERRCTX_DOCBEGIN))
+			Error::Xml(XmlError::InvalidEof(ERRCTX_DOCBEGIN))
 		));
 	}
 
@@ -930,7 +922,7 @@ mod tests {
 		loop {
 			match parser.parse(&mut reader) {
 				Err(Error::IO(ioerr)) if ioerr.kind() == io::ErrorKind::WouldBlock => continue,
-				Err(Error::NotWellFormed(WFError::InvalidEof(ERRCTX_DOCBEGIN))) => break,
+				Err(Error::Xml(XmlError::InvalidEof(ERRCTX_DOCBEGIN))) => break,
 				Err(other) => panic!("unexpected error: {:?}", other),
 				Ok(Some(ev)) => evs.push(ev),
 				Ok(None) => panic!("unexpected eof: {:?}", parser),
@@ -1209,7 +1201,7 @@ mod tests {
 			ev => panic!("unexpected event: {:?}", ev),
 		}
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)) => (),
+			Err(Error::Xml(XmlError::ReservedNamespacePrefix)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		assert_eq!(evs.len(), 0);
@@ -1271,7 +1263,7 @@ mod tests {
 			ev => panic!("unexpected event: {:?}", ev),
 		}
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)) => (),
+			Err(Error::Xml(XmlError::ReservedNamespacePrefix)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		assert_eq!(evs.len(), 0);
@@ -1295,7 +1287,7 @@ mod tests {
 			ev => panic!("unexpected event: {:?}", ev),
 		}
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespaceName)) => (),
+			Err(Error::Xml(XmlError::ReservedNamespaceName)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		assert_eq!(evs.len(), 0);
@@ -1319,7 +1311,7 @@ mod tests {
 			ev => panic!("unexpected event: {:?}", ev),
 		}
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespaceName)) => (),
+			Err(Error::Xml(XmlError::ReservedNamespaceName)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		assert_eq!(evs.len(), 0);
@@ -1478,7 +1470,7 @@ mod tests {
 			Token::ElementHFEnd(DM),
 		]);
 		match r {
-			Err(Error::NotWellFormed(WFError::ElementMismatch)) => (),
+			Err(Error::Xml(XmlError::ElementMismatch)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		let mut iter = evs.iter();
@@ -1713,12 +1705,12 @@ mod tests {
 		}
 		let r = parser.parse(&mut reader);
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)) => (),
+			Err(Error::Xml(XmlError::ReservedNamespacePrefix)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 		let r = parser.parse(&mut reader);
 		match r {
-			Err(Error::NotNamespaceWellFormed(NWFError::ReservedNamespacePrefix)) => (),
+			Err(Error::Xml(XmlError::ReservedNamespacePrefix)) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 	}
@@ -1736,7 +1728,7 @@ mod tests {
 		];
 		let err = parse_err(toks).unwrap();
 		match err {
-			Error::NotNamespaceWellFormed(NWFError::EmptyNamespaceUri) => (),
+			Error::Xml(XmlError::EmptyNamespaceUri) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}
@@ -1790,7 +1782,7 @@ mod tests {
 			other => panic!("unexpected event: {:?}", other),
 		}
 		match r {
-			Err(Error::NotWellFormed(WFError::UnexpectedToken(_, _, _))) => (),
+			Err(Error::Xml(XmlError::UnexpectedToken(_, _, _))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 	}
@@ -1826,7 +1818,7 @@ mod tests {
 			other => panic!("unexpected event: {:?}", other),
 		}
 		match r {
-			Err(Error::NotWellFormed(WFError::UnexpectedToken(_, _, _))) => (),
+			Err(Error::Xml(XmlError::UnexpectedToken(_, _, _))) => (),
 			other => panic!("unexpected result: {:?}", other),
 		}
 	}
@@ -1876,7 +1868,7 @@ mod tests {
 			Token::ElementHFEnd(DM),
 		]);
 		match err {
-			Some(Error::NotWellFormed(WFError::UnexpectedToken(..))) => (),
+			Some(Error::Xml(XmlError::UnexpectedToken(..))) => (),
 			other => panic!("unexpected error: {:?}", other),
 		}
 	}

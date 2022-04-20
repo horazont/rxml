@@ -15,9 +15,10 @@ use rxml_validation::Error as ValidationError;
 
 pub(crate) use crate::errctx::*;
 
-/// Violation of a well-formedness constraint or the XML 1.0 grammar.
+/// Violation of a well-formedness or namespace-well-formedness constraint or
+/// the XML 1.0 grammar.
 #[derive(Debug, Clone, PartialEq, Copy)]
-pub enum WFError {
+pub enum XmlError {
 	/// End-of-file encountered during a construct where more data was
 	/// expected.
 	///
@@ -61,115 +62,12 @@ pub enum WFError {
 	/// Attribute was declared multiple times in the same element.
 	///
 	/// **Note:** This will also be emitted for namespaced attributes which
-	/// resolve to the same `(uri, localname)` pair after prefix resolution,
-	/// even though that is technically a namespace-well-formedness
-	/// constraint.
+	/// resolve to the same `(uri, localname)` pair after prefix resolution.
 	DuplicateAttribute,
 
 	/// Ending tag name does not match opening tag.
 	ElementMismatch,
-}
 
-impl error::Error for WFError {}
-
-impl ErrorWithContext for WFError {
-	fn with_context(self, ctx: &'static str) -> WFError {
-		match self {
-			WFError::InvalidEof(_) => WFError::InvalidEof(ctx),
-			WFError::InvalidChar(_, cp, fromref) => WFError::InvalidChar(ctx, cp, fromref),
-			WFError::UnexpectedChar(_, ch, alt) => WFError::UnexpectedChar(ctx, ch, alt),
-			WFError::UnexpectedToken(_, tok, alt) => WFError::UnexpectedToken(ctx, tok, alt),
-			other => other.clone(),
-		}
-	}
-}
-
-impl fmt::Display for WFError {
-	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
-		match self {
-			WFError::InvalidEof(ctx) => write!(f, "invalid eof {}", ctx),
-			WFError::UndeclaredEntity => write!(f, "use of undeclared entity"),
-			WFError::InvalidChar(ctx, cp, false) => {
-				write!(f, "invalid codepoint U+{:x} {}", cp, ctx)
-			}
-			WFError::InvalidChar(ctx, cp, true) => write!(
-				f,
-				"character reference expanded to invalid codepoint U+{:x} {}",
-				cp, ctx
-			),
-			WFError::UnexpectedChar(ctx, ch, Some(opts)) if opts.len() > 0 => {
-				write!(f, "U+{:x} not allowed {} (expected ", *ch as u32, ctx)?;
-				if opts.len() == 1 {
-					f.write_str(opts[0])?;
-					f.write_str(")")
-				} else {
-					f.write_str("one of: ")?;
-					for (i, opt) in opts.iter().enumerate() {
-						if i > 0 {
-							f.write_str(", ")?;
-						}
-						f.write_str(*opt)?;
-					}
-					f.write_str(")")
-				}
-			}
-			WFError::UnexpectedByte(ctx, b, Some(opts)) if opts.len() > 0 => {
-				write!(f, "0x{:x} not allowed {} (expected ", *b, ctx)?;
-				if opts.len() == 1 {
-					f.write_str(opts[0])?;
-					f.write_str(")")
-				} else {
-					f.write_str("one of: ")?;
-					for (i, opt) in opts.iter().enumerate() {
-						if i > 0 {
-							f.write_str(", ")?;
-						}
-						f.write_str(*opt)?;
-					}
-					f.write_str(")")
-				}
-			}
-			WFError::UnexpectedChar(ctx, ch, _) => {
-				write!(f, "U+{:x} not allowed {}", *ch as u32, ctx)
-			}
-			WFError::UnexpectedByte(ctx, b, _) => write!(f, "0x{:x} not allowed {}", *b, ctx),
-			WFError::InvalidSyntax(msg) => write!(f, "invalid syntax: {}", msg),
-			WFError::UnexpectedToken(ctx, tok, Some(opts)) if opts.len() > 0 => {
-				write!(f, "unexpected {} token {} (expected ", tok, ctx)?;
-				if opts.len() == 1 {
-					f.write_str(opts[0])?;
-					f.write_str(")")
-				} else {
-					f.write_str("one of: ")?;
-					for (i, opt) in opts.iter().enumerate() {
-						if i > 0 {
-							f.write_str(", ")?;
-						}
-						f.write_str(*opt)?;
-					}
-					f.write_str(")")
-				}
-			}
-			WFError::UnexpectedToken(ctx, tok, _) => write!(f, "unexpected {} token {}", tok, ctx),
-			WFError::DuplicateAttribute => f.write_str("duplicate attribute"),
-			WFError::ElementMismatch => f.write_str("start and end tag do not match"),
-		}
-	}
-}
-
-impl From<ValidationError> for WFError {
-	fn from(other: ValidationError) -> Self {
-		match other {
-			ValidationError::EmptyName => Self::InvalidSyntax("Name must have at least one Char"),
-			ValidationError::InvalidChar(ch) => Self::UnexpectedChar(ERRCTX_UNKNOWN, ch, None),
-		}
-	}
-}
-
-/// Violation of a namespace-well-formedness constraint or the Namespaces for
-/// XML 1.0 grammar.
-#[derive(Debug, Clone, PartialEq)]
-pub enum NWFError {
 	/// More than one colon encountered in a name.
 	///
 	/// The contents are implementation details.
@@ -198,11 +96,15 @@ pub enum NWFError {
 	EmptyNamespaceUri,
 }
 
-impl error::Error for NWFError {}
+impl error::Error for XmlError {}
 
-impl ErrorWithContext for NWFError {
-	fn with_context(self, ctx: &'static str) -> NWFError {
+impl ErrorWithContext for XmlError {
+	fn with_context(self, ctx: &'static str) -> Self {
 		match self {
+			Self::InvalidEof(_) => Self::InvalidEof(ctx),
+			Self::InvalidChar(_, cp, fromref) => Self::InvalidChar(ctx, cp, fromref),
+			Self::UnexpectedChar(_, ch, alt) => Self::UnexpectedChar(ctx, ch, alt),
+			Self::UnexpectedToken(_, tok, alt) => Self::UnexpectedToken(ctx, tok, alt),
 			Self::MultiColonName(_) => Self::MultiColonName(ctx),
 			Self::EmptyNamePart(_) => Self::EmptyNamePart(ctx),
 			Self::UndeclaredNamespacePrefix(_) => Self::UndeclaredNamespacePrefix(ctx),
@@ -212,9 +114,75 @@ impl ErrorWithContext for NWFError {
 	}
 }
 
-impl fmt::Display for NWFError {
+impl fmt::Display for XmlError {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		match self {
+			Self::InvalidEof(ctx) => write!(f, "invalid eof {}", ctx),
+			Self::UndeclaredEntity => write!(f, "use of undeclared entity"),
+			Self::InvalidChar(ctx, cp, false) => {
+				write!(f, "invalid codepoint U+{:x} {}", cp, ctx)
+			}
+			Self::InvalidChar(ctx, cp, true) => write!(
+				f,
+				"character reference expanded to invalid codepoint U+{:x} {}",
+				cp, ctx
+			),
+			Self::UnexpectedChar(ctx, ch, Some(opts)) if opts.len() > 0 => {
+				write!(f, "U+{:x} not allowed {} (expected ", *ch as u32, ctx)?;
+				if opts.len() == 1 {
+					f.write_str(opts[0])?;
+					f.write_str(")")
+				} else {
+					f.write_str("one of: ")?;
+					for (i, opt) in opts.iter().enumerate() {
+						if i > 0 {
+							f.write_str(", ")?;
+						}
+						f.write_str(*opt)?;
+					}
+					f.write_str(")")
+				}
+			}
+			Self::UnexpectedByte(ctx, b, Some(opts)) if opts.len() > 0 => {
+				write!(f, "0x{:x} not allowed {} (expected ", *b, ctx)?;
+				if opts.len() == 1 {
+					f.write_str(opts[0])?;
+					f.write_str(")")
+				} else {
+					f.write_str("one of: ")?;
+					for (i, opt) in opts.iter().enumerate() {
+						if i > 0 {
+							f.write_str(", ")?;
+						}
+						f.write_str(*opt)?;
+					}
+					f.write_str(")")
+				}
+			}
+			Self::UnexpectedChar(ctx, ch, _) => {
+				write!(f, "U+{:x} not allowed {}", *ch as u32, ctx)
+			}
+			Self::UnexpectedByte(ctx, b, _) => write!(f, "0x{:x} not allowed {}", *b, ctx),
+			Self::InvalidSyntax(msg) => write!(f, "invalid syntax: {}", msg),
+			Self::UnexpectedToken(ctx, tok, Some(opts)) if opts.len() > 0 => {
+				write!(f, "unexpected {} token {} (expected ", tok, ctx)?;
+				if opts.len() == 1 {
+					f.write_str(opts[0])?;
+					f.write_str(")")
+				} else {
+					f.write_str("one of: ")?;
+					for (i, opt) in opts.iter().enumerate() {
+						if i > 0 {
+							f.write_str(", ")?;
+						}
+						f.write_str(*opt)?;
+					}
+					f.write_str(")")
+				}
+			}
+			Self::UnexpectedToken(ctx, tok, _) => write!(f, "unexpected {} token {}", tok, ctx),
+			Self::DuplicateAttribute => f.write_str("duplicate attribute"),
+			Self::ElementMismatch => f.write_str("start and end tag do not match"),
 			Self::MultiColonName(ctx) => write!(f, "more than one colon {} name", ctx),
 			Self::EmptyNamePart(ctx) => {
 				write!(f, "empty string on one side of the colon {} name", ctx)
@@ -226,6 +194,15 @@ impl fmt::Display for NWFError {
 			Self::ReservedNamespaceName => f.write_str("reserved namespace URI"),
 			Self::InvalidLocalName(ctx) => write!(f, "local name is invalid {} name", ctx),
 			Self::EmptyNamespaceUri => write!(f, "namespace URI is empty"),
+		}
+	}
+}
+
+impl From<ValidationError> for XmlError {
+	fn from(other: ValidationError) -> Self {
+		match other {
+			ValidationError::EmptyName => Self::InvalidSyntax("Name must have at least one Char"),
+			ValidationError::InvalidChar(ch) => Self::UnexpectedChar(ERRCTX_UNKNOWN, ch, None),
 		}
 	}
 }
@@ -287,19 +264,17 @@ pub enum Error {
 	///
 	/// I/O errors are not fatal and may be retried. This is especially important for (but not limited to) [`std::io::ErrorKind::WouldBlock`] errors.
 	///
-	/// **Note:** When an unexpected end-of-file situation is encountered during parsing or lexing, that is signalled using [`Error::NotWellFormed`] instead of a [`std::io::ErrorKind::UnexpectedEof`] error.
+	/// **Note:** When an unexpected end-of-file situation is encountered during parsing or lexing, that is signalled using [`Error::Xml`] instead of a [`std::io::ErrorKind::UnexpectedEof`] error.
 	IO(IOErrorWrapper),
 
 	/// An invalid UTF-8 byte was encountered during decoding.
 	InvalidUtf8Byte(u8),
 	/// An invalid Unicode scalar value was encountered during decoding.
 	InvalidChar(u32),
-	/// A violation of the XML 1.0 grammar or a well-formedness constraint was
-	/// encountered during parsing or lexing.
-	NotWellFormed(WFError),
-	/// A violation of the Namespaces in XML 1.0 grammar or a
-	/// namespace-well-formedness constraint was encountered during parsing.
-	NotNamespaceWellFormed(NWFError),
+	/// A violation of the XML 1.0 grammar or a well-formedness or
+	/// namespace-well-formedness constraint was encountered during parsing or
+	/// lexing.
+	Xml(XmlError),
 	/// A forbidden construct was encountered during lexing or parsing.
 	///
 	/// The string indicates the context and should not be interpreted by user
@@ -319,17 +294,14 @@ impl Error {
 	}
 
 	pub(crate) fn wfeof(ctx: &'static str) -> Error {
-		Error::NotWellFormed(WFError::InvalidEof(ctx))
+		Self::Xml(XmlError::InvalidEof(ctx))
 	}
 }
 
 impl ErrorWithContext for Error {
 	fn with_context(self, ctx: &'static str) -> Self {
 		match self {
-			Self::NotWellFormed(wf) => Self::NotWellFormed(wf.with_context(ctx)),
-			Self::NotNamespaceWellFormed(nwf) => {
-				Self::NotNamespaceWellFormed(nwf.with_context(ctx))
-			}
+			Self::Xml(xe) => Self::Xml(xe.with_context(ctx)),
 			other => other,
 		}
 	}
@@ -341,27 +313,20 @@ impl From<io::Error> for Error {
 	}
 }
 
-impl From<WFError> for Error {
-	fn from(e: WFError) -> Error {
-		Error::NotWellFormed(e)
-	}
-}
-
-impl From<NWFError> for Error {
-	fn from(e: NWFError) -> Error {
-		Error::NotNamespaceWellFormed(e)
+impl From<XmlError> for Error {
+	fn from(e: XmlError) -> Self {
+		Self::Xml(e)
 	}
 }
 
 impl fmt::Display for Error {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Error::NotWellFormed(e) => write!(f, "not-well-formed: {}", e),
-			Error::NotNamespaceWellFormed(e) => write!(f, "not namespace-well-formed: {}", e),
-			Error::RestrictedXml(msg) => write!(f, "restricted xml: {}", msg),
-			Error::InvalidUtf8Byte(b) => write!(f, "invalid utf-8 byte: \\x{:02x}", b),
-			Error::InvalidChar(ch) => write!(f, "invalid char: U+{:08x}", ch),
-			Error::IO(e) => write!(f, "I/O error: {}", e),
+			Self::Xml(e) => write!(f, "xml error: {}", e),
+			Self::RestrictedXml(msg) => write!(f, "restricted xml: {}", msg),
+			Self::InvalidUtf8Byte(b) => write!(f, "invalid utf-8 byte: \\x{:02x}", b),
+			Self::InvalidChar(ch) => write!(f, "invalid char: U+{:08x}", ch),
+			Self::IO(e) => write!(f, "I/O error: {}", e),
 		}
 	}
 }
@@ -369,12 +334,9 @@ impl fmt::Display for Error {
 impl error::Error for Error {
 	fn source(&self) -> Option<&(dyn error::Error + 'static)> {
 		match self {
-			Error::IO(e) => Some(&**e),
-			Error::NotNamespaceWellFormed(_)
-			| Error::NotWellFormed(_)
-			| Error::RestrictedXml(_)
-			| Error::InvalidUtf8Byte(_)
-			| Error::InvalidChar(_) => None,
+			Self::IO(e) => Some(&**e),
+			Self::Xml(e) => Some(e),
+			Self::RestrictedXml(_) | Self::InvalidUtf8Byte(_) | Self::InvalidChar(_) => None,
 		}
 	}
 }
