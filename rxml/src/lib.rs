@@ -89,9 +89,99 @@ pub use strings::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
 pub use writer::{Encoder, Item};
 
 #[cfg(feature = "macros")]
-#[doc(inline)]
 #[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
-pub use rxml_proc::{xml_cdata, xml_name, xml_ncname};
+#[doc(hidden)]
+pub use rxml_proc;
+
+/**
+Compile-time conversion of a string literal to [`CDataStr`]
+
+Convert a string literal into a `CDataStr`, while asserting its compliance
+at compile time.
+
+# Example
+
+```rust
+use rxml::{CDataStr, xml_cdata};
+
+const XML_NAMESPACE: &'static CDataStr = xml_cdata!("http://www.w3.org/XML/1998/namespace");
+```
+
+Invalid values are rejected at compile-time:
+
+```rust,compile_fail
+# use rxml::{CDataStr, xml_cdata};
+const INVALID: &'static CDataStr = xml_cdata!("\x01foo");
+```
+*/
+#[cfg(feature = "macros")]
+#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
+#[macro_export]
+macro_rules! xml_cdata {
+	($s:literal) => {
+		$crate::rxml_proc::xml_cdata!($s)
+	};
+}
+
+/**
+Compile-time conversion of a string literal to [`NameStr`]
+
+Convert a string literal into a `NameStr`, while asserting its compliance
+at compile time.
+
+# Example
+
+```rust
+use rxml::{NameStr, xml_name};
+
+const FORBIDDEN: &'static NameStr = xml_name!("xmlns:xml");
+```
+
+Invalid values are rejected at compile-time:
+
+```rust,compile_fail
+# use rxml::{NameStr, xml_name};
+const INVALID: &'static NameStr = xml_name!("foo bar");
+```
+*/
+#[cfg(feature = "macros")]
+#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
+#[macro_export]
+macro_rules! xml_name {
+	($s:literal) => {
+		$crate::rxml_proc::xml_name!($s)
+	};
+}
+
+/**
+Compile-time conversion of a string literal to [`NCNameStr`]
+
+Convert a string literal into a `NCNameStr`, while asserting its compliance
+at compile time.
+
+# Example
+
+```rust
+use rxml::{NCNameStr, xml_ncname};
+
+const XML_PREFIX: &'static NCNameStr = xml_ncname!("xml");
+```
+
+Invalid values are rejected at compile-time:
+
+```rust,compile_fail
+# use rxml::{NCNameStr, xml_ncame};
+const INVALID: &'static NCNameStr = xml_ncname!("xmlns:xml");
+```
+*/
+#[cfg(feature = "macros")]
+#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
+#[macro_export]
+macro_rules! xml_ncname {
+	($s:literal) => {
+		$crate::rxml_proc::xml_ncname!($s)
+	};
+}
 
 #[cfg(feature = "async")]
 mod future;

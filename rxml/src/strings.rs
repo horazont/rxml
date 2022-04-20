@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "macros"), allow(rustdoc::broken_intra_doc_links))]
 /*!
 # Strongly-typed strings for use with XML 1.0 documents
 
@@ -25,11 +26,9 @@ times.
 
 ## Construction
 
-To construct [`str`]-like references at compile time, you can use the macros
-from the [`rxml_proc`](https://docs.rs/rxml_proc) crate. It offers
-`xml_cdata!`, `xml_name!` and `xml_ncname!` macros which convert a string
-literal into `&CDataStr`, `&NameStr` and `&NCNameStr` (respectively) with
-validation at compile time.
+To construct [`str`]-like references from a literal, you can use the macros
+offered when this crate is built with the `macros` feature: [`xml_name!`],
+[`xml_ncname!`], [`xml_cdata!`].
 
 In general, owned values are constructed using the [`std::convert::TryInto`]
 mechanism, from other string types. Supported source types are:
