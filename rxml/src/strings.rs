@@ -50,16 +50,24 @@ are possible through `.into()`:
 The inverse directions are only available through `try_into`.
 */
 
-use crate::error::{XmlError, ERRCTX_UNKNOWN};
-use rxml_validation::selectors;
-use rxml_validation::selectors::CharSelector;
-pub use rxml_validation::{validate_cdata, validate_name, validate_ncname};
-use smartstring::alias::String as SmartString;
 use std::borrow::{Borrow, Cow, ToOwned};
 use std::cmp::{Ordering, PartialOrd};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::ops::{Add, Deref};
+
+use smartstring::alias::String as SmartString;
+
+use rxml_validation::selectors;
+use rxml_validation::selectors::CharSelector;
+use rxml_validation::{
+	validate_cdata as raw_validate_cdata, validate_name as raw_validate_name,
+	validate_ncname as raw_validate_ncname, Error as ValidationError,
+};
+
+use crate::error::{XmlError, ERRCTX_UNKNOWN};
+
+use super::errctx;
 
 macro_rules! rxml_unsafe_str_construct_doc {
 	($name:ident, $other:ident) => {
@@ -480,7 +488,7 @@ rxml_custom_string_type_pair! {
 	///                        | [#x0300-#x036F] | [#x203F-#x2040]
 	/// [5]  Name          ::= NameStartChar (NameChar)*
 	/// ```
-	pub struct Name(SmartString) use validate_name;
+	pub struct Name(SmartString) use raw_validate_name;
 
 	/// str which conforms to the Name production of XML 1.0.
 	///
@@ -580,7 +588,7 @@ rxml_custom_string_type_pair! {
 	/// ```text
 	/// [4] NCName ::= Name - (Char* ':' Char*)  /* An XML Name, minus the ":" */
 	/// ```
-	pub struct NCName(SmartString) use validate_ncname;
+	pub struct NCName(SmartString) use raw_validate_ncname;
 
 	/// str which conforms to the NCName production of Namespaces in XML 1.0.
 	///
@@ -704,7 +712,7 @@ rxml_custom_string_type_pair! {
 	/// expanded by the lexer. This implies that `CData` objects are not safe to
 	/// just verbatimly copy into an XML document; additional escaping may be
 	/// necessary.
-	pub struct CData(String) use validate_cdata;
+	pub struct CData(String) use raw_validate_cdata;
 
 	/// str which consists only of XML 1.0 Chars.
 	///
@@ -755,6 +763,80 @@ impl<'x> From<&'x NameStr> for &'x CDataStr {
 		// SAFETY: Names can only consist of valid XML 1.0 chars, so they
 		// are also valid CData
 		unsafe { CDataStr::from_str_unchecked(&other.0) }
+	}
+}
+
+/**
+Check whether a str is valid XML 1.0 CData
+
+# Example
+
+```rust
+use rxml::error::XmlError;
+use rxml::strings::validate_cdata;
+
+assert!(validate_cdata("foo bar baz <fnord!>").is_ok());
+assert!(matches!(validate_cdata("\x01"), Err(XmlError::UnexpectedChar(_, '\x01', _))));
+*/
+pub fn validate_cdata(s: &str) -> Result<(), XmlError> {
+	match raw_validate_cdata(s) {
+		Ok(()) => Ok(()),
+		Err(ValidationError::InvalidChar(ch)) => {
+			Err(XmlError::UnexpectedChar(errctx::ERRCTX_NAME, ch, None).into())
+		}
+		Err(ValidationError::EmptyName) => unreachable!(),
+	}
+}
+
+/**
+Check whether a str is a valid XML 1.0 Name
+
+**Note:** This does *not* enforce that the name contains only a single colon.
+
+# Example
+
+```rust
+use rxml::error::XmlError;
+use rxml::strings::validate_name;
+
+assert!(validate_name("foobar").is_ok());
+assert!(validate_name("foo:bar").is_ok());
+assert!(matches!(validate_name("foo bar"), Err(XmlError::UnexpectedChar(_, ' ', _))));
+assert!(matches!(validate_name(""), Err(XmlError::InvalidSyntax(_))));
+*/
+pub fn validate_name(s: &str) -> Result<(), XmlError> {
+	match raw_validate_name(s) {
+		Ok(()) => Ok(()),
+		Err(ValidationError::InvalidChar(ch)) => {
+			Err(XmlError::UnexpectedChar(errctx::ERRCTX_NAME, ch, None).into())
+		}
+		Err(ValidationError::EmptyName) => Err(XmlError::InvalidSyntax(errctx::ERRCTX_NAME).into()),
+	}
+}
+
+/**
+Check whether a str is a valid XML 1.0 Name, without colons.
+
+# Example
+
+```rust
+use rxml::error::XmlError;
+use rxml::strings::validate_ncname;
+
+assert!(validate_ncname("foobar").is_ok());
+assert!(matches!(validate_ncname("foo:bar"), Err(XmlError::MultiColonName(_))));
+assert!(matches!(validate_ncname(""), Err(XmlError::EmptyNamePart(_))));
+*/
+pub fn validate_ncname(s: &str) -> Result<(), XmlError> {
+	match raw_validate_ncname(s) {
+		Ok(()) => Ok(()),
+		Err(ValidationError::InvalidChar(':')) => {
+			Err(XmlError::MultiColonName(errctx::ERRCTX_NAME))
+		}
+		Err(ValidationError::InvalidChar(ch)) => {
+			Err(XmlError::UnexpectedChar(errctx::ERRCTX_NAME, ch, None))
+		}
+		Err(ValidationError::EmptyName) => Err(XmlError::EmptyNamePart(errctx::ERRCTX_NAME)),
 	}
 }
 

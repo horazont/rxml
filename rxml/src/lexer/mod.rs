@@ -15,7 +15,6 @@ use crate::strings::*;
 use ranges::*;
 use read::Endbyte;
 use rxml_validation::selectors::*;
-use rxml_validation::Error as ValidationError;
 
 /// Carry information about where in the stream the token was observed
 ///
@@ -508,13 +507,6 @@ impl ErrorWithContext for Error {
 impl From<XmlError> for Error {
 	fn from(other: XmlError) -> Self {
 		Self::Xml(other)
-	}
-}
-
-impl From<ValidationError> for Error {
-	fn from(other: ValidationError) -> Self {
-		let e: XmlError = other.into();
-		e.into()
 	}
 }
 
