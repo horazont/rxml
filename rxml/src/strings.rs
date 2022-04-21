@@ -550,6 +550,10 @@ impl Name {
 }
 
 impl NameStr {
+	/// Create an owned copy of the string as [`Name`].
+	///
+	/// This operation is also available as implementation of the `Into`
+	/// trait.
 	pub fn to_name(&self) -> Name {
 		self.into()
 	}
@@ -630,6 +634,12 @@ impl NCName {
 		unsafe { Name::from_string_unchecked(s) }
 	}
 
+	/// Convert the [`NCName`] into a [`Name`].
+	///
+	/// This operation is O(1).
+	///
+	/// This operation is also available as implementation of the `Into`
+	/// trait.
 	pub fn as_name(self) -> Name {
 		// SAFETY: NCName is a strict subset of Name
 		unsafe { Name::from_smartstring_unchecked(self.0) }
@@ -637,14 +647,22 @@ impl NCName {
 }
 
 impl NCNameStr {
+	/// Create an owned copy of the string as [`NCName`].
+	///
+	/// This operation is also available as implementation of the `Into`
+	/// trait.
 	pub fn to_ncname(&self) -> NCName {
 		self.into()
 	}
 
+	/// Create an owned copy of the string as [`Name`].
 	pub fn to_name(&self) -> Name {
 		self.to_ncname().as_name()
 	}
 
+	/// Access the string as [`NameStr`].
+	///
+	/// This operation is O(1), as Names are a strict superset of NCNames.
 	pub fn as_namestr<'x>(&'x self) -> &'x NameStr {
 		// SAFETY: NCName is a strict subset of Name
 		unsafe { NameStr::from_str_unchecked(&self.0) }
@@ -728,6 +746,10 @@ rxml_custom_string_type_pair! {
 }
 
 impl CDataStr {
+	/// Create an owned copy of the string as [`CData`].
+	///
+	/// This operation is also available as implementation of the `Into`
+	/// trait.
 	pub fn to_cdata(&self) -> CData {
 		self.into()
 	}
