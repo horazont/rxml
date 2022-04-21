@@ -84,10 +84,10 @@ pub use parser::{
 	LexerAdapter, NamespaceResolver, Parse, Parser, RawEvent, RawParser, RawQName, ResolvedEvent,
 	ResolvedQName, WithContext, XmlVersion, XMLNS_XML, XMLNS_XMLNS,
 };
-pub use strings::{CData, CDataStr, NcName, NcNameStr, Name, NameStr};
 #[allow(deprecated)]
 #[doc(hidden)]
 pub use strings::NCName;
+pub use strings::{CData, CDataStr, Name, NameStr, NcName, NcNameStr};
 #[doc(inline)]
 pub use writer::{Encoder, Item};
 
