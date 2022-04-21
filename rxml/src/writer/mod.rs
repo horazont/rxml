@@ -10,11 +10,11 @@ use std::fmt;
 use bytes::{BufMut, BytesMut};
 
 use crate::parser::{NamespaceName, RcPtr, ResolvedEvent, XmlVersion, XMLNS_XML, XMLNS_XMLNS};
-use crate::strings::{CData, CDataStr, NCName, NCNameStr, Name};
+use crate::strings::{CData, CDataStr, NcName, NcNameStr, Name};
 
 static XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
-pub const PREFIX_XML: &'static NCNameStr = unsafe { std::mem::transmute("xml") };
-pub const PREFIX_XMLNS: &'static NCNameStr = unsafe { std::mem::transmute("xmlns") };
+pub const PREFIX_XML: &'static NcNameStr = unsafe { std::mem::transmute("xml") };
+pub const PREFIX_XMLNS: &'static NcNameStr = unsafe { std::mem::transmute("xmlns") };
 
 const CDATA_SPECIALS: &'static [u8] = &[b'<', b'>', b'&', b'\r'];
 
@@ -62,7 +62,7 @@ pub enum Item<'x> {
 		/// Namespace URI or None, for unnamespaced elements
 		Option<RcPtr<CData>>,
 		/// Local name of the attribute
-		&'x NCNameStr,
+		&'x NcNameStr,
 	),
 
 	/// An attribute key/value pair
@@ -70,7 +70,7 @@ pub enum Item<'x> {
 		/// Namespace URI or None, for unnamespaced attributes
 		Option<RcPtr<CData>>,
 		/// Local name of the attribute
-		&'x NCNameStr,
+		&'x NcNameStr,
 		/// Value of the attribute
 		&'x CDataStr,
 	),
@@ -124,7 +124,7 @@ pub trait TrackNamespace {
 	///
 	/// Calling this twice between two calls to `push` with the same `prefix`
 	/// is a programming error and causes a panic.
-	fn declare_fixed(&mut self, prefix: Option<&NCNameStr>, name: Option<NamespaceName>) -> bool;
+	fn declare_fixed(&mut self, prefix: Option<&NcNameStr>, name: Option<NamespaceName>) -> bool;
 
 	/// Declare a namespace URI with an auto-generated prefix or by using the
 	/// default namespace.
@@ -138,7 +138,7 @@ pub trait TrackNamespace {
 	///
 	/// This may return a non-auto-generated prefix if the namespace URI is
 	/// already declared on this or a parent element.
-	fn declare_auto(&mut self, name: Option<NamespaceName>) -> (bool, Option<&NCNameStr>);
+	fn declare_auto(&mut self, name: Option<NamespaceName>) -> (bool, Option<&NcNameStr>);
 
 	/// Declare a namespace URI with an auto-generated prefix.
 	///
@@ -153,20 +153,20 @@ pub trait TrackNamespace {
 	/// already declared on this or a parent element. If the URI is already
 	/// used for the default namespace, this function will nontheless return
 	/// a prefix.
-	fn declare_with_auto_prefix(&mut self, name: Option<NamespaceName>) -> (bool, &NCNameStr);
+	fn declare_with_auto_prefix(&mut self, name: Option<NamespaceName>) -> (bool, &NcNameStr);
 
 	/// Get the prefix for a given URI, which may be empty if the namespace
 	/// with that URI is defined as the default namespace.
 	fn get_prefix_or_default(
 		&self,
 		name: Option<NamespaceName>,
-	) -> Result<Option<&NCNameStr>, PrefixError>;
+	) -> Result<Option<&NcNameStr>, PrefixError>;
 
 	/// Get the prefix for a given URI.
 	///
 	/// This returns an error if the given URI is declared as default
 	/// namespace and there is no matching prefix.
-	fn get_prefix(&self, name: Option<NamespaceName>) -> Result<&NCNameStr, PrefixError>;
+	fn get_prefix(&self, name: Option<NamespaceName>) -> Result<&NcNameStr, PrefixError>;
 
 	/// Complete an element declaration.
 	fn push(&mut self);
@@ -190,16 +190,16 @@ pub trait TrackNamespace {
 /// will actually be made available on all child elements.
 pub struct SimpleNamespaces {
 	// persistent state
-	global_ns: HashMap<Option<NamespaceName>, NCName>,
-	global_ns_rev: HashSet<NCName>,
+	global_ns: HashMap<Option<NamespaceName>, NcName>,
+	global_ns_rev: HashSet<NcName>,
 	global_ns_ctr: usize,
 	default_ns_stack: Vec<Option<NamespaceName>>,
 
 	// temporary per-element state
 	next_default_ns: Option<Option<NamespaceName>>,
 	temp_ns_ctr: usize,
-	temp_ns: HashMap<Option<NamespaceName>, NCName>,
-	temp_ns_rev: HashSet<NCName>,
+	temp_ns: HashMap<Option<NamespaceName>, NcName>,
+	temp_ns_rev: HashSet<NcName>,
 }
 
 impl SimpleNamespaces {
@@ -219,7 +219,7 @@ impl SimpleNamespaces {
 }
 
 impl TrackNamespace for SimpleNamespaces {
-	fn declare_fixed(&mut self, prefix: Option<&NCNameStr>, name: Option<NamespaceName>) -> bool {
+	fn declare_fixed(&mut self, prefix: Option<&NcNameStr>, name: Option<NamespaceName>) -> bool {
 		match prefix.as_ref() {
 			Some(v) if *v == PREFIX_XML => {
 				if name.as_ref().map(|x| &***x) == Some(XMLNS_XML) {
@@ -271,7 +271,7 @@ impl TrackNamespace for SimpleNamespaces {
 		}
 	}
 
-	fn declare_auto(&mut self, name: Option<NamespaceName>) -> (bool, Option<&NCNameStr>) {
+	fn declare_auto(&mut self, name: Option<NamespaceName>) -> (bool, Option<&NcNameStr>) {
 		match name {
 			Some(v) if *v == XMLNS_XML => return (false, Some(PREFIX_XML)),
 			Some(v) if *v == XMLNS_XMLNS => return (false, Some(PREFIX_XMLNS)),
@@ -296,7 +296,7 @@ impl TrackNamespace for SimpleNamespaces {
 		}
 	}
 
-	fn declare_with_auto_prefix(&mut self, name: Option<NamespaceName>) -> (bool, &NCNameStr) {
+	fn declare_with_auto_prefix(&mut self, name: Option<NamespaceName>) -> (bool, &NcNameStr) {
 		match name {
 			Some(v) if *v == XMLNS_XML => return (false, PREFIX_XML),
 			Some(v) if *v == XMLNS_XMLNS => return (false, PREFIX_XMLNS),
@@ -307,7 +307,7 @@ impl TrackNamespace for SimpleNamespaces {
 			Entry::Occupied(o) => (false, o.into_mut()),
 			Entry::Vacant(v) => {
 				let ctr = self.temp_ns_ctr;
-				let temp_ns_prefix: NCName = format!("tns{}", ctr)
+				let temp_ns_prefix: NcName = format!("tns{}", ctr)
 					.try_into()
 					.expect("auto-generated prefix must always be valid");
 				if self.global_ns_rev.contains(&temp_ns_prefix) {
@@ -332,7 +332,7 @@ impl TrackNamespace for SimpleNamespaces {
 	fn get_prefix_or_default(
 		&self,
 		name: Option<NamespaceName>,
-	) -> Result<Option<&NCNameStr>, PrefixError> {
+	) -> Result<Option<&NcNameStr>, PrefixError> {
 		if let Some(next) = self.next_default_ns.as_ref() {
 			if *next == name {
 				return Ok(None);
@@ -346,7 +346,7 @@ impl TrackNamespace for SimpleNamespaces {
 		Ok(Some(self.get_prefix(name)?))
 	}
 
-	fn get_prefix(&self, name: Option<NamespaceName>) -> Result<&NCNameStr, PrefixError> {
+	fn get_prefix(&self, name: Option<NamespaceName>) -> Result<&NcNameStr, PrefixError> {
 		match self.temp_ns.get(&name) {
 			Some(v) => return Ok(v),
 			None => (),
@@ -492,7 +492,7 @@ impl<T: TrackNamespace> From<T> for Encoder<T> {
 
 impl<T: TrackNamespace> Encoder<T> {
 	fn encode_nsdecl<O: BufMut>(
-		prefix: Option<&NCNameStr>,
+		prefix: Option<&NcNameStr>,
 		nsuri: Option<&CDataStr>,
 		output: &mut O,
 	) {
@@ -883,7 +883,7 @@ mod tests_simple_namespaces {
 	#[test]
 	fn declare_with_fixed_prefix() {
 		let mut ns = mk();
-		ns.declare_fixed(Some(NCNameStr::from_str("stream").unwrap()), Some(ns1()));
+		ns.declare_fixed(Some(NcNameStr::from_str("stream").unwrap()), Some(ns1()));
 		match ns.get_prefix(Some(ns1())) {
 			Ok(v) => {
 				assert_eq!(v, "stream");
@@ -915,7 +915,7 @@ mod tests_simple_namespaces {
 	#[test]
 	fn preserves_global_prefixed_across_elements() {
 		let mut ns = mk();
-		ns.declare_fixed(Some(NCNameStr::from_str("stream").unwrap()), Some(ns1()));
+		ns.declare_fixed(Some(NcNameStr::from_str("stream").unwrap()), Some(ns1()));
 		ns.declare_fixed(None, Some(ns2()));
 		ns.push();
 		match ns.get_prefix(Some(ns1())) {
@@ -944,10 +944,10 @@ mod tests_simple_namespaces {
 	#[should_panic(expected = "conflict")]
 	fn prohibits_overriding_global_prefix() {
 		let mut ns = mk();
-		ns.declare_fixed(Some(NCNameStr::from_str("stream").unwrap()), Some(ns1()));
+		ns.declare_fixed(Some(NcNameStr::from_str("stream").unwrap()), Some(ns1()));
 		ns.declare_fixed(None, Some(ns2()));
 		ns.push();
-		ns.declare_fixed(Some(NCNameStr::from_str("stream").unwrap()), Some(ns2()));
+		ns.declare_fixed(Some(NcNameStr::from_str("stream").unwrap()), Some(ns2()));
 	}
 
 	#[test]
@@ -967,7 +967,7 @@ mod tests_simple_namespaces {
 	#[should_panic(expected = "conflict")]
 	fn fixed_global_decl_can_conflict_with_auto_decl() {
 		let mut ns = mk();
-		ns.declare_fixed(Some(NCNameStr::from_str("tns0").unwrap()), Some(ns1()));
+		ns.declare_fixed(Some(NcNameStr::from_str("tns0").unwrap()), Some(ns1()));
 		ns.push();
 		ns.declare_with_auto_prefix(Some(ns3()));
 	}
@@ -976,7 +976,7 @@ mod tests_simple_namespaces {
 	#[should_panic(expected = "conflict")]
 	fn fixed_local_decl_can_conflict_with_auto_decl() {
 		let mut ns = mk();
-		ns.declare_fixed(Some(NCNameStr::from_str("tns0").unwrap()), Some(ns1()));
+		ns.declare_fixed(Some(NcNameStr::from_str("tns0").unwrap()), Some(ns1()));
 		ns.declare_with_auto_prefix(Some(ns3()));
 	}
 }

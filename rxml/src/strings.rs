@@ -14,7 +14,7 @@ times.
 
 - [`Name`] and [`NameStr`] represent the `Name` production and can be used
   for element and attribute names before namespace prefix expansion.
-- [`NCName`] and [`NCNameStr`] represent the `Name` production but without a
+- [`NcName`] and [`NcNameStr`] represent the `Name` production but without a
   colon inside; they are used for localnames after prefix expansion and to
   carry the prefixes themselves.
 - [`CData`] and [`CDataStr`] represent strings of XML `Char`s, which are
@@ -33,15 +33,15 @@ offered when this crate is built with the `macros` feature: [`xml_name!`],
 In general, owned values are constructed using the [`std::convert::TryInto`]
 mechanism, from other string types. Supported source types are:
 
-* [`String`] (copies for [`Name`] and [`NCName`], moves for [`CData`])
-* [`smartstring::alias::String`] (copies for [`CData`], moves for [`Name`] and [`NCName`])
+* [`String`] (copies for [`Name`] and [`NcName`], moves for [`CData`])
+* [`smartstring::alias::String`] (copies for [`CData`], moves for [`Name`] and [`NcName`])
 * [`str`] (copies for all types except the slice types)
 
 In addition, the following conversions can be done without extra checking and
 are possible through `.into()`:
 
-* [`NCName`] to [`Name`]
-* [`NCName`] to [`CData`]
+* [`NcName`] to [`Name`]
+* [`NcName`] to [`CData`]
 * [`Name`] to [`CData`]
 
 (and likewise for the corresponding Str types)
@@ -334,7 +334,7 @@ macro_rules! rxml_custom_string_type {
 			type Output = $name;
 
 			fn add(self, rhs: &$borrowed) -> Self::Output {
-				// SAFETY: for Name, NCName and CData, a concatenation with
+				// SAFETY: for Name, NcName and CData, a concatenation with
 				// strings of the same type is always also of the same type.
 				// (NB: A subslice might not be, because e.g. Name has
 				// constraints about what might occur in the first codepoint).
@@ -513,10 +513,10 @@ impl Name {
 	///
 	/// If neither of the two cases apply or the string on either side of the
 	/// colon is empty, an error is returned.
-	pub fn split_name(self) -> Result<(Option<NCName>, NCName), XmlError> {
+	pub fn split_name(self) -> Result<(Option<NcName>, NcName), XmlError> {
 		let mut name = self.0;
 		let colon_pos = match name.find(':') {
-			None => return Ok((None, unsafe { NCName::from_smartstring_unchecked(name) })),
+			None => return Ok((None, unsafe { NcName::from_smartstring_unchecked(name) })),
 			Some(pos) => pos,
 		};
 		if colon_pos == 0 || colon_pos == name.len() - 1 {
@@ -531,7 +531,7 @@ impl Name {
 			return Err(XmlError::MultiColonName(ERRCTX_UNKNOWN));
 		};
 		if !selectors::CLASS_XML_NAMESTART.select(localname.chars().next().unwrap()) {
-			// Namespaces in XML 1.0 (Third Edition) NCName production
+			// Namespaces in XML 1.0 (Third Edition) NcName production
 			return Err(XmlError::InvalidLocalName(ERRCTX_UNKNOWN));
 		}
 
@@ -543,8 +543,8 @@ impl Name {
 		debug_assert!(prefix.len() > 0);
 		debug_assert!(localname.len() > 0);
 		Ok((
-			Some(unsafe { NCName::from_smartstring_unchecked(prefix) }),
-			unsafe { NCName::from_smartstring_unchecked(localname) },
+			Some(unsafe { NcName::from_smartstring_unchecked(prefix) }),
+			unsafe { NcName::from_smartstring_unchecked(localname) },
 		))
 	}
 }
@@ -559,59 +559,59 @@ impl NameStr {
 	}
 }
 
-impl From<NCName> for Name {
-	fn from(other: NCName) -> Self {
-		other.as_name()
+impl From<NcName> for Name {
+	fn from(other: NcName) -> Self {
+		other.into_name()
 	}
 }
 
-impl<'x> From<&'x NCNameStr> for &'x NameStr {
-	fn from(other: &'x NCNameStr) -> Self {
+impl<'x> From<&'x NcNameStr> for &'x NameStr {
+	fn from(other: &'x NcNameStr) -> Self {
 		other.as_namestr()
 	}
 }
 
 rxml_custom_string_type_pair! {
-	/// String which conforms to the NCName production of Namespaces in XML 1.0.
+	/// String which conforms to the NcName production of Namespaces in XML 1.0.
 	///
-	/// [`NCName`] corresponds to a (restricted) [`String`]. For a [`str`]-like
-	/// type with the same restrictions, see [`NCNameStr`]. `&NCNameStr` can be
+	/// [`NcName`] corresponds to a (restricted) [`String`]. For a [`str`]-like
+	/// type with the same restrictions, see [`NcNameStr`]. `&NcNameStr` can be
 	/// created from a string literal at compile time using the `xml_ncname` macro
 	/// from [`rxml_proc`](https://docs.rs/rxml_proc).
 	///
-	/// Since [`NCName`] (indirectly) derefs to [`str`], all (non-mutable)
+	/// Since [`NcName`] (indirectly) derefs to [`str`], all (non-mutable)
 	/// methods from [`str`] are available.
 	///
 	/// # Formal definition
 	///
-	/// The data inside [`NCName`] (and [`NCNameStr`]) is guaranteed to conform to
-	/// the `NCName` production of the below grammar, quoted from
-	/// [Namespaces in XML 1.0 § 3](https://www.w3.org/TR/REC-xml-names/#NT-NCName):
+	/// The data inside [`NcName`] (and [`NcNameStr`]) is guaranteed to conform to
+	/// the `NcName` production of the below grammar, quoted from
+	/// [Namespaces in XML 1.0 § 3](https://www.w3.org/TR/REC-xml-names/#NT-NcName):
 	///
 	/// ```text
-	/// [4] NCName ::= Name - (Char* ':' Char*)  /* An XML Name, minus the ":" */
+	/// [4] NcName ::= Name - (Char* ':' Char*)  /* An XML Name, minus the ":" */
 	/// ```
-	pub struct NCName(SmartString) use raw_validate_ncname;
+	pub struct NcName(SmartString) use raw_validate_ncname;
 
-	/// str which conforms to the NCName production of Namespaces in XML 1.0.
+	/// str which conforms to the NcName production of Namespaces in XML 1.0.
 	///
-	/// [`NCNameStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
+	/// [`NcNameStr`] corresponds to a (restricted) [`str`]. For a [`String`]-like
 	/// type with the same restrictions as well as the formal definition of those
-	/// restrictions, see [`NCName`].
+	/// restrictions, see [`NcName`].
 	///
-	/// `&NCNameStr` can be created from a string literal at compile time using
+	/// `&NcNameStr` can be created from a string literal at compile time using
 	/// the `xml_ncname` macro from [`rxml_proc`](https://docs.rs/rxml_proc).
 	///
-	/// Since [`NCNameStr`] derefs to [`str`], all (non-mutable) methods from
+	/// Since [`NcNameStr`] derefs to [`str`], all (non-mutable) methods from
 	/// [`str`] are available.
-	pub struct NCNameStr(str);
+	pub struct NcNameStr(str);
 }
 
-impl NCName {
-	/// Compose two [`NCName`] objects to one [`Name`], separating them with
+impl NcName {
+	/// Compose two [`NcName`] objects to one [`Name`], separating them with
 	/// a colon.
 	///
-	/// As an [`NCName`] is always a valid [`Name`], the composition of the
+	/// As an [`NcName`] is always a valid [`Name`], the composition of the
 	/// two with a `:` as separator is also a valid [`Name`].
 	///
 	/// This is the inverse of [`Name::split_name()`].
@@ -619,59 +619,59 @@ impl NCName {
 	/// # Example
 	///
 	/// ```
-	/// # use rxml::NCName;
-	/// let prefix = NCName::from_str("xmlns").unwrap();
-	/// let localname = NCName::from_str("stream").unwrap();
+	/// # use rxml::NcName;
+	/// let prefix = NcName::from_str("xmlns").unwrap();
+	/// let localname = NcName::from_str("stream").unwrap();
 	/// assert_eq!(prefix.add_suffix(&localname), "xmlns:stream");
 	/// ```
-	pub fn add_suffix(self, suffix: &NCNameStr) -> Name {
+	pub fn add_suffix(self, suffix: &NcNameStr) -> Name {
 		let mut s: String = self.0.into();
 		s.reserve(suffix.len() + 1);
 		s.push_str(":");
 		s.push_str(suffix);
-		// SAFETY: NCName cannot contain a colon; Name is NCName with colons,
-		// so we can concat two NCNames to a Name.
+		// SAFETY: NcName cannot contain a colon; Name is NcName with colons,
+		// so we can concat two NcNames to a Name.
 		unsafe { Name::from_string_unchecked(s) }
 	}
 
-	/// Convert the [`NCName`] into a [`Name`].
+	/// Convert the [`NcName`] into a [`Name`].
 	///
 	/// This operation is O(1).
 	///
 	/// This operation is also available as implementation of the `Into`
 	/// trait.
-	pub fn as_name(self) -> Name {
-		// SAFETY: NCName is a strict subset of Name
+	pub fn into_name(self) -> Name {
+		// SAFETY: NcName is a strict subset of Name
 		unsafe { Name::from_smartstring_unchecked(self.0) }
 	}
 }
 
-impl NCNameStr {
-	/// Create an owned copy of the string as [`NCName`].
+impl NcNameStr {
+	/// Create an owned copy of the string as [`NcName`].
 	///
 	/// This operation is also available as implementation of the `Into`
 	/// trait.
-	pub fn to_ncname(&self) -> NCName {
+	pub fn to_ncname(&self) -> NcName {
 		self.into()
 	}
 
 	/// Create an owned copy of the string as [`Name`].
 	pub fn to_name(&self) -> Name {
-		self.to_ncname().as_name()
+		self.to_ncname().into()
 	}
 
 	/// Access the string as [`NameStr`].
 	///
-	/// This operation is O(1), as Names are a strict superset of NCNames.
+	/// This operation is O(1), as Names are a strict superset of NcNames.
 	pub fn as_namestr<'x>(&'x self) -> &'x NameStr {
-		// SAFETY: NCName is a strict subset of Name
+		// SAFETY: NcName is a strict subset of Name
 		unsafe { NameStr::from_str_unchecked(&self.0) }
 	}
 
-	/// Compose two [`NCName`] objects to one [`Name`], separating them with
+	/// Compose two [`NcName`] objects to one [`Name`], separating them with
 	/// a colon.
 	///
-	/// As an [`NCName`] is always a valid [`Name`], the composition of the
+	/// As an [`NcName`] is always a valid [`Name`], the composition of the
 	/// two with a `:` as separator is also a valid [`Name`].
 	///
 	/// This is the inverse of [`Name::split_name()`].
@@ -679,18 +679,18 @@ impl NCNameStr {
 	/// # Example
 	///
 	/// ```
-	/// # use rxml::NCName;
-	/// let prefix = NCName::from_str("xmlns").unwrap();
-	/// let localname = NCName::from_str("stream").unwrap();
+	/// # use rxml::NcName;
+	/// let prefix = NcName::from_str("xmlns").unwrap();
+	/// let localname = NcName::from_str("stream").unwrap();
 	/// assert_eq!(prefix.add_suffix(&localname), "xmlns:stream");
 	/// ```
-	pub fn with_suffix(&self, suffix: &NCNameStr) -> Name {
+	pub fn with_suffix(&self, suffix: &NcNameStr) -> Name {
 		let mut s = String::with_capacity(self.len() + 1 + suffix.len());
 		s.push_str(self);
 		s.push_str(":");
 		s.push_str(suffix);
-		// SAFETY: NCName cannot contain a colon; Name is NCName with colons,
-		// so we can concat two NCNames to a Name.
+		// SAFETY: NcName cannot contain a colon; Name is NcName with colons,
+		// so we can concat two NcNames to a Name.
 		unsafe { Name::from_string_unchecked(s) }
 	}
 }
@@ -755,9 +755,9 @@ impl CDataStr {
 	}
 }
 
-impl From<NCName> for CData {
-	fn from(other: NCName) -> Self {
-		// SAFETY: NCNames can only consist of valid XML 1.0 chars, so they
+impl From<NcName> for CData {
+	fn from(other: NcName) -> Self {
+		// SAFETY: NcNames can only consist of valid XML 1.0 chars, so they
 		// are also valid CData
 		unsafe { CData::from_smartstring_unchecked(other.0) }
 	}
@@ -771,9 +771,9 @@ impl From<Name> for CData {
 	}
 }
 
-impl<'x> From<&'x NCNameStr> for &'x CDataStr {
-	fn from(other: &'x NCNameStr) -> Self {
-		// SAFETY: NCNames can only consist of valid XML 1.0 chars, so they
+impl<'x> From<&'x NcNameStr> for &'x CDataStr {
+	fn from(other: &'x NcNameStr) -> Self {
+		// SAFETY: NcNames can only consist of valid XML 1.0 chars, so they
 		// are also valid CData
 		unsafe { CDataStr::from_str_unchecked(&other.0) }
 	}
@@ -880,3 +880,7 @@ mod tests {
 		let _: &CDataStr = "http://www.w3.org/XML/1998/namespace".try_into().unwrap();
 	}
 }
+
+/// Compatibility alias, use [`NcName`] directly instead.
+#[deprecated(since = "0.8.0", note = "type was renamed to NcName")]
+pub type NCName = NcName;

@@ -12,7 +12,7 @@ use super::common::*;
 
 /// Pair of an optional namespace prefix and a localpart, commonly used in
 /// element and attribute names.
-pub type RawQName = (Option<NCName>, NCName);
+pub type RawQName = (Option<NcName>, NcName);
 
 /**
 # Logical XML document parts

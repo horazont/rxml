@@ -84,7 +84,10 @@ pub use parser::{
 	LexerAdapter, NamespaceResolver, Parse, Parser, RawEvent, RawParser, RawQName, ResolvedEvent,
 	ResolvedQName, WithContext, XmlVersion, XMLNS_XML, XMLNS_XMLNS,
 };
-pub use strings::{CData, CDataStr, NCName, NCNameStr, Name, NameStr};
+pub use strings::{CData, CDataStr, NcName, NcNameStr, Name, NameStr};
+#[allow(deprecated)]
+#[doc(hidden)]
+pub use strings::NCName;
 #[doc(inline)]
 pub use writer::{Encoder, Item};
 
@@ -154,24 +157,24 @@ macro_rules! xml_name {
 }
 
 /**
-Compile-time conversion of a string literal to [`NCNameStr`]
+Compile-time conversion of a string literal to [`NcNameStr`]
 
-Convert a string literal into a `NCNameStr`, while asserting its compliance
+Convert a string literal into a `NcNameStr`, while asserting its compliance
 at compile time.
 
 # Example
 
 ```rust
-use rxml::{NCNameStr, xml_ncname};
+use rxml::{NcNameStr, xml_ncname};
 
-const XML_PREFIX: &'static NCNameStr = xml_ncname!("xml");
+const XML_PREFIX: &'static NcNameStr = xml_ncname!("xml");
 ```
 
 Invalid values are rejected at compile-time:
 
 ```rust,compile_fail
-# use rxml::{NCNameStr, xml_ncame};
-const INVALID: &'static NCNameStr = xml_ncname!("xmlns:xml");
+# use rxml::{NcNameStr, xml_ncame};
+const INVALID: &'static NcNameStr = xml_ncname!("xmlns:xml");
 ```
 */
 #[cfg(feature = "macros")]

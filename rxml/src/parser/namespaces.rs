@@ -19,7 +19,7 @@ pub type NamespaceName = RcPtr<CData>;
 
 /// Pair of an optional namespace name (URI) and a localpart, commonly used in
 /// element and attribute names.
-pub type ResolvedQName = (Option<NamespaceName>, NCName);
+pub type ResolvedQName = (Option<NamespaceName>, NcName);
 
 /// Wrapper pointer around namespace URIs
 ///
@@ -133,7 +133,7 @@ enum State {
 struct ElementScratchpad {
 	phyqname: RawQName,
 	default_decl: Option<NamespaceName>,
-	nsdecl: HashMap<NCName, NamespaceName>,
+	nsdecl: HashMap<NcName, NamespaceName>,
 }
 
 impl ElementScratchpad {
@@ -163,7 +163,7 @@ forward a [`RawEvent::Text`] right after a [`RawEvent::ElementHeadOpen`].
 pub struct NamespaceResolver {
 	ctx: RcPtr<context::Context>,
 	fixed_xml_namespace: NamespaceName,
-	namespace_stack: Vec<(Option<NamespaceName>, HashMap<NCName, NamespaceName>)>,
+	namespace_stack: Vec<(Option<NamespaceName>, HashMap<NcName, NamespaceName>)>,
 	scratchpad: Option<ElementScratchpad>,
 	phyattributes: Vec<(RawQName, CData)>,
 	event_length_accum: usize,
@@ -228,7 +228,7 @@ impl NamespaceResolver {
 	}
 
 	fn lookup_prefix<'x>(
-		namespace_stack: &'x Vec<(Option<NamespaceName>, HashMap<NCName, NamespaceName>)>,
+		namespace_stack: &'x Vec<(Option<NamespaceName>, HashMap<NcName, NamespaceName>)>,
 		fixed_xml_namespace: &'x NamespaceName,
 		prefix: Option<&str>,
 	) -> Result<Option<&'x NamespaceName>> {
