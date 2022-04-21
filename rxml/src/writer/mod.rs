@@ -12,7 +12,7 @@ use bytes::{BufMut, BytesMut};
 use crate::parser::{NamespaceName, RcPtr, ResolvedEvent, XmlVersion, XMLNS_XML, XMLNS_XMLNS};
 use crate::strings::{CData, CDataStr, NcName, NcNameStr, Name};
 
-static XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
+const XML_DECL: &'static [u8] = b"<?xml version='1.0' encoding='utf-8'?>\n";
 pub const PREFIX_XML: &'static NcNameStr = unsafe { std::mem::transmute("xml") };
 pub const PREFIX_XMLNS: &'static NcNameStr = unsafe { std::mem::transmute("xmlns") };
 
