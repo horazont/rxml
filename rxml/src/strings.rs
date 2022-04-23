@@ -513,6 +513,10 @@ impl Name {
 	///
 	/// If neither of the two cases apply or the string on either side of the
 	/// colon is empty, an error is returned.
+	///
+	/// This function optimizes the split (compared to operating on a borrowed
+	/// [`NameStr`] and then cloning the returned parts) by avoiding
+	/// unnecessary copying.
 	pub fn split_name(self) -> Result<(Option<NcName>, NcName), XmlError> {
 		let mut name = self.0;
 		let colon_pos = match name.find(':') {
@@ -556,6 +560,45 @@ impl NameStr {
 	/// trait.
 	pub fn to_name(&self) -> Name {
 		self.into()
+	}
+
+	/// Split the name at a colon, if it exists.
+	///
+	/// If the name contains no colon, the function returns `(None, self)`.
+	/// If the name contains exactly one colon, the function returns the part
+	/// before the colon (the prefix) in the first return value and the part
+	/// following the colon (the suffix) as second return value.
+	///
+	/// If neither of the two cases apply or the string on either side of the
+	/// colon is empty, an error is returned.
+	pub fn split_name(&self) -> Result<(Option<&'_ NcNameStr>, &'_ NcNameStr), XmlError> {
+		let name = &self.0;
+		let colon_pos = match name.find(':') {
+			None => return Ok((None, unsafe { NcNameStr::from_str_unchecked(name) })),
+			Some(pos) => pos,
+		};
+		if colon_pos == 0 || colon_pos == name.len() - 1 {
+			return Err(XmlError::EmptyNamePart(ERRCTX_UNKNOWN));
+		}
+
+		let (prefix, localname) = name.split_at(colon_pos);
+		let localname = &localname[1..];
+
+		if localname.find(':').is_some() {
+			// Namespaces in XML 1.0 (Third Edition) namespace-well-formed criterium 1
+			return Err(XmlError::MultiColonName(ERRCTX_UNKNOWN));
+		};
+		if !selectors::CLASS_XML_NAMESTART.select(localname.chars().next().unwrap()) {
+			// Namespaces in XML 1.0 (Third Edition) NcName production
+			return Err(XmlError::InvalidLocalName(ERRCTX_UNKNOWN));
+		}
+
+		debug_assert!(prefix.len() > 0);
+		debug_assert!(localname.len() > 0);
+		Ok((
+			Some(unsafe { NcNameStr::from_str_unchecked(prefix) }),
+			unsafe { NcNameStr::from_str_unchecked(localname) },
+		))
 	}
 }
 
@@ -866,7 +909,49 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn split_name_rejects_localname_with_non_namestart_first_char() {
+	fn split_name_on_namestr_with_valid_name() {
+		let nm: &NameStr = "foo:bar".try_into().unwrap();
+		let (prefix, localname) = nm.split_name().unwrap();
+		assert_eq!(prefix.unwrap(), "foo");
+		assert_eq!(localname, "bar");
+	}
+
+	#[test]
+	fn split_name_on_namestr_with_prefixless_name() {
+		let nm: &NameStr = "bar".try_into().unwrap();
+		let (prefix, localname) = nm.split_name().unwrap();
+		assert_eq!(prefix, None);
+		assert_eq!(localname, "bar");
+	}
+
+	#[test]
+	fn split_name_on_namestr_rejects_localname_with_non_namestart_first_char() {
+		let nm: &NameStr = "foo:-bar".try_into().unwrap();
+		let result = nm.split_name();
+		assert!(matches!(
+			result.err().unwrap(),
+			XmlError::InvalidLocalName(_)
+		));
+	}
+
+	#[test]
+	fn split_name_on_name_with_valid_name() {
+		let nm: Name = "foo:bar".try_into().unwrap();
+		let (prefix, localname) = nm.split_name().unwrap();
+		assert_eq!(prefix.unwrap(), "foo");
+		assert_eq!(localname, "bar");
+	}
+
+	#[test]
+	fn split_name_on_name_with_prefixless_name() {
+		let nm: Name = "bar".try_into().unwrap();
+		let (prefix, localname) = nm.split_name().unwrap();
+		assert_eq!(prefix, None);
+		assert_eq!(localname, "bar");
+	}
+
+	#[test]
+	fn split_name_on_name_rejects_localname_with_non_namestart_first_char() {
 		let nm: Name = "foo:-bar".try_into().unwrap();
 		let result = nm.split_name();
 		assert!(matches!(
