@@ -31,7 +31,7 @@ number of bytes from the input stream used to generate the event.
 
 A well-formed XML document will generate the following sequence of events:
 
-1. Zero or one [`Self::XMLDeclaration`]
+1. Zero or one [`Self::XmlDeclaration`]
 2. One *element sequence*
 
 An *element sequence* consists of:
@@ -48,7 +48,7 @@ pub enum RawEvent {
 	///
 	/// As the `encoding` and `standalone` flag are forced to be `utf-8` and
 	/// `yes` respectively (or absent), those values are not emitted.
-	XMLDeclaration(
+	XmlDeclaration(
 		/// Number of bytes contributing to this event.
 		///
 		/// This includes all bytes from the opening `<?` until and including
@@ -148,7 +148,7 @@ impl RawEvent {
 	/// Return the [`EventMetrics`] of the event
 	pub fn metrics(&self) -> &EventMetrics {
 		match self {
-			Self::XMLDeclaration(m, ..) => &m,
+			Self::XmlDeclaration(m, ..) => &m,
 			Self::ElementHeadOpen(m, ..) => &m,
 			Self::Attribute(m, ..) => &m,
 			Self::ElementHeadClose(m, ..) => &m,
@@ -482,7 +482,7 @@ impl RawParser {
 			},
 			Some(Token::XMLDeclEnd(_)) => match state {
 				DeclSt::EncodingName | DeclSt::StandaloneName | DeclSt::Close => {
-					let ev = RawEvent::XMLDeclaration(self.finish_event(), version.unwrap());
+					let ev = RawEvent::XmlDeclaration(self.finish_event(), version.unwrap());
 					self.emit_event(ev);
 					Ok(State::Document(DocSt::Element(ElementSt::Expected)))
 				}
@@ -873,7 +873,7 @@ mod tests {
 		]);
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
-			RawEvent::XMLDeclaration(em, XmlVersion::V1_0) => {
+			RawEvent::XmlDeclaration(em, XmlVersion::V1_0) => {
 				assert_eq!(em.len(), 7);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -930,7 +930,7 @@ mod tests {
 		}
 		assert!(matches!(
 			&evs[0],
-			RawEvent::XMLDeclaration(EventMetrics { len: 0 }, XmlVersion::V1_0)
+			RawEvent::XmlDeclaration(EventMetrics { len: 0 }, XmlVersion::V1_0)
 		));
 		assert_eq!(evs.len(), 1);
 	}
@@ -950,7 +950,7 @@ mod tests {
 		let r = parser.parse(&mut reader);
 		assert!(matches!(
 			r.unwrap().unwrap(),
-			RawEvent::XMLDeclaration(EventMetrics { len: 0 }, XmlVersion::V1_0)
+			RawEvent::XmlDeclaration(EventMetrics { len: 0 }, XmlVersion::V1_0)
 		));
 	}
 
@@ -967,7 +967,7 @@ mod tests {
 		]);
 		r.unwrap();
 		match evs.remove(0) {
-			RawEvent::XMLDeclaration(_, XmlVersion::V1_0) => (),
+			RawEvent::XmlDeclaration(_, XmlVersion::V1_0) => (),
 			other => panic!("unexpected event: {:?}", other),
 		}
 		match evs.remove(0) {

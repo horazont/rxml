@@ -301,7 +301,7 @@ let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
 let mut pp = AsyncParser::new(&mut doc);
 // we expect the first event to be the XML declaration
 let ev = pp.read().await;
-assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XmlVersion::V1_0)));
+assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XmlDeclaration(_, XmlVersion::V1_0)));
 # })
 ```
 

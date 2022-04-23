@@ -54,8 +54,8 @@ number of bytes from the input stream used to generate the event.
 pub enum ResolvedEvent {
 	/// The XML declaration.
 	///
-	/// This mirrors [`RawEvent::XMLDeclaration`].
-	XMLDeclaration(
+	/// This mirrors [`RawEvent::XmlDeclaration`].
+	XmlDeclaration(
 		/// Number of bytes contributing to this event.
 		///
 		/// This includes all bytes from the opening `<?` until and including
@@ -117,7 +117,7 @@ impl ResolvedEvent {
 	/// Return the [`EventMetrics`] of the event
 	pub fn metrics(&self) -> &EventMetrics {
 		match self {
-			Self::XMLDeclaration(m, ..) => &m,
+			Self::XmlDeclaration(m, ..) => &m,
 			Self::StartElement(m, ..) => &m,
 			Self::EndElement(m, ..) => &m,
 			Self::Text(m, ..) => &m,
@@ -350,9 +350,9 @@ impl NamespaceResolver {
 				self.namespace_stack.pop();
 				Ok(Some(ResolvedEvent::EndElement(em)))
 			}
-			RawEvent::XMLDeclaration(em, v) => {
+			RawEvent::XmlDeclaration(em, v) => {
 				self.event_length_accum = 0;
-				Ok(Some(ResolvedEvent::XMLDeclaration(em, v)))
+				Ok(Some(ResolvedEvent::XmlDeclaration(em, v)))
 			}
 			RawEvent::Text(em, v) => {
 				self.event_length_accum = 0;
@@ -423,14 +423,14 @@ mod tests {
 
 	#[test]
 	fn namespace_resolver_passes_xml_decl() {
-		let (evs, r) = resolve_all(vec![RawEvent::XMLDeclaration(
+		let (evs, r) = resolve_all(vec![RawEvent::XmlDeclaration(
 			EventMetrics { len: 2342 },
 			XmlVersion::V1_0,
 		)]);
 		r.unwrap();
 		let mut iter = evs.iter();
 		match iter.next().unwrap() {
-			ResolvedEvent::XMLDeclaration(em, v) => {
+			ResolvedEvent::XmlDeclaration(em, v) => {
 				assert_eq!(em.len(), 2342);
 				assert_eq!(*v, XmlVersion::V1_0);
 			}

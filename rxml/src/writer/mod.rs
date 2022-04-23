@@ -55,7 +55,7 @@ fn escape<'a, B: BufMut>(out: &'a mut B, data: &'a [u8], specials: &'static [u8]
 ///   [`ResolvedEvent`]: crate::parser::ResolvedEvent
 pub enum Item<'x> {
 	/// XML declaration
-	XMLDeclaration(XmlVersion),
+	XmlDeclaration(XmlVersion),
 
 	/// Start of an element header
 	ElementHeadStart(
@@ -389,7 +389,7 @@ impl TrackNamespace for SimpleNamespaces {
 pub enum EncodeError {
 	/// Emitted if an XML declaration is placed after the first element
 	/// started or if multiple XML declarations are placed.
-	MisplacedXMLDeclaration,
+	MisplacedXmlDeclaration,
 
 	/// Emitted if any content is placed after the end of the last element.
 	EndOfDocument,
@@ -413,7 +413,7 @@ pub enum EncodeError {
 impl fmt::Display for EncodeError {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::MisplacedXMLDeclaration => f.write_str("misplaced XML declaration"),
+			Self::MisplacedXmlDeclaration => f.write_str("misplaced XML declaration"),
 			Self::ElementStartNotAllowed => {
 				f.write_str("element start not allowed inside element headers")
 			}
@@ -452,7 +452,7 @@ use bytes::BytesMut;
 
 let mut enc = Encoder::new();
 let mut buf = BytesMut::new();
-enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf);
+enc.encode(Item::XmlDeclaration(XmlVersion::V1_0), &mut buf);
 assert_eq!(&buf[..], b"<?xml version='1.0' encoding='utf-8'?>\n");
 ```
 */
@@ -524,13 +524,13 @@ impl<T: TrackNamespace> Encoder<T> {
 		}
 
 		match item {
-			Item::XMLDeclaration(XmlVersion::V1_0) => match self.state {
+			Item::XmlDeclaration(XmlVersion::V1_0) => match self.state {
 				EncoderState::Start => {
 					output.put_slice(XML_DECL);
 					self.state = EncoderState::Declared;
 					Ok(())
 				}
-				_ => Err(EncodeError::MisplacedXMLDeclaration),
+				_ => Err(EncodeError::MisplacedXmlDeclaration),
 			},
 			Item::ElementHeadStart(nsuri, local_name) => match self.state {
 				EncoderState::Start | EncoderState::Declared | EncoderState::Content => {
@@ -660,8 +660,8 @@ impl<T: TrackNamespace> Encoder<T> {
 		output: &mut O,
 	) -> Result<(), EncodeError> {
 		match ev {
-			ResolvedEvent::XMLDeclaration(_, version) => {
-				self.encode(Item::XMLDeclaration(*version), output)?;
+			ResolvedEvent::XmlDeclaration(_, version) => {
+				self.encode(Item::XmlDeclaration(*version), output)?;
 			}
 			ResolvedEvent::StartElement(_, (ns, name), attrs) => {
 				self.encode(Item::ElementHeadStart(ns.clone(), name.as_ref()), output)?;
@@ -1045,7 +1045,7 @@ mod tests_encoder {
 
 	fn assert_event_eq(a: &ResolvedEvent, b: &ResolvedEvent) {
 		match (a, b) {
-			(ResolvedEvent::XMLDeclaration(_, v1), ResolvedEvent::XMLDeclaration(_, v2)) => {
+			(ResolvedEvent::XmlDeclaration(_, v1), ResolvedEvent::XmlDeclaration(_, v2)) => {
 				assert_eq!(v1, v2);
 			}
 			(
@@ -1142,12 +1142,12 @@ mod tests_encoder {
 	fn reject_duplicate_xml_declaration() {
 		let mut enc = mkencoder();
 		let mut buf = BytesMut::new();
-		match enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf) {
+		match enc.encode(Item::XmlDeclaration(XmlVersion::V1_0), &mut buf) {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
-		match enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf) {
-			Err(EncodeError::MisplacedXMLDeclaration) => (),
+		match enc.encode(Item::XmlDeclaration(XmlVersion::V1_0), &mut buf) {
+			Err(EncodeError::MisplacedXmlDeclaration) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
 	}
@@ -1199,8 +1199,8 @@ mod tests_encoder {
 			Ok(()) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
-		match enc.encode(Item::XMLDeclaration(XmlVersion::V1_0), &mut buf) {
-			Err(EncodeError::MisplacedXMLDeclaration) => (),
+		match enc.encode(Item::XmlDeclaration(XmlVersion::V1_0), &mut buf) {
+			Err(EncodeError::MisplacedXmlDeclaration) => (),
 			other => panic!("unexpected encode result: {:?}", other),
 		};
 	}

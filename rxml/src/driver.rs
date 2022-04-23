@@ -333,7 +333,7 @@ assert!(matches!(
 // Now we pass the XML declaration (and some), so we expect a corresponding
 // event
 let ev = fp.parse(&mut &doc[10..25], false);
-assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XmlVersion::V1_0)));
+assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XmlDeclaration(_, XmlVersion::V1_0)));
 ```
 
 ## Parsing without namespace expansion
@@ -380,7 +380,7 @@ let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
 let mut pp = PullParser::new(&mut doc);
 // we expect the first event to be the XML declaration
 let ev = pp.read();
-assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XmlVersion::V1_0)));
+assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XmlDeclaration(_, XmlVersion::V1_0)));
 ```
 
 ## Parsing without namespace expansion
