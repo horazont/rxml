@@ -38,11 +38,11 @@ fn feedparser_can_read_xml_document() {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("a").unwrap())).unwrap(),
 					"foo"
 				);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("b").unwrap())).unwrap(),
 					"bar"
 				);
 			}
@@ -123,11 +123,11 @@ fn feedparser_can_handle_chunked_input() {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("a").unwrap())).unwrap(),
 					"foo"
 				);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("b").unwrap())).unwrap(),
 					"bar"
 				);
 			}
@@ -204,11 +204,11 @@ fn pullparser_can_read_xml_document() {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("a").unwrap())).unwrap(),
 					"foo"
 				);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("b").unwrap())).unwrap(),
 					"bar"
 				);
 			}
@@ -295,11 +295,11 @@ async fn asyncparser_can_read_xml_document() {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("a").unwrap())).unwrap(),
 					"foo"
 				);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("b").unwrap())).unwrap(),
 					"bar"
 				);
 			}
@@ -374,11 +374,11 @@ async fn asyncparser_can_handle_chunked_input() {
 				assert_eq!(localname, "root");
 				assert_eq!(attrs.len(), 2);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("a").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("a").unwrap())).unwrap(),
 					"foo"
 				);
 				assert_eq!(
-					attrs.get(&(None, NCName::try_from("b").unwrap())).unwrap(),
+					attrs.get(&(None, NcName::try_from("b").unwrap())).unwrap(),
 					"bar"
 				);
 			}
