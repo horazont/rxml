@@ -573,6 +573,14 @@ impl<T: TrackNamespace> Encoder<T> {
 		output.put_u8(b'\'');
 	}
 
+	pub fn inner(&self) -> &T {
+		&self.ns
+	}
+
+	pub fn inner_mut(&mut self) -> &mut T {
+		&mut self.ns
+	}
+
 	/// Encode a single item into a buffer.
 	///
 	/// There is no requirement for the buffer to be the same for subsequent
