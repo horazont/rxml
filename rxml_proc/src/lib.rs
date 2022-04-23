@@ -86,7 +86,7 @@ pub fn xml_ncname(input: TokenStream) -> TokenStream {
 	let data = parse_macro_input!(input as LitStr);
 	let s = data.value();
 	let tokens = match validate_ncname(&s) {
-		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::NCNameStr>(#s) } },
+		Ok(()) => quote! { unsafe { std::mem::transmute::<_, &rxml::NcNameStr>(#s) } },
 		Err(e) => {
 			let err = format!("invalid NCName string {:?}: {}", s, e);
 			quote! { compile_error!(#err) }
