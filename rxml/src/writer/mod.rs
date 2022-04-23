@@ -173,6 +173,25 @@ pub trait TrackNamespace {
 
 	/// Signal end of element to undeclare nested namespace declarations.
 	fn pop(&mut self);
+
+	/// Return the newly declared default namespace, if any.
+	///
+	/// This returns `None` if and only if no default namespace has been
+	/// declared yet for the upcoming element.
+	///
+	/// `Some(None)` is returned if the empty default namespace has been
+	/// declared, effectively resetting the default namespace to the initial
+	/// state in an XML document.
+	///
+	/// *Note:* In the root element, `None` will be returned even if the
+	/// default namespace has been explicitly set to `None`, as that is the
+	/// default.
+	fn new_default_declaration(&self) -> Option<Option<&NamespaceName>>;
+
+	/// Return an iterator over the the newly declared prefixes.
+	fn new_prefix_declarations<'x>(
+		&'x self,
+	) -> Box<dyn Iterator<Item = (&Option<NamespaceName>, &NcNameStr)> + 'x>;
 }
 
 /// Simple namespace tracker.
@@ -276,23 +295,58 @@ impl TrackNamespace for SimpleNamespaces {
 			Some(v) if *v == XMLNS_XML => return (false, Some(PREFIX_XML)),
 			Some(v) if *v == XMLNS_XMLNS => return (false, Some(PREFIX_XMLNS)),
 			_ => (),
-		}
+		};
 
-		match self.next_default_ns.as_ref() {
-			Some(v) if *v == name => (false, None),
-			Some(v) => {
-				drop(v);
-				let (new, prefix) = self.declare_with_auto_prefix(name);
-				(new, Some(prefix))
-			}
-			None => {
-				self.next_default_ns = Some(name);
-				let new = match self.default_ns_stack.last() {
-					Some(v) => v != self.next_default_ns.as_ref().unwrap(),
-					None => self.next_default_ns.as_ref().unwrap().is_some(),
-				};
-				(new, None)
-			}
+		// XXX: due to a limitation in the borrowchecker <https://github.com/rust-lang/rfcs/blob/master/text/2094-nll.md#problem-case-3-conditional-control-flow-across-functions>, we have to re-implement the entirety of get_prefix_or_default here.
+
+		match self
+			.next_default_ns
+			.as_ref()
+			.or(self.default_ns_stack.last())
+		{
+			Some(default_name) if *default_name == name => return (false, None),
+			_ => (),
+		};
+
+		match self.temp_ns.entry(name.clone()) {
+			Entry::Occupied(o) => (false, Some(o.into_mut())),
+			Entry::Vacant(v_temp) => match self.global_ns.entry(name.clone()) {
+				Entry::Occupied(o) => (false, Some(o.into_mut())),
+				Entry::Vacant(_) => {
+					match self.next_default_ns.as_ref() {
+						// checked above already that it does not match
+						Some(_) => {
+							let ctr = self.temp_ns_ctr;
+							let temp_ns_prefix: NcName = format!("tns{}", ctr)
+								.try_into()
+								.expect("auto-generated prefix must always be valid");
+							if self.global_ns_rev.contains(&temp_ns_prefix) {
+								panic!(
+									"automatic prefix declaration conflicts with global prefix: {:?}",
+									temp_ns_prefix
+								)
+							}
+							if self.temp_ns_rev.contains(&temp_ns_prefix) {
+								panic!(
+									"automatic prefix declaration conflicts with local prefix: {:?}",
+									temp_ns_prefix
+								)
+							}
+							self.temp_ns_ctr += 1;
+							self.temp_ns_rev.insert(temp_ns_prefix.clone());
+							(true, Some(v_temp.insert(temp_ns_prefix)))
+						}
+						None => {
+							self.next_default_ns = Some(name);
+							let new = match self.default_ns_stack.last() {
+								Some(v) => v != self.next_default_ns.as_ref().unwrap(),
+								None => self.next_default_ns.as_ref().unwrap().is_some(),
+							};
+							(new, None)
+						}
+					}
+				}
+			},
 		}
 	}
 
@@ -333,29 +387,22 @@ impl TrackNamespace for SimpleNamespaces {
 		&self,
 		name: Option<NamespaceName>,
 	) -> Result<Option<&NcNameStr>, PrefixError> {
-		if let Some(next) = self.next_default_ns.as_ref() {
-			if *next == name {
-				return Ok(None);
-			}
+		match self
+			.next_default_ns
+			.as_ref()
+			.or(self.default_ns_stack.last())
+		{
+			Some(default_name) if *default_name == name => Ok(None),
+			_ => Ok(Some(self.get_prefix(name)?)),
 		}
-		if let Some(prev) = self.default_ns_stack.last() {
-			if *prev == name {
-				return Ok(None);
-			}
-		}
-		Ok(Some(self.get_prefix(name)?))
 	}
 
 	fn get_prefix(&self, name: Option<NamespaceName>) -> Result<&NcNameStr, PrefixError> {
-		match self.temp_ns.get(&name) {
-			Some(v) => return Ok(v),
-			None => (),
-		}
-		match self.global_ns.get(&name) {
-			Some(v) => return Ok(v),
-			None => (),
-		}
-		Err(PrefixError::Undeclared)
+		self.temp_ns
+			.get(&name)
+			.or(self.global_ns.get(&name))
+			.map(|x| &**x)
+			.ok_or(PrefixError::Undeclared)
 	}
 
 	fn push(&mut self) {
@@ -382,6 +429,20 @@ impl TrackNamespace for SimpleNamespaces {
 
 	fn pop(&mut self) {
 		self.default_ns_stack.pop();
+	}
+
+	fn new_default_declaration(&self) -> Option<Option<&NamespaceName>> {
+		match self.next_default_ns.as_ref().map(|x| x.as_ref()) {
+			// if this is the root element, we do not expose the empty default namespace as declaration
+			Some(None) if self.default_ns_stack.len() == 0 => None,
+			other => other,
+		}
+	}
+
+	fn new_prefix_declarations<'x>(
+		&'x self,
+	) -> Box<dyn Iterator<Item = (&Option<NamespaceName>, &NcNameStr)> + 'x> {
+		Box::new(self.temp_ns.iter().map(|(k, v)| (k, &**v)))
 	}
 }
 
@@ -535,11 +596,12 @@ impl<T: TrackNamespace> Encoder<T> {
 			Item::ElementHeadStart(nsuri, local_name) => match self.state {
 				EncoderState::Start | EncoderState::Declared | EncoderState::Content => {
 					output.put_u8(b'<');
-					let (new, prefix) = self.ns.declare_auto(nsuri.clone());
+					let (_, prefix) = self.ns.declare_auto(nsuri.clone());
 					let qname = match prefix {
 						Some(prefix) => {
 							output.put_slice(prefix.as_bytes());
 							output.put_u8(b':');
+							output.put_slice(local_name.as_bytes());
 							prefix.with_suffix(local_name)
 						}
 						None => {
@@ -548,9 +610,15 @@ impl<T: TrackNamespace> Encoder<T> {
 						}
 					};
 					self.qname_stack.push(qname);
-					if new {
+					match self.ns.new_default_declaration() {
+						Some(name) => {
+							Self::encode_nsdecl(None, name.as_ref().map(|x| &****x), output)
+						}
+						None => (),
+					};
+					for (name, prefix) in self.ns.new_prefix_declarations() {
 						// if new, we have to declare it
-						Self::encode_nsdecl(prefix, nsuri.as_ref().map(|x| &***x), output);
+						Self::encode_nsdecl(Some(prefix), name.as_ref().map(|x| &***x), output);
 					}
 					self.state = EncoderState::ElementHead;
 					Ok(())
@@ -985,12 +1053,26 @@ mod tests_simple_namespaces {
 mod tests_encoder {
 	use super::*;
 
+	use std::convert::TryFrom;
+
 	use crate::parser::EventMetrics;
 
 	use crate::EventRead;
 
 	fn mkencoder() -> Encoder<SimpleNamespaces> {
 		Encoder::new()
+	}
+
+	fn ns1() -> NamespaceName {
+		RcPtr::new(CData::try_from("uri:foo").unwrap())
+	}
+
+	fn ns2() -> NamespaceName {
+		RcPtr::new(CData::try_from("uri:bar").unwrap())
+	}
+
+	fn ns3() -> NamespaceName {
+		RcPtr::new(CData::try_from("uri:baz").unwrap())
 	}
 
 	fn parse(mut input: &[u8]) -> (Vec<ResolvedEvent>, crate::Result<bool>) {
@@ -1221,6 +1303,165 @@ mod tests_encoder {
 			other => panic!("unexpected encode result: {:?}", other),
 		};
 		assert_eq!(&buf, &b"<x/>"[..]);
+	}
+
+	#[test]
+	fn encode_root_prefix() {
+		let mut enc = mkencoder();
+		let mut buf = BytesMut::new();
+		enc.ns
+			.declare_fixed(Some("foo".try_into().unwrap()), Some(ns1()));
+		match enc.encode(
+			Item::ElementHeadStart(Some(ns1()), "x".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		assert_eq!(&buf, &b"<foo:x xmlns:foo='uri:foo'/>"[..]);
+	}
+
+	#[test]
+	fn use_explicitly_set_at_root() {
+		let mut enc = mkencoder();
+		let mut buf = BytesMut::new();
+		enc.ns
+			.declare_fixed(Some("foo".try_into().unwrap()), Some(ns1()));
+		match enc.encode(
+			Item::ElementHeadStart(Some(ns2()), "x".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementHeadEnd, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(
+			Item::ElementHeadStart(Some(ns1()), "y".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		assert_eq!(
+			&buf,
+			&b"<x xmlns='uri:bar' xmlns:foo='uri:foo'><foo:y/></x>"[..]
+		);
+	}
+
+	#[test]
+	fn do_not_emit_duplicate_declarations() {
+		let mut enc = mkencoder();
+		let mut buf = BytesMut::new();
+		enc.ns
+			.declare_fixed(Some("foo".try_into().unwrap()), Some(ns1()));
+		match enc.encode(
+			Item::ElementHeadStart(Some(ns2()), "x".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(
+			Item::Attribute(
+				Some(ns1()),
+				"a1".try_into().unwrap(),
+				"v1".try_into().unwrap(),
+			),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		}
+		match enc.encode(
+			Item::Attribute(
+				Some(ns1()),
+				"a2".try_into().unwrap(),
+				"v2".try_into().unwrap(),
+			),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		}
+		match enc.encode(
+			Item::Attribute(
+				Some(ns2()),
+				"a3".try_into().unwrap(),
+				"v3".try_into().unwrap(),
+			),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		}
+		match enc.encode(
+			Item::Attribute(
+				Some(ns2()),
+				"a4".try_into().unwrap(),
+				"v4".try_into().unwrap(),
+			),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		}
+		match enc.encode(
+			Item::Attribute(
+				Some(ns3()),
+				"a5".try_into().unwrap(),
+				"v5".try_into().unwrap(),
+			),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		}
+		match enc.encode(
+			Item::Attribute(
+				Some(ns3()),
+				"a6".try_into().unwrap(),
+				"v6".try_into().unwrap(),
+			),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		}
+		match enc.encode(Item::ElementHeadEnd, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(
+			Item::ElementHeadStart(Some(ns1()), "y".try_into().unwrap()),
+			&mut buf,
+		) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		match enc.encode(Item::ElementFoot, &mut buf) {
+			Ok(()) => (),
+			other => panic!("unexpected encode result: {:?}", other),
+		};
+		assert_eq!(&buf, &b"<x xmlns='uri:bar' xmlns:foo='uri:foo' foo:a1=\"v1\" foo:a2=\"v2\" xmlns:tns0='uri:bar' tns0:a3=\"v3\" tns0:a4=\"v4\" xmlns:tns1='uri:baz' tns1:a5=\"v5\" tns1:a6=\"v6\"><foo:y/></x>"[..]);
 	}
 
 	#[test]
