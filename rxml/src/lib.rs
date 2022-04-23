@@ -96,6 +96,8 @@ pub use writer::{Encoder, Item};
 #[doc(hidden)]
 pub use rxml_proc;
 
+pub use bytes;
+
 /**
 Compile-time conversion of a string literal to [`CDataStr`]
 
