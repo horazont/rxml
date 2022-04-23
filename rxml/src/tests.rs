@@ -22,7 +22,7 @@ fn feedparser_can_read_xml_document() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XmlVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -108,7 +108,7 @@ fn feedparser_can_handle_chunked_input() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XmlVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -188,7 +188,7 @@ fn pullparser_can_read_xml_document() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XmlVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -279,7 +279,7 @@ async fn asyncparser_can_read_xml_document() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XmlVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),
@@ -358,7 +358,7 @@ async fn asyncparser_can_handle_chunked_input() {
 	{
 		let mut iter = out.iter();
 		match iter.next().unwrap() {
-			ResolvedEvent::XMLDeclaration(em, XMLVersion::V1_0) => {
+			ResolvedEvent::XMLDeclaration(em, XmlVersion::V1_0) => {
 				assert_eq!(em.len(), 21);
 			}
 			other => panic!("unexpected event: {:?}", other),

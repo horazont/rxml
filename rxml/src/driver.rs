@@ -320,7 +320,7 @@ trait.
 ## Example
 
 ```
-use rxml::{FeedParser, Error, ResolvedEvent, XMLVersion, EventRead};
+use rxml::{FeedParser, Error, ResolvedEvent, XmlVersion, EventRead};
 use std::io;
 let doc = b"<?xml version='1.0'?><hello>World!</hello>";
 let mut fp = FeedParser::new();
@@ -333,7 +333,7 @@ assert!(matches!(
 // Now we pass the XML declaration (and some), so we expect a corresponding
 // event
 let ev = fp.parse(&mut &doc[10..25], false);
-assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XMLVersion::V1_0)));
+assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XmlVersion::V1_0)));
 ```
 
 ## Parsing without namespace expansion
@@ -372,7 +372,7 @@ In general, for networked operations, it is recommended to use the [`FeedParser`
 ## Example
 
 ```
-use rxml::{PullParser, Error, ResolvedEvent, XMLVersion, EventRead};
+use rxml::{PullParser, Error, ResolvedEvent, XmlVersion, EventRead};
 use std::io;
 use std::io::BufRead;
 let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
@@ -380,7 +380,7 @@ let mut doc = &b"<?xml version='1.0'?><hello>World!</hello>"[..];
 let mut pp = PullParser::new(&mut doc);
 // we expect the first event to be the XML declaration
 let ev = pp.read();
-assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XMLVersion::V1_0)));
+assert!(matches!(ev.unwrap().unwrap(), ResolvedEvent::XMLDeclaration(_, XmlVersion::V1_0)));
 ```
 
 ## Parsing without namespace expansion
