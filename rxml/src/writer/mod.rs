@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::fmt;
+use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
 
@@ -207,6 +208,7 @@ pub trait TrackNamespace {
 ///
 /// One exception is that prefixed namespaces declared on the root element
 /// will actually be made available on all child elements.
+#[derive(Debug)]
 pub struct SimpleNamespaces {
 	// persistent state
 	global_ns: HashMap<Option<NamespaceName>, NcName>,
@@ -233,6 +235,41 @@ impl SimpleNamespaces {
 			temp_ns_ctr: 0,
 			temp_ns: HashMap::new(),
 			temp_ns_rev: HashSet::new(),
+		}
+	}
+
+	/// Look up the namespace URI for a given prefix
+	///
+	/// *Note:* This function is implemented as O(n) function because it
+	/// should rarely, if ever, be necessary to use. Speeding up runtime of
+	/// this function would increase memory cost at neglegible gain.
+	///
+	/// The namespace URIs for the `xml` and `xmlns` prefixes are always
+	/// returned, even if not explicitly declared.
+	pub fn lookup_prefix(&self, prefix: Option<&NcNameStr>) -> Result<NamespaceName, PrefixError> {
+		match prefix {
+			Some(prefix) if prefix == PREFIX_XML => Ok(RcPtr::new(XMLNS_XML.into())),
+			Some(prefix) if prefix == PREFIX_XMLNS => Ok(RcPtr::new(XMLNS_XMLNS.into())),
+			Some(prefix) => {
+				for (decl_uri, decl_prefix) in self.temp_ns.iter().chain(self.global_ns.iter()) {
+					if let Some(decl_uri) = decl_uri {
+						if decl_prefix == prefix {
+							return Ok(Arc::clone(decl_uri));
+						}
+					}
+				}
+				Err(PrefixError::Undeclared)
+			}
+			None => {
+				match self.next_default_ns.as_ref() {
+					Some(Some(uri)) => return Ok(Arc::clone(uri)),
+					_ => (),
+				};
+				match self.default_ns_stack.last() {
+					Some(Some(uri)) => Ok(Arc::clone(uri)),
+					_ => Err(PrefixError::Undeclared),
+				}
+			}
 		}
 	}
 }
@@ -809,11 +846,18 @@ mod tests_simple_namespaces {
 	}
 
 	#[test]
+	fn predefined_prefixes_can_be_looked_up() {
+		let ns = mk();
+		assert_eq!(*ns.lookup_prefix(Some(PREFIX_XML)).unwrap(), XMLNS_XML);
+		assert_eq!(*ns.lookup_prefix(Some(PREFIX_XMLNS)).unwrap(), XMLNS_XMLNS);
+	}
+
+	#[test]
 	fn hardcoded_xmlns_namespace_for_declare_auto() {
 		let mut ns = mk();
 		let (new, prefix) = ns.declare_auto(Some(RcPtr::new(XMLNS_XMLNS.to_cdata())));
 		assert!(!new);
-		assert!(prefix.unwrap() == "xmlns");
+		assert!(prefix.unwrap() == PREFIX_XMLNS);
 	}
 
 	#[test]
@@ -821,7 +865,7 @@ mod tests_simple_namespaces {
 		let mut ns = mk();
 		let (new, prefix) = ns.declare_auto(Some(RcPtr::new(XMLNS_XML.to_cdata())));
 		assert!(!new);
-		assert!(prefix.unwrap() == "xml");
+		assert!(prefix.unwrap() == PREFIX_XML);
 	}
 
 	#[test]
@@ -896,6 +940,28 @@ mod tests_simple_namespaces {
 			Ok(None) => {}
 			other => panic!("unexpected get_prefix_or_default result: {:?}", other),
 		};
+		match ns.lookup_prefix(None) {
+			Ok(name) => {
+				assert_eq!(name, ns1());
+			}
+			other => panic!("unexpected lookup_prefix result: {:?}", other),
+		}
+	}
+
+	#[test]
+	fn declaration_causes_lookup_to_return_a_thing() {
+		let mut ns = mk();
+		match ns.lookup_prefix(None) {
+			Err(PrefixError::Undeclared) => (),
+			other => panic!("unexpected lookup_prefix result: {:?}", other),
+		}
+		ns.declare_auto(Some(ns1()));
+		match ns.lookup_prefix(None) {
+			Ok(name) => {
+				assert_eq!(name, ns1());
+			}
+			other => panic!("unexpected lookup_prefix result: {:?}", other),
+		}
 	}
 
 	#[test]
@@ -929,6 +995,26 @@ mod tests_simple_namespaces {
 	}
 
 	#[test]
+	fn declaration_causes_lookup_to_return_a_thing_for_a_prefix() {
+		let mut ns = mk();
+		match ns.lookup_prefix(None) {
+			Err(PrefixError::Undeclared) => (),
+			other => panic!("unexpected lookup_prefix result: {:?}", other),
+		}
+		let prefix = ns.declare_with_auto_prefix(Some(ns1())).1.to_ncname();
+		match ns.lookup_prefix(Some(&prefix)) {
+			Ok(name) => {
+				assert_eq!(name, ns1());
+			}
+			other => panic!("unexpected lookup_prefix result: {:?}", other),
+		}
+		match ns.lookup_prefix(None) {
+			Err(PrefixError::Undeclared) => (),
+			other => panic!("unexpected lookup_prefix result: {:?}", other),
+		}
+	}
+
+	#[test]
 	fn reuses_auto_allocated_prefix_for_same_ns() {
 		let mut ns = mk();
 		let prefix1 = ns.declare_with_auto_prefix(Some(ns1())).1.to_ncname();
@@ -954,6 +1040,12 @@ mod tests_simple_namespaces {
 		assert!(!new);
 		assert!(prefix.is_none());
 		assert!(ns.get_prefix_or_default(Some(ns1())).unwrap().is_none());
+		match ns.lookup_prefix(None) {
+			Ok(name) => {
+				assert_eq!(name, ns1());
+			}
+			other => panic!("unexpected lookup_prefix result: {:?}", other),
+		}
 	}
 
 	#[test]
