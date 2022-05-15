@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::fmt;
-use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
 
@@ -254,7 +253,7 @@ impl SimpleNamespaces {
 				for (decl_uri, decl_prefix) in self.temp_ns.iter().chain(self.global_ns.iter()) {
 					if let Some(decl_uri) = decl_uri {
 						if decl_prefix == prefix {
-							return Ok(Arc::clone(decl_uri));
+							return Ok(RcPtr::clone(decl_uri));
 						}
 					}
 				}
@@ -262,11 +261,11 @@ impl SimpleNamespaces {
 			}
 			None => {
 				match self.next_default_ns.as_ref() {
-					Some(Some(uri)) => return Ok(Arc::clone(uri)),
+					Some(Some(uri)) => return Ok(RcPtr::clone(uri)),
 					_ => (),
 				};
 				match self.default_ns_stack.last() {
-					Some(Some(uri)) => Ok(Arc::clone(uri)),
+					Some(Some(uri)) => Ok(RcPtr::clone(uri)),
 					_ => Err(PrefixError::Undeclared),
 				}
 			}
