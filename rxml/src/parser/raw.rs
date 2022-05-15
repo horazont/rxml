@@ -747,6 +747,12 @@ impl Parse for RawParser {
 	}
 }
 
+impl Default for RawParser {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
 impl fmt::Debug for RawParser {
 	fn fmt<'f>(&self, f: &'f mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct("RawParser")
