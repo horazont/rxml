@@ -543,6 +543,11 @@ impl RawParser {
 				ElementSt::Expected => Err(Error::wfeof(ERRCTX_DOCBEGIN)),
 				_ => Err(Error::wfeof(ERRCTX_ELEMENT)),
 			},
+			// this could be <?xml-stylesheet or some other processing
+			// so we reject it here appropriately.
+			Some(Token::XMLDeclStart(..)) if state == ElementSt::Expected => Err(Error::RestrictedXml(
+				"processing instructions"
+			)),
 			Some(Token::ElementHeadStart(tm, name)) if state == ElementSt::Expected => {
 				self.start_event(&tm);
 				let ev = self.start_processing_element(name)?;
@@ -669,6 +674,11 @@ impl RawParser {
 						Ok(State::Document(DocSt::ElementFoot))
 					}
 				}
+				// this could be <?xml-stylesheet or some other processing
+				// so we reject it here appropriately.
+				Some(Token::XMLDeclStart(..)) => Err(Error::RestrictedXml(
+					"processing instructions"
+				)),
 				Some(tok) => Err(Error::Xml(XmlError::UnexpectedToken(
 					ERRCTX_TEXT,
 					tok.name(),

@@ -5,6 +5,38 @@ use std::convert::TryFrom;
 #[cfg(feature = "async")]
 use tokio;
 
+#[test]
+fn restricted_xml_for_xml_stylesheet() {
+	let doc = b"<?xml version='1.0'?>\n<?xml-stylesheet?>";
+
+	let mut fp = FeedParser::default();
+	let mut out = Vec::<ResolvedEvent>::new();
+	let mut doc_buf = &doc[..];
+	let result = as_eof_flag(fp.parse_all(&mut doc_buf, false, |ev| {
+		out.push(ev);
+	}));
+	match result {
+		Err(Error::RestrictedXml(_)) => (),
+		other => panic!("no or unexpected error: {:?}", other),
+	}
+}
+
+#[test]
+fn restricted_xml_for_late_xml_stylesheets() {
+	let doc = b"<?xml version='1.0'?>\n<root><?xml-stylesheet?></root>";
+
+	let mut fp = FeedParser::default();
+	let mut out = Vec::<ResolvedEvent>::new();
+	let mut doc_buf = &doc[..];
+	let result = as_eof_flag(fp.parse_all(&mut doc_buf, false, |ev| {
+		out.push(ev);
+	}));
+	match result {
+		Err(Error::RestrictedXml(_)) => (),
+		other => panic!("no or unexpected error: {:?}", other),
+	}
+}
+
 // note that this is just a smoketest... the components of the FeedParser
 // are tested extensively in the modules.
 #[test]
