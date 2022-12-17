@@ -1,6 +1,6 @@
 [package]
 name = "rxml_validation"
-version = "0.8.1"
+version = "0.8.2"
 authors = ["Jonas Schäfer <jonas@zombofant.net>"]
 license = "MIT"
 edition = "2018"
