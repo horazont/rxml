@@ -6,6 +6,19 @@ use std::convert::TryFrom;
 use tokio;
 
 #[test]
+fn long_element_names() {
+	let doc = b"<jitsi_participant_codecType>vp9</jitsi_participant_codecType>";
+
+	let mut fp = FeedParser::default();
+	let mut out = Vec::<ResolvedEvent>::new();
+	let mut doc_buf = &doc[..];
+	let result = as_eof_flag(fp.parse_all(&mut doc_buf, false, |ev| {
+		out.push(ev);
+	}));
+	result.unwrap();
+}
+
+#[test]
 fn restricted_xml_for_xml_stylesheet() {
 	let doc = b"<?xml version='1.0'?>\n<?xml-stylesheet?>";
 
