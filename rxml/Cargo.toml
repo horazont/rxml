@@ -15,7 +15,7 @@ exclude = ["/fuzz", "/util", "/target"]
 
 [dependencies]
 weak-table = { version = "^0.3", optional = true }
-smartstring = { version = "^0.2" }
+smartstring = { version = "^1" }
 rxml_validation = { version = "^0.8.0" }
 tokio = { version = "^1", features = ["io-util"], optional = true }
 bytes = { version = "^1" }
